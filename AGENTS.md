@@ -1,0 +1,107 @@
+# AGENTS.md
+
+## Project overview
+- `kaptaind` is a Rust application (`Cargo.toml`, edition 2021) that watches a repository for filesystem changes, clusters events, analyzes the change set, computes a semantic-version bump, writes `VERSION`, persists analysis artifacts, creates a git commit, and optionally pushes.
+- Entry point: `src/main.rs` initializes tracing, loads config, then starts the daemon runtime.
+
+## Essential commands
+- `cargo run` — run the daemon from the repository root.
+- `cargo test` — run the unit and async tests embedded in module files.
+- `cargo build` — build the binary.
+
+## Repository layout
+- `src/main.rs` — startup wiring.
+- `src/config/` — config loading and path normalization.
+- `src/watcher/` — filesystem event types and notify-based watcher thread.
+- `src/daemon/` — async runtime and scheduler loop.
+- `src/cluster/` — event clustering by time window.
+- `src/diff/` — scoring for structural, API, dependency, and runtime impact.
+- `src/weight/` — weighted score calculation.
+- `src/version/` — semantic bump decision and `semver::Version` mutation.
+- `src/commit/` — git commit orchestration.
+- `src/push/` — git push orchestration.
+- `src/git/` — thin repository wrapper.
+- Root docs present: `MVP_ASSESSMENT.md`, `PHASE_2_PLAN.md`.
+
+## Runtime flow
+1. `config::loader::load()` reads `kaptaind.toml` from the current working directory, or falls back to defaults.
+2. `daemon::runtime::start()` creates a Tokio MPSC channel, starts the watcher thread, and spawns the scheduler task.
+3. `watcher::fs::start()` converts `notify` events into `FsEvent` values and sends them across the channel.
+4. `daemon::scheduler::run()` batches events with `ClusterEngine`, filters ignored paths, rate-limits commits, runs the configured test hook, analyzes the diff, computes weight + bump, writes `VERSION`, stores an analysis artifact under `.kaptaind/analysis/`, commits, and optionally pushes.
+
+## Configuration and on-disk files
+- Main config file: `kaptaind.toml` in the current working directory.
+- If no config file exists, defaults come from `src/config/loader.rs`.
+- Important observed defaults:
+  - watch path defaults to the current directory.
+  - watcher is recursive by default.
+  - ignore file defaults to `.kaptainignore`.
+  - cluster window defaults to 5 seconds.
+  - minimum commit interval defaults to 10 seconds.
+  - test hook defaults to `cargo test` and is required by default.
+  - push is disabled by default and targets branch `main` when enabled.
+- Paths are normalized in `finalize_config()`:
+  - `repo_path` is resolved relative to the process working directory.
+  - `watch.path` and `watch.ignore_file` are resolved relative to `repo_path`.
+- Runtime artifacts:
+  - `VERSION` in `repo_path` is read/written as the authoritative semantic version.
+  - `.kaptaind/analysis/<cluster-id>.json` stores a pretty-printed serialized analysis artifact for each processed cluster.
+
+## Code patterns and conventions
+- Module pattern is simple and explicit: each `mod.rs` re-exports the module’s public entry points.
+- Error handling uses `anyhow` for application-level fallible boundaries and `git2::Error` where git operations are returned directly.
+- Logging uses `tracing`; startup uses `tracing_subscriber::fmt::init()`.
+- Most structs derive `Debug` and `Clone`; serde derives are used where data crosses config/artifact boundaries.
+- Async work is confined to the daemon/scheduler path; filesystem watching is done on a dedicated OS thread and bridged into Tokio via `blocking_send`.
+- Tests live inline in the same source files under `#[cfg(test)]`.
+
+## Scoring and versioning behavior
+- `src/diff/text.rs` computes structural score from event count, unique paths, and event span.
+- `src/diff/ast.rs` treats public Rust items, exported JS/TS declarations, and Python `def`/`class` lines as API signatures using line-based scanning.
+- `src/diff/ast.rs` also treats paths containing `/api/`, `/public/`, or ending in `.proto`, `.graphql`, `openapi.yaml`, or `openapi.yml` as API surface even without extracted signatures.
+- `src/diff/api.rs` parses dependency manifests from `Cargo.toml`, `package.json`, and `requirements.txt`; lockfiles are recognized as dependency files, but dependency extraction is only implemented for those three manifest formats.
+- `src/diff/api.rs` treats paths containing `docker`, `deploy`, `k8s`, `helm`, or ending in `.sh`, `.service`, `.env` as runtime-sensitive.
+- `src/weight/calculator.rs` combines structural/API/dependency/runtime scores using configured `s`, `a`, `d`, and `r` weights.
+- `src/version/semver.rs` decides bumps with these rules:
+  - breaking API => `Major`
+  - added API or score `> 0.6` => `Minor`
+  - score `> 0.1` => `Patch`
+  - otherwise => `None`
+
+## Git behavior
+- Repo access goes through `git2`.
+- `commit::commit()` stages everything with `index.add_all(["*"])` before creating the commit.
+- The scheduler skips work when `Repo::is_clean()` reports no changes.
+- Commit message format is generated in `src/daemon/scheduler.rs` and includes bump, version, API summary, touched path count, dependency/runtime stats, score, and cluster UUID.
+- Pushes only happen when `config.push.enabled` is true; the code pushes `refs/heads/<branch>` to `origin`.
+
+## Ignore and watcher behavior
+- Ignore rules are loaded from `.kaptainignore` relative to `repo_path` unless overridden in config.
+- Ignore file behavior is custom, not gitignore-compatible:
+  - blank lines and `#` comments are ignored.
+  - entries containing glob metacharacters (`*`, `?`, `[`, `{`) are treated as glob patterns via `globset`.
+  - other entries are treated as exact relative paths/prefixes.
+- Paths are matched relative to `repo_path` when possible.
+- Watcher startup is synchronized with a readiness channel; startup failures are surfaced before returning from `watcher::fs::start()`.
+
+## Testing approach
+- There is no separate `tests/` directory; tests are colocated in modules such as:
+  - `src/cluster/engine.rs`
+  - `src/config/loader.rs`
+  - `src/diff/api.rs`
+  - `src/diff/ast.rs`
+  - `src/version/semver.rs`
+  - `src/daemon/scheduler.rs`
+- Tests use `tempfile` heavily for filesystem-dependent behavior.
+- Async behavior is tested with `#[tokio::test]` in `src/daemon/scheduler.rs`.
+- The scheduler’s test hook runs commands with `sh -lc <command>` and sets the working directory to `repo_path`.
+
+## Agent gotchas
+- Run commands from the repository root if you want config discovery to find `kaptaind.toml`.
+- `Config::default()` uses the process current directory at runtime; tests or tools that change cwd can affect defaults.
+- Required test hooks block commits on failure; optional hooks do not.
+- A passing test hook reduces runtime weight to `0.1`; a failing hook forces runtime weight to `1.0`.
+- When no `VERSION` file exists, the scheduler starts from `0.1.0`.
+- `ClusterEngine` groups events only while the time delta is strictly less than the configured window.
+- Ignore matching checks whether any path in an event matches; one ignored path suppresses the whole event.
+- No repository-specific lint, formatter, CI, or agent rule files were found during inspection.

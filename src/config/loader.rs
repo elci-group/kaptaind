@@ -1,0 +1,147 @@
+use serde::Deserialize;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct Config {
+    pub watch: WatchConfig,
+    pub cluster: ClusterConfig,
+    pub weights: crate::weight::WeightConfig,
+    pub push: PushConfig,
+    pub ratelimit: RateLimitConfig,
+    pub test: TestConfig,
+    pub repo_path: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct WatchConfig {
+    pub path: PathBuf,
+    pub recursive: bool,
+    pub ignore_file: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ClusterConfig {
+    #[serde(with = "duration_secs")]
+    pub window: Duration,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PushConfig {
+    pub enabled: bool,
+    pub branch: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RateLimitConfig {
+    #[serde(with = "duration_secs")]
+    pub min_commit_interval: Duration,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct TestConfig {
+    pub command: Option<String>,
+    pub required: bool,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        Self {
+            watch: WatchConfig {
+                path: cwd.clone(),
+                recursive: true,
+                ignore_file: PathBuf::from(".kaptainignore"),
+            },
+            cluster: ClusterConfig {
+                window: Duration::from_secs(5),
+            },
+            weights: crate::weight::WeightConfig {
+                s: 0.35,
+                a: 0.3,
+                d: 0.2,
+                r: 0.15,
+            },
+            push: PushConfig {
+                enabled: false,
+                branch: "main".to_string(),
+            },
+            ratelimit: RateLimitConfig {
+                min_commit_interval: Duration::from_secs(10),
+            },
+            test: TestConfig {
+                command: Some("cargo test".to_string()),
+                required: true,
+            },
+            repo_path: cwd,
+        }
+    }
+}
+
+pub fn load() -> anyhow::Result<Config> {
+    let cwd = std::env::current_dir()?;
+    let path = cwd.join("kaptaind.toml");
+    if !path.exists() {
+        return Ok(finalize_config(cwd, Config::default()));
+    }
+
+    let content = std::fs::read_to_string(&path)?;
+    let cfg: Config = toml::from_str(&content)?;
+    Ok(finalize_config(cwd, cfg))
+}
+
+fn finalize_config(base_dir: PathBuf, mut config: Config) -> Config {
+    config.repo_path = absolutize(&base_dir, &config.repo_path);
+    config.watch.path = absolutize(&config.repo_path, &config.watch.path);
+    config.watch.ignore_file = absolutize(&config.repo_path, &config.watch.ignore_file);
+    config
+}
+
+fn absolutize(base: &Path, path: &Path) -> PathBuf {
+    if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        base.join(path)
+    }
+}
+
+mod duration_secs {
+    use serde::{Deserialize, Deserializer};
+    use std::time::Duration;
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Duration, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let secs = u64::deserialize(deserializer)?;
+        Ok(Duration::from_secs(secs))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{finalize_config, Config};
+    use std::path::PathBuf;
+
+    #[test]
+    fn finalizes_relative_paths_against_repo_root() {
+        let base = PathBuf::from("/tmp/kaptaind-config");
+        let config = Config {
+            repo_path: PathBuf::from("repo"),
+            watch: super::WatchConfig {
+                path: PathBuf::from("src"),
+                recursive: true,
+                ignore_file: PathBuf::from("config/.kaptainignore"),
+            },
+            ..Config::default()
+        };
+
+        let finalized = finalize_config(base, config);
+        assert_eq!(finalized.repo_path, PathBuf::from("/tmp/kaptaind-config/repo"));
+        assert_eq!(finalized.watch.path, PathBuf::from("/tmp/kaptaind-config/repo/src"));
+        assert_eq!(
+            finalized.watch.ignore_file,
+            PathBuf::from("/tmp/kaptaind-config/repo/config/.kaptainignore")
+        );
+    }
+}
