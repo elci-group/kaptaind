@@ -3,6 +3,7 @@ use clap::{Parser, Subcommand};
 use kaptaind::config::loader::{self, Config};
 use kaptaind::daemon::scheduler::AnalysisArtifact;
 use std::fs;
+use std::path::PathBuf;
 use tabled::{settings::Style, Table, Tabled};
 
 #[derive(Parser)]
@@ -10,6 +11,10 @@ use tabled::{settings::Style, Table, Tabled};
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+
+    /// Optional path to the repository to operate on (overrides kaptaind.toml)
+    #[arg(short, long)]
+    repo: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
@@ -28,7 +33,11 @@ enum Commands {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let config = loader::load()?;
+    let mut config = loader::load()?;
+
+    if let Some(repo_override) = cli.repo {
+        config.repo_path = repo_override.canonicalize().unwrap_or(repo_override);
+    }
 
     match &cli.command {
         Commands::Status => {
