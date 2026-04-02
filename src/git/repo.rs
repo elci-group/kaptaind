@@ -1,4 +1,4 @@
-use git2::Repository;
+use git2::{Diff, DiffOptions, Repository};
 use std::path::Path;
 
 pub struct Repo {
@@ -10,6 +10,12 @@ impl Repo {
         Ok(Self {
             inner: Repository::open(path)?,
         })
+    }
+
+    pub fn diff_workdir(&self) -> Result<Diff<'_>, git2::Error> {
+        let head = self.inner.head()?.peel_to_tree()?;
+        let mut opts = DiffOptions::new();
+        self.inner.diff_tree_to_workdir_with_index(Some(&head), Some(&mut opts))
     }
 
     pub fn is_clean(&self) -> Result<bool, git2::Error> {

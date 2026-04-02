@@ -39,9 +39,56 @@ async fn main() -> anyhow::Result<()> {
             handle_log(&config, *limit)?;
         }
         Commands::Analyze => {
-            println!("Analyze not implemented yet");
+            handle_analyze(&config)?;
         }
     }
+
+    Ok(())
+}
+
+fn handle_analyze(config: &Config) -> anyhow::Result<()> {
+    let repo = kaptaind::git::repo::Repo::open(&config.repo_path)?;
+    let diff = repo.diff_workdir()?;
+
+    let mut paths = Vec::new();
+    diff.print(git2::DiffFormat::NameOnly, |delta, _, _| {
+        if let Some(path) = delta.new_file().path() {
+            paths.push(path.to_path_buf());
+        }
+        true
+    })?;
+
+    if paths.is_empty() {
+        println!("Working tree is clean. No analysis generated.");
+        return Ok(());
+    }
+
+    let timestamp = Utc::now();
+    let cluster = kaptaind::cluster::engine::Cluster {
+        id: uuid::Uuid::new_v4(),
+        started_at: timestamp,
+        ended_at: timestamp,
+        events: vec![kaptaind::watcher::FsEvent {
+            paths,
+            kind: kaptaind::watcher::FsEventKind::Modify,
+            timestamp,
+        }],
+    };
+
+    let diff_analysis = kaptaind::diff::analyze(&cluster, &config.repo_path);
+    let weight = kaptaind::weight::compute(&diff_analysis, &config.weights);
+    let bump = kaptaind::version::decide(&weight);
+
+    println!("Dry-run Analysis Result:");
+    println!("------------------------");
+    println!("Touched Paths: {}", diff_analysis.touched_paths);
+    println!("API Break:     {}", diff_analysis.api_breaking);
+    println!("API Added:     {}", diff_analysis.api_added);
+    println!("API Score:     {:.3}", diff_analysis.api);
+    println!("Deps Score:    {:.3}", diff_analysis.deps);
+    println!("Runtime Score: {:.3}", diff_analysis.runtime);
+    println!("Total Score:   {:.3}", weight.score);
+    println!("Projected Bump:{bump:?}");
 
     Ok(())
 }
