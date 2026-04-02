@@ -55,7 +55,16 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn handle_analyze(config: &Config) -> anyhow::Result<()> {
-    let repo = kaptaind::git::repo::Repo::open(&config.repo_path)?;
+    let repo = match kaptaind::git::repo::Repo::open(&config.repo_path) {
+        Ok(repo) => repo,
+        Err(err) => {
+            anyhow::bail!(
+                "Could not open Git repository at {}: {}",
+                config.repo_path.display(),
+                err
+            );
+        }
+    };
     let diff = repo.diff_workdir()?;
 
     let mut paths = Vec::new();
