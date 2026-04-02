@@ -13,9 +13,13 @@ impl Repo {
     }
 
     pub fn diff_workdir(&self) -> Result<Diff<'_>, git2::Error> {
-        let head = self.inner.head()?.peel_to_tree()?;
+        let head = match self.inner.head() {
+            Ok(head) => Some(head.peel_to_tree()?),
+            Err(_) => None, // Unborn branch (empty repo)
+        };
+
         let mut opts = DiffOptions::new();
-        self.inner.diff_tree_to_workdir_with_index(Some(&head), Some(&mut opts))
+        self.inner.diff_tree_to_workdir_with_index(head.as_ref(), Some(&mut opts))
     }
 
     pub fn is_clean(&self) -> Result<bool, git2::Error> {

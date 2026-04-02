@@ -3,7 +3,6 @@ use clap::{Parser, Subcommand};
 use kaptaind::config::loader::{self, Config};
 use kaptaind::daemon::scheduler::AnalysisArtifact;
 use std::fs;
-use std::path::PathBuf;
 use tabled::{settings::Style, Table, Tabled};
 
 #[derive(Parser)]

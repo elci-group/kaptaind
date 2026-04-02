@@ -1,10 +1,42 @@
 use std::process::Command;
 use tempfile::tempdir;
 
+fn write_default_config(dir: &std::path::Path) {
+    let config = r#"
+repo_path = "."
+
+[watch]
+path = "."
+recursive = true
+ignore_file = ".kaptainignore"
+
+[cluster]
+window = 5
+
+[weights]
+s = 0.35
+a = 0.3
+d = 0.2
+r = 0.15
+
+[push]
+enabled = false
+branch = "main"
+
+[ratelimit]
+min_commit_interval = 10
+
+[test]
+command = "cargo test"
+required = false
+"#;
+    std::fs::write(dir.join("kaptaind.toml"), config).unwrap();
+}
+
 #[test]
 fn test_status_command() {
     let dir = tempdir().expect("temp dir");
-    std::fs::write(dir.path().join("kaptaind.toml"), "").unwrap();
+    write_default_config(dir.path());
     std::fs::write(dir.path().join("VERSION"), "1.2.3").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
@@ -13,7 +45,8 @@ fn test_status_command() {
         .output()
         .expect("run command");
 
-    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "Command failed with stderr: {}", stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Version:    1.2.3"));
 }
@@ -21,7 +54,7 @@ fn test_status_command() {
 #[test]
 fn test_log_command_with_artifacts() {
     let dir = tempdir().expect("temp dir");
-    std::fs::write(dir.path().join("kaptaind.toml"), "").unwrap();
+    write_default_config(dir.path());
     
     let analysis_dir = dir.path().join(".kaptaind").join("analysis");
     std::fs::create_dir_all(&analysis_dir).unwrap();
@@ -63,7 +96,8 @@ fn test_log_command_with_artifacts() {
         .output()
         .expect("run command");
 
-    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "Command failed with stderr: {}", stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("2.0.0"));
     assert!(stdout.contains("Major"));
@@ -73,7 +107,7 @@ fn test_log_command_with_artifacts() {
 #[test]
 fn test_analyze_command_on_clean_repo() {
     let dir = tempdir().expect("temp dir");
-    std::fs::write(dir.path().join("kaptaind.toml"), "").unwrap();
+    write_default_config(dir.path());
     
     let _repo = git2::Repository::init(dir.path()).unwrap();
 
@@ -83,7 +117,8 @@ fn test_analyze_command_on_clean_repo() {
         .output()
         .expect("run command");
 
-    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "Command failed with stderr: {}", stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Working tree is clean"));
 }
@@ -91,7 +126,7 @@ fn test_analyze_command_on_clean_repo() {
 #[test]
 fn test_analyze_command_on_dirty_repo() {
     let dir = tempdir().expect("temp dir");
-    std::fs::write(dir.path().join("kaptaind.toml"), "").unwrap();
+    write_default_config(dir.path());
     
     let repo = git2::Repository::init(dir.path()).unwrap();
     
@@ -103,7 +138,9 @@ fn test_analyze_command_on_dirty_repo() {
     index.write().unwrap();
     let tree_id = index.write_tree().unwrap();
     let tree = repo.find_tree(tree_id).unwrap();
-    let sig = repo.signature().unwrap();
+    
+    // Create a dummy signature
+    let sig = git2::Signature::now("test", "test@example.com").unwrap();
     repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
 
     std::fs::write(&file_path, "pub fn hello() {}\npub fn world() {}").unwrap();
@@ -114,7 +151,8 @@ fn test_analyze_command_on_dirty_repo() {
         .output()
         .expect("run command");
 
-    assert!(output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "Command failed with stderr: {}", stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Dry-run Analysis Result:"));
     assert!(stdout.contains("Touched Paths: 1"));
