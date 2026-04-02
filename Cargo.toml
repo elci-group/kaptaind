@@ -2,6 +2,15 @@
 name = "kaptaind"
 version = "0.1.0"
 edition = "2021"
+default-run = "kaptaind"
+
+[[bin]]
+name = "kaptaind"
+path = "src/main.rs"
+
+[[bin]]
+name = "kaptaind-cli"
+path = "src/cli/main.rs"
 
 [dependencies]
 anyhow = "1"
@@ -19,6 +28,8 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 semver = "1"
 globset = "0.4"
+clap = { version = "4", features = ["derive"] }
+tabled = "0.15"
 
 [dev-dependencies]
 tempfile = "3"
