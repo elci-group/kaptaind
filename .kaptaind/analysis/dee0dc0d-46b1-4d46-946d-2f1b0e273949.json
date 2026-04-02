@@ -1,0 +1,28 @@
+{
+  "cluster_id": "dee0dc0d-46b1-4d46-946d-2f1b0e273949",
+  "version": "0.1.13",
+  "bump": "Patch",
+  "event_count": 1025,
+  "started_at": "2026-04-02T21:46:22.684092607Z",
+  "ended_at": "2026-04-02T21:46:24.024363418Z",
+  "diff": {
+    "structural": 0.86005,
+    "api": 0.0,
+    "deps": 0.0,
+    "runtime": 0.1,
+    "api_breaking": false,
+    "api_added": false,
+    "touched_paths": 609,
+    "api_touches": 0,
+    "api_signatures": 0,
+    "dependency_manifests": 0,
+    "dependency_nodes": 0,
+    "dependency_edges": 0,
+    "runtime_paths": 2
+  },
+  "weight": {
+    "score": 0.3160175,
+    "api_breaking": false,
+    "api_added": false
+  }
+}
