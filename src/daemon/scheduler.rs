@@ -201,15 +201,15 @@ fn persist_analysis_artifact(
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
-struct AnalysisArtifact {
-    cluster_id: String,
-    version: String,
-    bump: String,
-    event_count: usize,
-    started_at: DateTime<Utc>,
-    ended_at: DateTime<Utc>,
-    diff: DiffAnalysis,
-    weight: crate::weight::WeightResult,
+pub struct AnalysisArtifact {
+    pub cluster_id: String,
+    pub version: String,
+    pub bump: String,
+    pub event_count: usize,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    pub diff: DiffAnalysis,
+    pub weight: crate::weight::WeightResult,
 }
 
 #[derive(Debug, Clone)]
