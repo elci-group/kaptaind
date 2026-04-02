@@ -12,8 +12,8 @@ Phase 3 bridges the gap to the developer by letting them query the artifacts wri
 
 ## Deliverables
 
-- [ ] Scaffold a CLI binary (`kaptaind-cli` or `kpt` alias).
-- [ ] Implement `log` / `history` command to read and format the persisted analysis artifacts.
-- [ ] Implement `status` command to read the current daemon health and `VERSION` file state.
-- [ ] Implement `analyze` command to perform a one-off analysis of the working tree without committing, useful for dry runs.
-- [ ] Add integration tests for the CLI commands against a mock repository.
+- [x] Scaffold a CLI binary (`kaptaind-cli` or `kpt` alias).
+- [x] Implement `log` / `history` command to read and format the persisted analysis artifacts.
+- [x] Implement `status` command to read the current daemon health and `VERSION` file state.
+- [x] Implement `analyze` command to perform a one-off analysis of the working tree without committing, useful for dry runs.
+- [x] Add integration tests for the CLI commands against a mock repository.
