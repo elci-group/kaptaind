@@ -33,19 +33,65 @@ cp target/release/kaptaind ~/.local/bin/
 
 ### Running
 
-To run `kaptaind` against your current directory:
+To run `kaptaind` against your current directory in the foreground:
 
 ```bash
 kaptaind
 ```
 
-To let it run in the background as a continuous daemon:
+To securely run it as a detached background daemon:
 
 ```bash
-kaptaind &
+kaptaind --daemon
 ```
 
-### Configuration
+### CLI Inspection (`kaptaind-cli`)
+
+Kaptaind comes with a secondary binary to inspect the daemon's state:
+
+```bash
+# View live daemon health and current version
+kaptaind-cli status
+
+# View recent automated commits, scores, and bump reasons
+kaptaind-cli log
+
+# Dry-run an analysis on the current uncommitted working tree
+kaptaind-cli analyze
+```
+
+You can also use special `kaptaind` flags to see system indices:
+- `kaptaind --dock`: View watched static projects.
+- `kaptaind --radar`: View active projects and their event rates.
+- `kaptaind --lanes`: View the load states of internal analysis engines.
+
+### Background Architecture & Daemon Lifecycle
+
+Kaptaind operates entirely in the background, minimizing developer friction while maintaining deep contextual awareness of codebase changes. Here is how the internal architecture flows:
+
+1. **Daemonization & Persistence (`src/main.rs`)**: 
+   When executed with `--daemon`, the process forks and detaches from the current shell using the `daemonize` crate. It drops a `daemon.pid` alongside `daemon.out` and `daemon.err` files in the `.kaptaind/` directory.
+
+2. **Filesystem Watcher (`src/watcher/`)**: 
+   A dedicated OS thread runs the `notify` watcher. It translates low-level `inotify`/`FSEvents` into abstract `FsEvent` models and pushes them across a cross-thread `tokio::mpsc` channel. 
+
+3. **Temporal Clustering (`src/cluster/`)**: 
+   As file events stream in, the `ClusterEngine` groups them based on the `[cluster].window` (default 5s). This prevents rapid saves (e.g., from an IDE format-on-save) from triggering dozens of distinct commits.
+
+4. **Analysis Pipeline (`src/diff/`)**: 
+   Once a cluster window closes, the diff is scored across four specific engines:
+   - *Structural:* Counts raw path touches.
+   - *AST/API:* Regex-scans code for exported signatures (`pub fn`, `export class`, `def`).
+   - *Dependencies:* Parses `Cargo.toml`, `package.json`, etc.
+   - *Runtime:* Detects changes to deployment orchestration files (Dockerfiles, Kubernetes configs).
+
+5. **Test Hook & Telemetry Gating (`src/daemon/scheduler.rs`)**: 
+   Before any commit, the daemon updates `.kaptaind/status.json` and runs the pre-configured test hook (`cargo test` by default). If tests fail, the workflow aborts. It also tracks the "token cost" of the diff size and commit message size, writing to `.kaptaind/telemetry.json`.
+
+6. **Version Bump & Git Orchestration (`src/version/`, `src/commit/`)**: 
+   The weights are aggregated. Breaking APIs trigger `Major` bumps; new APIs trigger `Minor`; standard churn triggers `Patch`. The new version is flushed to the `VERSION` file, a rich commit message is generated, and a JSON artifact is stored in `.kaptaind/analysis/` before `git2` creates the commit. Optional DBUS desktop notifications (via `notify-send`) are dispatched via the `[notify]` config block.
+
+## Configuration
 
 `kaptaind` looks for an optional configuration file `kaptaind.toml` in the repository root.
 
