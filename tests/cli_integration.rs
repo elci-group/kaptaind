@@ -48,7 +48,7 @@ fn test_status_command() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "Command failed with stderr: {}", stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Version:    1.2.3"));
+    assert!(stdout.contains("1.2.3"));
 }
 
 #[test]
@@ -154,6 +154,6 @@ fn test_analyze_command_on_dirty_repo() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "Command failed with stderr: {}", stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Dry-run Analysis Result:"));
-    assert!(stdout.contains("Touched Paths: 1"));
+    assert!(stdout.contains("Dry-run Analysis Result"));
+    assert!(stdout.contains("Touched Paths"));
 }

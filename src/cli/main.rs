@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
+use colored::*;
 use kaptaind::config::loader::{self, Config};
 use kaptaind::daemon::scheduler::AnalysisArtifact;
 use std::fs;
@@ -96,16 +97,25 @@ fn handle_analyze(config: &Config) -> anyhow::Result<()> {
     let weight = kaptaind::weight::compute(&diff_analysis, &config.weights);
     let bump = kaptaind::version::decide(&weight);
 
-    println!("Dry-run Analysis Result:");
-    println!("------------------------");
-    println!("Touched Paths: {}", diff_analysis.touched_paths);
-    println!("API Break:     {}", diff_analysis.api_breaking);
-    println!("API Added:     {}", diff_analysis.api_added);
-    println!("API Score:     {:.3}", diff_analysis.api);
-    println!("Deps Score:    {:.3}", diff_analysis.deps);
-    println!("Runtime Score: {:.3}", diff_analysis.runtime);
-    println!("Total Score:   {:.3}", weight.score);
-    println!("Projected Bump:{bump:?}");
+    println!("{}", "🧪 Dry-run Analysis Result:".bold().magenta());
+    println!("{}", "-----------------------------------".magenta());
+    println!("{} {}", "🗂️ Touched Paths:".cyan(), diff_analysis.touched_paths);
+    println!("{} {}", "💥 API Break:    ".cyan(), if diff_analysis.api_breaking { "Yes".red().bold() } else { "No".green() });
+    println!("{} {}", "➕ API Added:    ".cyan(), if diff_analysis.api_added { "Yes".green() } else { "No".yellow() });
+    println!("{} {}", "🔌 API Score:    ".cyan(), format!("{:.3}", diff_analysis.api).yellow());
+    println!("{} {}", "📦 Deps Score:   ".cyan(), format!("{:.3}", diff_analysis.deps).yellow());
+    println!("{} {}", "⚙️ Runtime Score:".cyan(), format!("{:.3}", diff_analysis.runtime).yellow());
+    println!("{}", "-----------------------------------".magenta());
+    println!("{} {}", "🎯 Total Score:  ".bold().cyan(), format!("{:.3}", weight.score).bold().yellow());
+    
+    let bump_str = match bump {
+        kaptaind::version::Bump::Major => "🚀 Major".red().bold(),
+        kaptaind::version::Bump::Minor => "✨ Minor".cyan().bold(),
+        kaptaind::version::Bump::Patch => "🩹 Patch".green().bold(),
+        kaptaind::version::Bump::None => "📌 Stable".blue(),
+    };
+    
+    println!("{} {}", "📈 Projected Bump:".bold().cyan(), bump_str);
 
     Ok(())
 }
@@ -118,16 +128,16 @@ fn handle_status(config: &Config) -> anyhow::Result<()> {
         "None (no VERSION file)".to_string()
     };
 
-    println!("Kaptaind Status");
-    println!("===============");
-    println!("Repository: {}", config.repo_path.display());
-    println!("Version:    {version}");
+    println!("{} {}", "🚢".blue(), "Kaptaind Status".bold().blue());
+    println!("{}", "=================".blue());
+    println!("{} {}", "📂 Repository: ".bold().cyan(), config.repo_path.display().to_string().blue());
+    println!("{} {}", "🏷️  Version:    ".bold().cyan(), version.magenta());
 
     let pid_running = check_daemon_pid(config);
     if pid_running {
-        println!("Daemon:     Running");
+        println!("{} {}", "⚙️  Daemon:     ".bold().cyan(), "🟢 Running".green());
     } else {
-        println!("Daemon:     Stopped");
+        println!("{} {}", "⚙️  Daemon:     ".bold().cyan(), "🛑 Stopped".red());
     }
 
     Ok(())
@@ -146,25 +156,25 @@ fn check_daemon_pid(config: &Config) -> bool {
 
 #[derive(Tabled)]
 struct LogRow {
-    #[tabled(rename = "Version")]
+    #[tabled(rename = "🏷️ Version")]
     version: String,
-    #[tabled(rename = "Bump")]
+    #[tabled(rename = "📈 Bump")]
     bump: String,
-    #[tabled(rename = "Score")]
+    #[tabled(rename = "🎯 Score")]
     score: String,
-    #[tabled(rename = "Paths")]
+    #[tabled(rename = "🗂️ Paths")]
     paths: usize,
-    #[tabled(rename = "API Touches")]
+    #[tabled(rename = "🔌 API Touches")]
     api_touches: usize,
-    #[tabled(rename = "API Added")]
-    api_added: bool,
-    #[tabled(rename = "API Break")]
-    api_break: bool,
-    #[tabled(rename = "Events")]
+    #[tabled(rename = "➕ API Added")]
+    api_added: String,
+    #[tabled(rename = "💥 API Break")]
+    api_break: String,
+    #[tabled(rename = "⚡ Events")]
     events: usize,
-    #[tabled(rename = "Date")]
+    #[tabled(rename = "🕒 Date")]
     date: String,
-    #[tabled(rename = "ID")]
+    #[tabled(rename = "🆔 ID")]
     id: String,
 }
 
@@ -198,17 +208,26 @@ fn handle_log(config: &Config, limit: usize) -> anyhow::Result<()> {
 
     let rows: Vec<LogRow> = artifacts
         .into_iter()
-        .map(|a| LogRow {
-            version: a.version,
-            bump: a.bump,
-            score: format!("{:.3}", a.weight.score),
-            paths: a.diff.touched_paths,
-            api_touches: a.diff.api_touches,
-            api_added: a.diff.api_added,
-            api_break: a.diff.api_breaking,
-            events: a.event_count,
-            date: format_datetime(a.ended_at),
-            id: a.cluster_id.chars().take(8).collect(),
+        .map(|a| {
+            let bump_display = match a.bump.as_str() {
+                "Major" => "🚀 Major".red().bold().to_string(),
+                "Minor" => "✨ Minor".cyan().bold().to_string(),
+                "Patch" => "🩹 Patch".green().to_string(),
+                _ => "📌 Stable".blue().to_string(),
+            };
+
+            LogRow {
+                version: a.version.magenta().to_string(),
+                bump: bump_display,
+                score: format!("{:.3}", a.weight.score).yellow().to_string(),
+                paths: a.diff.touched_paths,
+                api_touches: a.diff.api_touches,
+                api_added: if a.diff.api_added { "Yes".green().to_string() } else { "No".to_string() },
+                api_break: if a.diff.api_breaking { "Yes".red().bold().to_string() } else { "No".to_string() },
+                events: a.event_count,
+                date: format_datetime(a.ended_at),
+                id: a.cluster_id.chars().take(8).collect(),
+            }
         })
         .collect();
 
