@@ -28,6 +28,14 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
     let ignore_matcher = IgnoreMatcher::load(&config.repo_path, &config.watch.ignore_file);
     let mut last_commit_at: Option<DateTime<Utc>> = None;
 
+    let mut status = StatusReport {
+        status: State::Idle,
+        last_version: load_version(&config.repo_path.join("VERSION")).map(|v| v.to_string()),
+        last_action_time: Utc::now(),
+        last_error: None,
+    };
+    write_status(&config.repo_path, &status);
+
     loop {
         tokio::select! {
             maybe_event = rx.recv() => {
@@ -37,13 +45,19 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
                             continue;
                         }
 
+                        if matches!(status.status, State::Idle) {
+                            status.status = State::Clustering;
+                            status.last_action_time = Utc::now();
+                            write_status(&config.repo_path, &status);
+                        }
+
                         if let Some(cluster) = cluster_engine.ingest(event) {
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status).await;
                         }
                     }
                     None => {
                         if let Some(cluster) = cluster_engine.flush() {
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status).await;
                         }
                         break;
                     }
@@ -51,7 +65,7 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
             }
             _ = tokio::time::sleep(config.cluster.window) => {
                 if let Some(cluster) = cluster_engine.flush() {
-                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster).await;
+                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status).await;
                 }
             }
         }
@@ -63,10 +77,13 @@ async fn process_cluster(
     config: &Config,
     last_commit_at: &mut Option<DateTime<Utc>>,
     cluster: Cluster,
+    status: &mut StatusReport,
 ) {
     let now = Utc::now();
     if !rate_limit_allows(now, *last_commit_at, config.ratelimit.min_commit_interval) {
         tracing::debug!("commit rate-limited");
+        status.status = State::Idle;
+        write_status(&config.repo_path, status);
         return;
     }
 
@@ -74,20 +91,37 @@ async fn process_cluster(
         Ok(clean) => clean,
         Err(err) => {
             tracing::error!(error = %err, "failed to inspect working tree");
+            status.status = State::Failed;
+            status.last_error = Some(err.to_string());
+            write_status(&config.repo_path, status);
             return;
         }
     };
 
     if is_clean {
         tracing::debug!("working tree clean; nothing to commit");
+        status.status = State::Idle;
+        write_status(&config.repo_path, status);
         return;
     }
+
+    status.status = State::Testing;
+    write_status(&config.repo_path, status);
 
     let test_outcome = run_test_hook(config).await;
     if should_block_commit(&config.test, &test_outcome) {
         log_test_failure(&test_outcome);
+        status.status = State::Failed;
+        if let TestOutcome::Failed { stderr, .. } = &test_outcome {
+            status.last_error = Some(stderr.clone());
+        }
+        write_status(&config.repo_path, status);
+        notify_error(config, "Tests failed");
         return;
     }
+
+    status.status = State::Committing;
+    write_status(&config.repo_path, status);
 
     let mut diff = crate::diff::analyze(&cluster, &config.repo_path);
     apply_test_outcome(&mut diff, &test_outcome);
@@ -96,6 +130,8 @@ async fn process_cluster(
 
     if bump == Bump::None {
         tracing::debug!("no semantic version bump required");
+        status.status = State::Idle;
+        write_status(&config.repo_path, status);
         return;
     }
 
@@ -104,6 +140,10 @@ async fn process_cluster(
     let next = crate::version::apply(previous, bump);
     if let Err(err) = save_version(&version_path, &next) {
         tracing::error!(error = %err, path = ?version_path, "failed writing VERSION file");
+        status.status = State::Failed;
+        status.last_error = Some(err.to_string());
+        write_status(&config.repo_path, status);
+        notify_error(config, &err.to_string());
         return;
     }
 
@@ -114,16 +154,32 @@ async fn process_cluster(
     let msg = format_commit(&cluster, &diff, &weight, bump, &next);
     if let Err(err) = crate::commit::commit(&repo.inner, &msg) {
         tracing::error!(error = %err, "commit failed");
+        status.status = State::Failed;
+        status.last_error = Some(err.to_string());
+        write_status(&config.repo_path, status);
+        notify_error(config, &err.to_string());
         return;
     }
 
     if config.push.enabled {
         if let Err(err) = crate::push::push(&repo.inner, &config.push.branch) {
             tracing::warn!(error = %err, "push failed");
+            status.status = State::Failed;
+            status.last_error = Some(format!("push failed: {err}"));
+            write_status(&config.repo_path, status);
+            notify_error(config, &err.to_string());
+            return;
         }
     }
 
+    notify_commit(config, &next.to_string(), weight.score, &msg);
+    
     *last_commit_at = Some(now);
+    status.status = State::Idle;
+    status.last_version = Some(next.to_string());
+    status.last_action_time = now;
+    status.last_error = None;
+    write_status(&config.repo_path, status);
 }
 
 fn rate_limit_allows(now: DateTime<Utc>, last: Option<DateTime<Utc>>, min_interval: Duration) -> bool {
@@ -333,6 +389,55 @@ impl IgnoreMatcher {
 
 fn looks_like_glob(value: &str) -> bool {
     value.contains('*') || value.contains('?') || value.contains('[') || value.contains('{')
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub enum State {
+    Idle,
+    Clustering,
+    Testing,
+    Committing,
+    Failed,
+}
+
+#[derive(Debug, Clone, Serialize, serde::Deserialize)]
+pub struct StatusReport {
+    pub status: State,
+    pub last_version: Option<String>,
+    pub last_action_time: DateTime<Utc>,
+    pub last_error: Option<String>,
+}
+
+fn write_status(repo_path: &Path, report: &StatusReport) {
+    let dir = repo_path.join(".kaptaind");
+    if std::fs::create_dir_all(&dir).is_err() {
+        return;
+    }
+    if let Ok(content) = serde_json::to_string_pretty(report) {
+        let _ = std::fs::write(dir.join("status.json"), content);
+    }
+}
+
+fn notify_commit(config: &Config, version: &str, score: f32, msg: &str) {
+    if let Some(cmd) = &config.notify.on_commit {
+        let _ = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(cmd)
+            .env("KAPTAIND_VERSION", version)
+            .env("KAPTAIND_SCORE", score.to_string())
+            .env("KAPTAIND_MSG", msg)
+            .spawn();
+    }
+}
+
+fn notify_error(config: &Config, error: &str) {
+    if let Some(cmd) = &config.notify.on_error {
+        let _ = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(cmd)
+            .env("KAPTAIND_ERROR", error)
+            .spawn();
+    }
 }
 
 #[cfg(test)]

@@ -10,6 +10,8 @@ pub struct Config {
     pub push: PushConfig,
     pub ratelimit: RateLimitConfig,
     pub test: TestConfig,
+    #[serde(default)]
+    pub notify: NotifyConfig,
     pub repo_path: PathBuf,
 }
 
@@ -44,6 +46,12 @@ pub struct TestConfig {
     pub required: bool,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct NotifyConfig {
+    pub on_commit: Option<String>,
+    pub on_error: Option<String>,
+}
+
 impl Default for Config {
     fn default() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -73,6 +81,7 @@ impl Default for Config {
                 command: Some("cargo test".to_string()),
                 required: true,
             },
+            notify: NotifyConfig::default(),
             repo_path: cwd,
         }
     }

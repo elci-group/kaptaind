@@ -78,6 +78,12 @@ min_commit_interval = 10 # Seconds
 [test]
 command = "cargo test"
 required = true
+
+[notify]
+# Optional shell hooks for desktop notifications (e.g. notify-send)
+# Context variables available: $KAPTAIND_VERSION, $KAPTAIND_SCORE, $KAPTAIND_MSG, $KAPTAIND_ERROR
+# on_commit = 'notify-send "Kaptaind Bump" "Version $KAPTAIND_VERSION"'
+# on_error = 'notify-send -u critical "Kaptaind Error" "$KAPTAIND_ERROR"'
 ```
 
 ### .kaptainignore
@@ -91,9 +97,10 @@ It supports:
 
 ## Artifacts
 
-As `kaptaind` runs, it drops two critical artifacts:
+As `kaptaind` runs, it drops critical artifacts:
 - `VERSION`: Contains the authoritative, dynamically-managed semantic version (e.g. `0.1.2`).
 - `.kaptaind/analysis/<uuid>.json`: Retains full structured evidence of exactly *why* a semantic bump occurred for every cluster that resulted in a commit.
+- `.kaptaind/status.json`: Contains the real-time status of the daemon (`Idle`, `Clustering`, `Testing`, `Committing`, `Failed`), useful for integration with `i3status` or `polybar`.
 
 ## License
 
