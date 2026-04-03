@@ -6,8 +6,6 @@ It eliminates manual version bumping and subjective commit messages by replacing
 
 ## Features
 
-![Kaptaind Demo](demo.gif)
-
 - **Filesystem watcher:** Native, OS-level filesystem event watching using `notify`.
 - **Change clustering:** Automatically batches grouped sequences of fast file changes (default window: 5 seconds).
 - **Intelligent Diff Scoring:**
@@ -47,6 +45,8 @@ To securely run it as a detached background daemon:
 kaptaind --daemon
 ```
 
+![Kaptaind Daemon Status](running_and_status.gif)
+
 ### CLI Inspection (`kaptaind-cli`)
 
 Kaptaind comes with a secondary binary to inspect the daemon's state:
@@ -62,10 +62,14 @@ kaptaind-cli log
 kaptaind-cli analyze
 ```
 
+![Kaptaind Analyze and Log Demo](analyze_and_log.gif)
+
 You can also use special `kaptaind` flags to see system indices:
 - `kaptaind --dock`: View watched static projects.
 - `kaptaind --radar`: View active projects and their event rates.
 - `kaptaind --lanes`: View the load states of internal analysis engines.
+
+![Kaptaind System Indices](views.gif)
 
 ### Background Architecture & Daemon Lifecycle
 
