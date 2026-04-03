@@ -89,14 +89,29 @@ impl Default for Config {
 
 pub fn load() -> anyhow::Result<Config> {
     let cwd = std::env::current_dir()?;
-    let path = cwd.join("kaptaind.toml");
+    let repo_root = find_repo_root(&cwd);
+    let path = repo_root.join("kaptaind.toml");
     if !path.exists() {
-        return Ok(finalize_config(cwd, Config::default()));
+        return Ok(finalize_config(repo_root, Config::default()));
     }
 
     let content = std::fs::read_to_string(&path)?;
     let cfg: Config = toml::from_str(&content)?;
-    Ok(finalize_config(cwd, cfg))
+    Ok(finalize_config(repo_root, cfg))
+}
+
+fn find_repo_root(start: &Path) -> PathBuf {
+    let mut current = start;
+    loop {
+        if current.join(".git").exists() || current.join("kaptaind.toml").exists() || current.join("Cargo.toml").exists() {
+            return current.to_path_buf();
+        }
+        match current.parent() {
+            Some(parent) => current = parent,
+            None => break,
+        }
+    }
+    start.to_path_buf()
 }
 
 fn finalize_config(base_dir: PathBuf, mut config: Config) -> Config {

@@ -30,6 +30,8 @@ semver = "1"
 globset = "0.4"
 clap = { version = "4", features = ["derive"] }
 tabled = "0.15"
+daemonize = "0.5.0"
+libc = "0.2.184"
 
 [dev-dependencies]
 tempfile = "3"

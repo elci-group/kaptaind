@@ -123,7 +123,7 @@ fn handle_status(config: &Config) -> anyhow::Result<()> {
     println!("Repository: {}", config.repo_path.display());
     println!("Version:    {version}");
 
-    let pid_running = check_daemon_pid();
+    let pid_running = check_daemon_pid(config);
     if pid_running {
         println!("Daemon:     Running");
     } else {
@@ -133,9 +133,14 @@ fn handle_status(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn check_daemon_pid() -> bool {
-    // MVP stub: checking daemon health would normally involve a PID file or socket
-    // Since phase 1 didn't write a PID file, we'll just return unknown/false.
+fn check_daemon_pid(config: &Config) -> bool {
+    let pid_file = config.repo_path.join(".kaptaind").join("daemon.pid");
+    if let Ok(pid_str) = fs::read_to_string(pid_file) {
+        if let Ok(pid) = pid_str.trim().parse::<i32>() {
+            // Signal 0 checks if the process is running and we have permissions to signal it.
+            return unsafe { libc::kill(pid, 0) } == 0;
+        }
+    }
     false
 }
 
@@ -147,6 +152,14 @@ struct LogRow {
     bump: String,
     #[tabled(rename = "Score")]
     score: String,
+    #[tabled(rename = "Paths")]
+    paths: usize,
+    #[tabled(rename = "API Touches")]
+    api_touches: usize,
+    #[tabled(rename = "API Added")]
+    api_added: bool,
+    #[tabled(rename = "API Break")]
+    api_break: bool,
     #[tabled(rename = "Events")]
     events: usize,
     #[tabled(rename = "Date")]
@@ -189,6 +202,10 @@ fn handle_log(config: &Config, limit: usize) -> anyhow::Result<()> {
             version: a.version,
             bump: a.bump,
             score: format!("{:.3}", a.weight.score),
+            paths: a.diff.touched_paths,
+            api_touches: a.diff.api_touches,
+            api_added: a.diff.api_added,
+            api_break: a.diff.api_breaking,
             events: a.event_count,
             date: format_datetime(a.ended_at),
             id: a.cluster_id.chars().take(8).collect(),
