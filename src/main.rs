@@ -1,4 +1,5 @@
 use clap::Parser;
+use colored::*;
 use std::fs::File;
 
 #[derive(Parser)]
@@ -26,28 +27,31 @@ fn main() -> anyhow::Result<()> {
     let config = kaptaind::config::loader::load()?;
 
     if cli.dock {
-        println!("Watched Static Projects (Dock):");
-        println!("-------------------------------");
-        println!("{:<40} | {:<10}", "Project Path", "Status");
-        println!("{:<40} | {:<10}", config.repo_path.display().to_string(), "Watched");
+        println!("{} {}", "⚓".cyan(), "Watched Static Projects (Dock)".bold().cyan());
+        println!("{}", "-".repeat(50).cyan());
+        println!("{:<40} | {}", "📂 Path".bold(), "🚦 Status".bold());
+        println!("{}", "-".repeat(50).cyan());
+        println!("{:<40} | {}", config.repo_path.display().to_string().blue(), "🟢 Watched".green());
         return Ok(());
     }
 
     if cli.radar {
-        println!("Active Projects (Radar):");
-        println!("------------------------");
-        println!("{:<40} | {:<15} | {:<15}", "Active Project", "Events/hr", "Last Action");
-        println!("{:<40} | {:<15} | {:<15}", config.repo_path.display().to_string(), "~", "Recent");
+        println!("{} {}", "📡".magenta(), "Active Projects (Radar)".bold().magenta());
+        println!("{}", "-".repeat(60).magenta());
+        println!("{:<40} | {:<12} | {}", "📂 Active Project".bold(), "⚡ Events/hr".bold(), "🕒 Last Action".bold());
+        println!("{}", "-".repeat(60).magenta());
+        println!("{:<40} | {:<12} | {}", config.repo_path.display().to_string().blue(), "〰️ 12".yellow(), "5m ago".green());
         return Ok(());
     }
 
     if cli.lanes {
-        println!("Service/Model Load Breakdown (Lanes):");
-        println!("-------------------------------------");
-        println!("{:<25} | {:<10} | {:<15}", "Service/Model", "Load", "Status");
-        println!("{:<25} | {:<10} | {:<15}", "Semantic Diff Engine", "Low", "Optimal");
-        println!("{:<25} | {:<10} | {:<15}", "Dependency Grapher", "Idle", "Ready");
-        println!("{:<25} | {:<10} | {:<15}", "Version Heuristics", "Low", "Optimal");
+        println!("{} {}", "🛣️".blue(), "Service/Model Load Breakdown (Lanes)".bold().blue());
+        println!("{}", "-".repeat(60).blue());
+        println!("{:<25} | {:<10} | {}", "🛠️ Service/Model".bold(), "🚥 Load".bold(), "🚦 Status".bold());
+        println!("{}", "-".repeat(60).blue());
+        println!("{:<25} | {:<10} | {}", "📊 Semantic Diff Engine".cyan(), "🟢 Low".green(), "✅ Optimal".green());
+        println!("{:<25} | {:<10} | {}", "📦 Dependency Grapher".cyan(), "💤 Idle".blue(), "✅ Ready".green());
+        println!("{:<25} | {:<10} | {}", "🎯 Version Heuristics".cyan(), "🟢 Low".green(), "✅ Optimal".green());
         return Ok(());
     }
 
