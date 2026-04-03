@@ -42,20 +42,25 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
                 match maybe_event {
                     Some(event) => {
                         if ignore_matcher.is_ignored(&event.paths) {
+                            tracing::trace!(?event.paths, "event ignored");
                             continue;
                         }
 
                         if matches!(status.status, State::Idle) {
+                            tracing::trace!("transitioning state to Clustering");
                             status.status = State::Clustering;
                             status.last_action_time = Utc::now();
                             write_status(&config.repo_path, &status);
                         }
 
+                        tracing::trace!(?event.paths, "ingesting event");
                         if let Some(cluster) = cluster_engine.ingest(event) {
+                            tracing::info!(cluster_id = %cluster.id, "cluster window expired by new event");
                             process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status).await;
                         }
                     }
                     None => {
+                        tracing::trace!("event channel closed");
                         if let Some(cluster) = cluster_engine.flush() {
                             process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status).await;
                         }
@@ -65,6 +70,7 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
             }
             _ = tokio::time::sleep(config.cluster.window) => {
                 if let Some(cluster) = cluster_engine.flush() {
+                    tracing::info!(cluster_id = %cluster.id, "cluster window expired by timeout");
                     process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status).await;
                 }
             }
@@ -107,6 +113,7 @@ async fn process_cluster(
 
     status.status = State::Testing;
     write_status(&config.repo_path, status);
+    tracing::trace!("running test hook");
 
     let test_outcome = run_test_hook(config).await;
     if should_block_commit(&config.test, &test_outcome) {
@@ -124,8 +131,10 @@ async fn process_cluster(
     write_status(&config.repo_path, status);
 
     let mut diff = crate::diff::analyze(&cluster, &config.repo_path);
+    tracing::trace!(?diff, "diff analysis complete");
     apply_test_outcome(&mut diff, &test_outcome);
     let weight = crate::weight::compute(&diff, &config.weights);
+    tracing::trace!(?weight, "weight computation complete");
     let bump = crate::version::decide(&weight);
 
     if bump == Bump::None {
@@ -152,6 +161,26 @@ async fn process_cluster(
     }
 
     let msg = format_commit(&cluster, &diff, &weight, bump, &next);
+    
+    // Abstract token calculation
+    let mut input_tokens = 0;
+    for event in &cluster.events {
+        for path in &event.paths {
+            if let Ok(meta) = std::fs::metadata(config.repo_path.join(path)) {
+                input_tokens += (meta.len() / 4) as usize;
+            }
+        }
+    }
+    let output_tokens = msg.len() / 4;
+    let metrics = crate::daemon::telemetry::track_cost(&config.repo_path, input_tokens, output_tokens);
+    tracing::info!(
+        input_tokens = metrics.input_tokens,
+        output_tokens = metrics.output_tokens,
+        marginal_cost = %metrics.marginal_cost,
+        aggregate_cost = %metrics.aggregate_cost,
+        "Token usage and cost tracking"
+    );
+
     if let Err(err) = crate::commit::commit(&repo.inner, &msg) {
         tracing::error!(error = %err, "commit failed");
         status.status = State::Failed;
