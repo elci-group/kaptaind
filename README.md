@@ -6,6 +6,8 @@ It eliminates manual version bumping and subjective commit messages by replacing
 
 ## Features
 
+![Kaptaind Demo](demo.gif)
+
 - **Filesystem watcher:** Native, OS-level filesystem event watching using `notify`.
 - **Change clustering:** Automatically batches grouped sequences of fast file changes (default window: 5 seconds).
 - **Intelligent Diff Scoring:**
