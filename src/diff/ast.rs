@@ -41,6 +41,7 @@ pub fn api_score(cluster: &Cluster, repo_root: &Path) -> ApiAnalysis {
                 touches += 1;
                 exported_signatures.extend(signatures.clone());
                 
+                // Note: Full AST diff requires old state which we approximate here
                 match event.kind {
                     FsEventKind::Remove => {
                         api_breaking = true;
@@ -48,7 +49,9 @@ pub fn api_score(cluster: &Cluster, repo_root: &Path) -> ApiAnalysis {
                     FsEventKind::Create => {
                         api_added = true;
                     }
-                    FsEventKind::Modify | FsEventKind::Other => {}
+                    FsEventKind::Modify | FsEventKind::Other => {
+                        // Rough assumption based on current event capabilities
+                    }
                 }
                 
                 let local_touch_score = 0.25_f32; // per file heuristic

@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 pub async fn start(config: Config) -> anyhow::Result<()> {
-    let (tx, rx) = tokio::sync::mpsc::channel(10000);
+    let (tx, rx) = tokio::sync::mpsc::channel(1000);
     let shutdown = Arc::new(AtomicBool::new(false));
 
     let watcher_handle = crate::watcher::fs::start(tx.clone(), config.watch.clone(), shutdown.clone())?;
