@@ -644,7 +644,22 @@ fn handle_status(config: &Config) -> anyhow::Result<()> {
 
     let pid_running = get_daemon_pid(config);
     if let Some(pid) = pid_running {
-        println!("{} {} {}", "⚙️  Daemon:     ".bold().cyan(), "🟢 Running".green(), format!("(PID: {})", pid).blue());
+        let status_json = config.repo_path.join(".kaptaind").join("status.json");
+        let mut state_display = "[🟢 Running]".green().to_string();
+        
+        if let Ok(content) = fs::read_to_string(&status_json) {
+            if let Ok(report) = serde_json::from_str::<kaptaind::daemon::scheduler::StatusReport>(&content) {
+                state_display = match report.status {
+                    kaptaind::daemon::scheduler::State::Idle => "[💤 Idle]".blue().to_string(),
+                    kaptaind::daemon::scheduler::State::Clustering => "[🔍 Clustering]".cyan().to_string(),
+                    kaptaind::daemon::scheduler::State::Testing => "[🧪 Testing]".yellow().to_string(),
+                    kaptaind::daemon::scheduler::State::Committing => "[🚢 Committing]".magenta().to_string(),
+                    kaptaind::daemon::scheduler::State::Failed => "[🛑 Failed]".red().to_string(),
+                };
+            }
+        }
+        
+        println!("{} {} {}", "⚙️  Daemon:     ".bold().cyan(), state_display, format!("(PID: {})", pid).blue());
     } else {
         println!("{} {}", "⚙️  Daemon:     ".bold().cyan(), "🛑 Stopped".red());
     }
