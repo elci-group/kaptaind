@@ -234,13 +234,19 @@ fn is_web_config(path: &Path) -> bool {
         "vite.config",
         "nuxt.config",
         "svelte.config",
+        "astro.config",
         "tsconfig",
         "jsconfig",
         "webpack.config",
         "postcss.config",
         "tailwind.config",
     ];
-    stem_patterns.iter().any(|pat| lower.starts_with(pat))
+    if stem_patterns.iter().any(|pat| lower.starts_with(pat)) {
+        return true;
+    }
+
+    // Mobile / native config files
+    is_mobile_config(path)
 }
 
 fn resolve_path(repo_root: &Path, path: &Path) -> PathBuf {
