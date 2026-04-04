@@ -67,12 +67,15 @@
 - Tests live inline in the same source files under `#[cfg(test)]`.
 
 ## Scoring and versioning behavior
-- `src/diff/text.rs` computes structural score from event count, unique paths, and event span.
-- `src/diff/ast.rs` treats public Rust items, exported JS/TS declarations, and Python `def`/`class` lines as API signatures using line-based scanning.
-- `src/diff/ast.rs` also treats paths containing `/api/`, `/public/`, or ending in `.proto`, `.graphql`, `openapi.yaml`, or `openapi.yml` as API surface even without extracted signatures.
-- `src/diff/api.rs` parses dependency manifests from `Cargo.toml`, `package.json`, and `requirements.txt`; lockfiles are recognized as dependency files, but dependency extraction is only implemented for those three manifest formats.
-- `src/diff/api.rs` treats paths containing `docker`, `deploy`, `k8s`, `helm`, or ending in `.sh`, `.service`, `.env` as runtime-sensitive.
-- `src/weight/calculator.rs` combines structural/API/dependency/runtime scores using configured `s`, `a`, `d`, and `r` weights.
+- `src/diff/text.rs` computes structural score: `0.5*event_density + 0.35*path_spread + 0.15*churn`.
+- `src/diff/ast.rs` uses the `AdapterRegistry` to resolve language-specific adapters. If no adapter matches, falls back to line-based signature scanning.
+- Language adapters (in `src/diff/lang/heuristics.rs`) detect public API symbols for: Rust, Go, Swift, Kotlin, TypeScript, JavaScript, Vue, Svelte, Astro, SCSS/Sass/Less, HTML/CSS, Python.
+- Scores are normalized by language confidence: Rust/Go/Swift/Kotlin=1.0, TypeScript=0.9, Vue/Svelte/Astro=0.85, Python=0.8, JavaScript=0.7, SCSS=0.5, HTML/CSS=0.4.
+- API surface detection also covers: paths containing `/api/`, `/public/`, `.proto`, `.graphql`, `openapi.yaml/yml`; framework route files (`app/`, `pages/`, `routes/`); design token files (`tailwind.config`, `theme`, `tokens`); CSS custom properties.
+- `src/diff/api.rs` parses dependency manifests from `Cargo.toml`, `package.json`, `requirements.txt`. Recognizes lock files: `Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, `poetry.lock`, `Podfile`, `Podfile.lock`, `Package.resolved`, `build.gradle(.kts)`, `settings.gradle(.kts)`, `gradle.lockfile`.
+- `src/diff/api.rs` runtime detection: `docker`, `deploy`, `k8s`, `helm`, `.sh`, `.service`, `.env`; web configs (`next.config.*`, `vite.config.*`, `nuxt.config.*`, `svelte.config.*`, `astro.config.*`, `tsconfig.*`, `jsconfig.*`, `webpack.config.*`, `postcss.config.*`, `tailwind.config.*`, `vercel.json`, `netlify.toml`, `.babelrc`); mobile configs (`Info.plist`, `project.pbxproj`, `AndroidManifest.xml`, `*.xcconfig`, `*.entitlements`, `proguard-rules.pro`, `gradle.properties`).
+- `src/diff/bundle.rs` (opt-in): runs a build command, measures output dir size, scores `|new - old| / old`, clamped to [0, 1].
+- `src/weight/calculator.rs` combines scores: `s*structural + a*api + d*deps + r*runtime + b*bundle`.
 - `src/version/semver.rs` decides bumps with these rules:
   - breaking API => `Major`
   - added API or score `> 0.6` => `Minor`
