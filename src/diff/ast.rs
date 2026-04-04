@@ -138,6 +138,7 @@ pub fn api_score_with_cache(cluster: &Cluster, repo_root: &Path, ast_cache: &mut
         signatures: exported_signatures.len(),
         breaking: api_breaking,
         added: api_added,
+        cache_hits,
     }
 }
 
