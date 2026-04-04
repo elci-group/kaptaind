@@ -103,13 +103,16 @@
 - Watcher startup is synchronized with a readiness channel; startup failures are surfaced before returning from `watcher::fs::start()`.
 
 ## Testing approach
-- There is no separate `tests/` directory; tests are colocated in modules such as:
+- Unit tests are colocated in modules:
   - `src/cluster/engine.rs`
-  - `src/config/loader.rs`
-  - `src/diff/api.rs`
-  - `src/diff/ast.rs`
+  - `src/config/loader.rs` — path normalization, staging config deserialization
+  - `src/diff/api.rs` — dependency/runtime detection, web/mobile configs
+  - `src/diff/ast.rs` — signature detection, route files, design tokens
+  - `src/diff/bundle.rs` — bundle scoring, backward compat
+  - `src/diff/lang/heuristics.rs` — all 12 language adapters
   - `src/version/semver.rs`
   - `src/daemon/scheduler.rs`
+- Integration tests in `tests/cli_integration.rs` cover: `status`, `log`, `analyze`, `init` commands.
 - Tests use `tempfile` heavily for filesystem-dependent behavior.
 - Async behavior is tested with `#[tokio::test]` in `src/daemon/scheduler.rs`.
 - The scheduler’s test hook runs commands with `sh -lc <command>` and sets the working directory to `repo_path`.
