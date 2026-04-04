@@ -6,6 +6,7 @@ import { listAnalysisArtifacts } from "@/lib/kaptaind/analysis";
 import ProGate from "@/components/dashboard/ProGate";
 import Card, { CardHeader, CardTitle } from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
+import { AiGenerateButton } from "@/components/dashboard/AiGenerateButton";
 
 const REPO_PATH = process.env.KAPTAIND_REPO_PATH || "/home/adminx/kaptaind";
 
@@ -102,10 +103,16 @@ export default async function BumpReasoningPage() {
                 </div>
               </div>
 
-              <div className="mt-4 rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm dark:border-violet-800 dark:bg-violet-900/10">
-                <p className="italic text-zinc-400">
-                  Connect &quot;Explain&quot; to POST /api/ai/bump-reasoning.
-                </p>
+              <div className="mt-4">
+                <AiGenerateButton
+                  endpoint="/api/ai/bump-reasoning"
+                  payload={{
+                    projectId: "default",
+                    clusterId: a.cluster_id,
+                  }}
+                  label="Explain Bump"
+                  resultLabel="Reasoning"
+                />
               </div>
             </Card>
           ))}
