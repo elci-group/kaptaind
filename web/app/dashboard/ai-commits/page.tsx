@@ -6,6 +6,7 @@ import { listAnalysisArtifacts } from "@/lib/kaptaind/analysis";
 import ProGate from "@/components/dashboard/ProGate";
 import Card, { CardHeader, CardTitle } from "@/components/ui/Card";
 import Badge from "@/components/ui/Badge";
+import { AiGenerateButton } from "@/components/dashboard/AiGenerateButton";
 
 const REPO_PATH = process.env.KAPTAIND_REPO_PATH || "/home/adminx/kaptaind";
 
