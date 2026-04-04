@@ -8,17 +8,33 @@ It eliminates manual version bumping and subjective commit messages by replacing
 
 - **Filesystem watcher:** Native, OS-level filesystem event watching using `notify`.
 - **Change clustering:** Automatically batches grouped sequences of fast file changes (default window: 5 seconds).
-- **Intelligent Diff Scoring:**
+- **Multi-language diff analysis** with dedicated adapters for 12 languages/frameworks:
+  - **Rust** — `pub fn`, `pub struct`, `pub enum`, `pub trait`
+  - **Go** — exported functions and types (uppercase identifiers)
+  - **Swift** — `public`/`open` funcs, classes, structs, enums, protocols, `@objc` exports
+  - **Kotlin** — `fun`, `class`, `data class`, `sealed class`, `object`, `interface`, `@Composable`, `@JvmStatic`
+  - **TypeScript** — all export kinds, React hooks (`useX`), Next.js route exports, middleware detection
+  - **JavaScript** — ESM exports, `module.exports`, React hooks
+  - **Vue** — `defineProps`, `defineEmits`, `defineExpose` (removing props/emits is breaking)
+  - **Svelte** — `export let` props, Svelte 5 `$props()` runes
+  - **Astro** — frontmatter exports, `Astro.props`
+  - **SCSS/Sass/Less** — `$variables`, `@variables`, `@mixin`, `@forward`, CSS custom properties
+  - **HTML/CSS** — CSS custom properties, class selectors
+  - **Python** — `def`, `class`
+- **Intelligent Diff Scoring** across five dimensions:
   - *Structural:* Scores the amount of code churn and file spread.
-  - *API Analysis:* Detects new, modified, and removed API surface by scanning exported signatures in Rust, Python, TS/JS.
-  - *Dependency Tracking:* Parses `Cargo.toml`, `package.json`, and `requirements.txt` to calculate dependency risk.
-  - *Runtime Impact:* Triggers high severity when deployment configs (`docker`, `k8s`, `.service`, etc.) are modified.
+  - *API Analysis:* Detects new, modified, and removed API surface via language adapters and fallback line scanning. Recognizes framework route files (Next.js `app/`, `pages/`, SvelteKit `routes/`), design token files (`tailwind.config`, `theme`, `tokens`), and CSS custom properties as API surface.
+  - *Dependency Tracking:* Parses `Cargo.toml`, `package.json`, `requirements.txt`. Recognizes `yarn.lock`, `bun.lockb`, `pnpm-lock.yaml`, `Podfile`, `build.gradle(.kts)`, and `gradle.lockfile`.
+  - *Runtime Impact:* Triggers high severity when deployment configs (`docker`, `k8s`, `.service`), web configs (`next.config.*`, `vite.config.*`, `vercel.json`, `tsconfig.*`), or mobile configs (`Info.plist`, `AndroidManifest.xml`, `*.xcconfig`) are modified.
+  - *Bundle Size (opt-in):* Runs a configurable build command, measures output directory size, and scores based on delta from previous build.
 - **Semantic Auto-versioning:**
   - **Major:** Automatically bumped on breaking API removals.
   - **Minor:** Automatically bumped when new APIs are added, or diff scores reach the `> 0.6` threshold.
   - **Patch:** Bumped for standard structural churn and minor improvements.
 - **Automated Commit Formatting:** Git commits are generated for each bump, summarizing what changed semantically (e.g., `kaptaind: Minor -> v0.2.0 [api-added; paths=4; api_touches=2; deps=0; runtime=0; score=0.62]`).
 - **Test Hook Gating:** Automatically runs a configurable test hook (like `cargo test`) before committing; fails block the commit entirely.
+- **Configurable staging:** Choose between staging all files (default), only cluster-touched files, or pattern-matched files. Exclude patterns prevent sensitive files from being committed.
+- **Aim of Change (AoC) sessions:** Group related changes into named sessions with full trace history, agent interception, and shipped manifests.
 
 ## Getting Started
 
