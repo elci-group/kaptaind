@@ -1,36 +1,80 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Kaptaind Pro — SaaS Dashboard
 
-## Getting Started
+This directory contains the Kaptaind Pro web application: a Next.js-based SaaS dashboard for monitoring and managing kaptaind daemons across projects.
 
-First, run the development server:
+## Overview
+
+Kaptaind Pro provides:
+
+- **Multi-project dashboard**: Monitor versions, scores, and commits across repositories.
+- **Team collaboration**: Share version history and analysis artifacts with teammates.
+- **Notifications & webhooks**: Real-time alerts for version bumps and test failures.
+- **API history**: Browse semantic versioning decisions and diff analysis.
+- **Integration**: OAuth-based login via GitHub/GitLab; configurable webhook ingestion.
+
+## Quick Start
 
 ```bash
+cd web
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## Stack
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+- **Framework**: Next.js (App Router)
+- **Styling**: Tailwind CSS
+- **Auth**: NextAuth with OAuth providers
+- **Database**: Prisma ORM
+- **Hosting**: Deploy to Vercel (recommended) or any Node.js host
 
-## Learn More
+## Development
 
-To learn more about Next.js, take a look at the following resources:
+- `npm run dev` — Start development server (hot reload)
+- `npm run build` — Build for production
+- `npm run start` — Run production build
+- `npm run test` — Run tests (if configured)
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Environment Setup
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Create a `.env.local` file:
 
-## Deploy on Vercel
+```env
+NEXTAUTH_URL=http://localhost:3000
+NEXTAUTH_SECRET=<random-secret>
+DATABASE_URL=postgres://...
+GITHUB_ID=<your-oauth-app-id>
+GITHUB_SECRET=<your-oauth-secret>
+```
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Deployment
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Deploy to Vercel:
+
+```bash
+vercel deploy
+```
+
+Or any Node.js host. See [Next.js deployment docs](https://nextjs.org/docs/deployment).
+
+## Documentation
+
+- **Parent README**: See `/README.md` in repository root for kaptaind daemon documentation.
+- **Next.js docs**: [https://nextjs.org/docs](https://nextjs.org/docs)
+
+## Troubleshooting
+
+### "Cannot find module 'next/...'"
+
+Run `npm install && npm run build` to ensure dependencies are up-to-date.
+
+### "Database connection failed"
+
+Verify `DATABASE_URL` in `.env.local` is correct and your database is running.
+
+### "OAuth login fails"
+
+Ensure `GITHUB_ID`, `GITHUB_SECRET`, and `NEXTAUTH_URL` match your OAuth app configuration on GitHub.
+
