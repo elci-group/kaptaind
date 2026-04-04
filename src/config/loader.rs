@@ -216,4 +216,72 @@ mod tests {
             PathBuf::from("/tmp/kaptaind-config/repo/config/.kaptainignore")
         );
     }
+
+    #[test]
+    fn staging_defaults_to_all_mode() {
+        let config = Config::default();
+        assert!(matches!(config.staging.mode, super::StagingMode::All));
+        assert!(config.staging.include.is_empty());
+        assert!(config.staging.exclude.is_empty());
+    }
+
+    #[test]
+    fn staging_deserializes_from_toml() {
+        let toml_str = r#"
+            repo_path = "."
+            [watch]
+            path = "."
+            recursive = true
+            ignore_file = ".kaptainignore"
+            [cluster]
+            window = 5
+            [weights]
+            s = 0.35
+            a = 0.30
+            d = 0.20
+            r = 0.15
+            [push]
+            enabled = false
+            branch = "main"
+            [ratelimit]
+            min_commit_interval = 10
+            [test]
+            command = "cargo test"
+            required = true
+            [staging]
+            mode = "cluster"
+            exclude = ["*.log", ".env*"]
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(matches!(config.staging.mode, super::StagingMode::Cluster));
+        assert_eq!(config.staging.exclude, vec!["*.log", ".env*"]);
+    }
+
+    #[test]
+    fn staging_missing_from_toml_defaults_to_all() {
+        let toml_str = r#"
+            repo_path = "."
+            [watch]
+            path = "."
+            recursive = true
+            ignore_file = ".kaptainignore"
+            [cluster]
+            window = 5
+            [weights]
+            s = 0.35
+            a = 0.30
+            d = 0.20
+            r = 0.15
+            [push]
+            enabled = false
+            branch = "main"
+            [ratelimit]
+            min_commit_interval = 10
+            [test]
+            command = "cargo test"
+            required = true
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(matches!(config.staging.mode, super::StagingMode::All));
+    }
 }

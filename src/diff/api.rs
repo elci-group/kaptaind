@@ -426,4 +426,34 @@ mod tests {
         assert!(analysis.score > 0.0);
         assert_eq!(analysis.paths, 1);
     }
+
+    #[test]
+    fn podfile_is_dependency_file() {
+        assert!(is_dependency_file(Path::new("Podfile")));
+    }
+
+    #[test]
+    fn build_gradle_kts_is_dependency_file() {
+        assert!(is_dependency_file(Path::new("build.gradle.kts")));
+    }
+
+    #[test]
+    fn info_plist_is_mobile_config() {
+        assert!(super::is_mobile_config(Path::new("Info.plist")));
+    }
+
+    #[test]
+    fn xcconfig_is_mobile_config() {
+        assert!(super::is_mobile_config(Path::new("Debug.xcconfig")));
+    }
+
+    #[test]
+    fn android_manifest_is_mobile_config() {
+        assert!(super::is_mobile_config(Path::new("AndroidManifest.xml")));
+    }
+
+    #[test]
+    fn astro_config_is_web_config() {
+        assert!(is_web_config(Path::new("astro.config.mjs")));
+    }
 }
