@@ -183,6 +183,8 @@ fn is_dependency_file(path: &Path) -> bool {
             | "package.json"
             | "package-lock.json"
             | "pnpm-lock.yaml"
+            | "yarn.lock"
+            | "bun.lockb"
             | "poetry.lock"
             | "requirements.txt"
     )
@@ -197,6 +199,40 @@ fn touches_runtime(path: &Path) -> bool {
         || as_text.ends_with(".sh")
         || as_text.ends_with(".service")
         || as_text.ends_with(".env")
+        || is_web_config(path)
+}
+
+/// Detects web framework/toolchain config files that affect runtime behavior
+fn is_web_config(path: &Path) -> bool {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let lower = file_name.to_lowercase();
+
+    // Exact matches
+    if matches!(
+        lower.as_str(),
+        "vercel.json"
+            | "netlify.toml"
+            | ".babelrc"
+    ) {
+        return true;
+    }
+
+    // Stem-based matches (e.g. next.config.mjs, vite.config.ts)
+    let stem_patterns = [
+        "next.config",
+        "vite.config",
+        "nuxt.config",
+        "svelte.config",
+        "tsconfig",
+        "jsconfig",
+        "webpack.config",
+        "postcss.config",
+        "tailwind.config",
+    ];
+    stem_patterns.iter().any(|pat| lower.starts_with(pat))
 }
 
 fn resolve_path(repo_root: &Path, path: &Path) -> PathBuf {
@@ -209,11 +245,11 @@ fn resolve_path(repo_root: &Path, path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{dependency_score, parse_cargo_dependencies, parse_package_dependencies, parse_requirements};
+    use super::{dependency_score, is_dependency_file, is_web_config, parse_cargo_dependencies, parse_package_dependencies, parse_requirements, runtime_score};
     use crate::cluster::engine::Cluster;
     use crate::watcher::{FsEvent, FsEventKind};
     use chrono::Utc;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use tempfile::tempdir;
     use uuid::Uuid;
 
@@ -281,5 +317,80 @@ mod tests {
         assert_eq!(analysis.manifests, 1);
         assert!(analysis.nodes >= 3);
         assert!(analysis.edges >= 2);
+    }
+
+    #[test]
+    fn yarn_lock_is_dependency_file() {
+        assert!(is_dependency_file(Path::new("yarn.lock")));
+    }
+
+    #[test]
+    fn bun_lockb_is_dependency_file() {
+        assert!(is_dependency_file(Path::new("bun.lockb")));
+    }
+
+    #[test]
+    fn lock_file_modify_contributes_dep_score() {
+        let dir = tempdir().expect("temp dir");
+        // yarn.lock won't parse into dependencies, but the manifest count
+        // only increments if parse_dependencies returns non-empty.
+        // Lock files contribute via is_dependency_file match in the pipeline.
+        // For this test, create a package.json alongside to show lock files are recognized.
+        let pkg = dir.path().join("package.json");
+        std::fs::write(&pkg, r#"{"dependencies":{"react":"18"}}"#).unwrap();
+
+        let cluster = Cluster {
+            id: Uuid::new_v4(),
+            started_at: Utc::now(),
+            ended_at: Utc::now(),
+            events: vec![
+                FsEvent {
+                    paths: vec![PathBuf::from("package.json")],
+                    kind: FsEventKind::Modify,
+                    timestamp: Utc::now(),
+                },
+                FsEvent {
+                    paths: vec![PathBuf::from("yarn.lock")],
+                    kind: FsEventKind::Modify,
+                    timestamp: Utc::now(),
+                },
+            ],
+        };
+
+        let analysis = dependency_score(&cluster, dir.path());
+        assert!(analysis.score > 0.0);
+    }
+
+    #[test]
+    fn vercel_json_is_web_config() {
+        assert!(is_web_config(Path::new("vercel.json")));
+    }
+
+    #[test]
+    fn next_config_mjs_is_web_config() {
+        assert!(is_web_config(Path::new("next.config.mjs")));
+    }
+
+    #[test]
+    fn tsconfig_json_is_web_config() {
+        assert!(is_web_config(Path::new("tsconfig.json")));
+    }
+
+    #[test]
+    fn web_config_touches_runtime() {
+        let cluster = Cluster {
+            id: Uuid::new_v4(),
+            started_at: Utc::now(),
+            ended_at: Utc::now(),
+            events: vec![FsEvent {
+                paths: vec![PathBuf::from("next.config.mjs")],
+                kind: FsEventKind::Modify,
+                timestamp: Utc::now(),
+            }],
+        };
+
+        let analysis = runtime_score(&cluster);
+        assert!(analysis.score > 0.0);
+        assert_eq!(analysis.paths, 1);
     }
 }

@@ -78,9 +78,20 @@ fn signature_from_line(line: &str) -> Option<String> {
         "export class ",
         "export interface ",
         "export type ",
+        "export default function ",
+        "export default class ",
+        "export default ",
+        "export const ",
+        "export let ",
+        "export var ",
         "def ",
         "class ",
     ];
+
+    // CSS custom property (design token): `--primary: #000;`
+    if line.starts_with("--") && line.contains(':') {
+        return Some(line.to_string());
+    }
 
     PREFIXES
         .iter()
@@ -95,6 +106,36 @@ fn is_api_surface(path: &Path) -> bool {
         || as_text.ends_with(".graphql")
         || as_text.ends_with("openapi.yaml")
         || as_text.ends_with("openapi.yml")
+        || is_route_file(path)
+        || is_design_token_file(path)
+}
+
+/// Detects framework route files (Next.js, Remix, SvelteKit, etc.)
+fn is_route_file(path: &Path) -> bool {
+    let as_text = path.to_string_lossy().to_lowercase();
+    // Handle both absolute-ish paths (/app/) and relative (app/)
+    let route_dirs = ["app/", "pages/", "routes/", "src/routes/"];
+    let has_route_dir = route_dirs.iter().any(|dir| {
+        as_text.contains(&format!("/{dir}")) || as_text.starts_with(dir)
+    });
+    if !has_route_dir {
+        return false;
+    }
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+    matches!(ext, "tsx" | "ts" | "jsx" | "js" | "svelte" | "vue" | "astro")
+}
+
+/// Detects design token / theme config files
+fn is_design_token_file(path: &Path) -> bool {
+    let file_stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_lowercase())
+        .unwrap_or_default();
+    matches!(
+        file_stem.as_str(),
+        "tailwind.config" | "theme" | "tokens" | "design-tokens"
+    )
 }
 
 fn resolve_path(repo_root: &Path, path: &Path) -> PathBuf {
@@ -147,6 +188,86 @@ mod tests {
         let analysis = api_score(&cluster, dir.path());
         assert!(analysis.breaking);
         assert!(!analysis.added);
+    }
+
+    #[test]
+    fn detects_export_default_function_signature() {
+        let dir = tempdir().expect("temp dir");
+        let file_path = dir.path().join("src/component.tsx");
+        std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        std::fs::write(&file_path, "export default function App() {}\nexport const API_URL = \"test\";\n").unwrap();
+
+        let cluster = cluster_with_event(FsEvent {
+            paths: vec![PathBuf::from("src/component.tsx")],
+            kind: FsEventKind::Modify,
+            timestamp: Utc::now(),
+        });
+
+        let analysis = api_score(&cluster, dir.path());
+        assert_eq!(analysis.signatures, 2);
+    }
+
+    #[test]
+    fn detects_route_file_as_api_surface() {
+        let dir = tempdir().expect("temp dir");
+        let file_path = dir.path().join("app/dashboard/page.tsx");
+        std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        std::fs::write(&file_path, "// empty page\n").unwrap();
+
+        let cluster = cluster_with_event(FsEvent {
+            paths: vec![PathBuf::from("app/dashboard/page.tsx")],
+            kind: FsEventKind::Create,
+            timestamp: Utc::now(),
+        });
+
+        let analysis = api_score(&cluster, dir.path());
+        assert_eq!(analysis.touches, 1);
+        assert!(analysis.added);
+    }
+
+    #[test]
+    fn detects_removed_pages_route_as_breaking() {
+        let dir = tempdir().expect("temp dir");
+        let cluster = cluster_with_event(FsEvent {
+            paths: vec![PathBuf::from("pages/about.tsx")],
+            kind: FsEventKind::Remove,
+            timestamp: Utc::now(),
+        });
+
+        let analysis = api_score(&cluster, dir.path());
+        assert!(analysis.breaking);
+    }
+
+    #[test]
+    fn detects_design_token_file_as_api_surface() {
+        let dir = tempdir().expect("temp dir");
+        let file_path = dir.path().join("tailwind.config.ts");
+        std::fs::write(&file_path, "export default {}\n").unwrap();
+
+        let cluster = cluster_with_event(FsEvent {
+            paths: vec![PathBuf::from("tailwind.config.ts")],
+            kind: FsEventKind::Modify,
+            timestamp: Utc::now(),
+        });
+
+        let analysis = api_score(&cluster, dir.path());
+        assert_eq!(analysis.touches, 1);
+    }
+
+    #[test]
+    fn detects_css_custom_property_as_signature() {
+        let dir = tempdir().expect("temp dir");
+        let file_path = dir.path().join("tokens.css");
+        std::fs::write(&file_path, "--primary: #000;\n--spacing-lg: 2rem;\n").unwrap();
+
+        let cluster = cluster_with_event(FsEvent {
+            paths: vec![PathBuf::from("tokens.css")],
+            kind: FsEventKind::Modify,
+            timestamp: Utc::now(),
+        });
+
+        let analysis = api_score(&cluster, dir.path());
+        assert_eq!(analysis.signatures, 2);
     }
 
     fn cluster_with_event(event: FsEvent) -> Cluster {

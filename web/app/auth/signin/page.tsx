@@ -8,32 +8,23 @@ export default function SignInPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-
-  const [debug, setDebug] = useState("");
+  const [loading, setLoading] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
-    setDebug("");
+    setLoading(true);
 
-    console.log("[signin] attempting credentials login", { email });
-
-    const result = await signIn("credentials", {
+    // Let NextAuth handle the redirect (full page navigation ensures cookies are set)
+    await signIn("credentials", {
       email,
       password,
-      redirect: false,
+      callbackUrl: "/dashboard",
     });
 
-    console.log("[signin] signIn result:", JSON.stringify(result));
-    setDebug(JSON.stringify(result, null, 2));
-
-    if (result?.error) {
-      setError(`Auth error: ${result.error} (status ${result.status})`);
-    } else if (result?.ok) {
-      window.location.href = "/dashboard";
-    } else {
-      setError("Unexpected response from auth");
-    }
+    // If we reach here, signIn failed (it redirects on success)
+    setError("Invalid email or password");
+    setLoading(false);
   };
 
   return (
@@ -99,18 +90,13 @@ export default function SignInPage() {
             </div>
             <button
               type="submit"
-              className="w-full rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-violet-700"
+              disabled={loading}
+              className="w-full rounded-lg bg-violet-600 px-4 py-2.5 text-sm font-medium text-white hover:bg-violet-700 disabled:opacity-50"
             >
-              Sign In
+              {loading ? "Signing in..." : "Sign In"}
             </button>
           </form>
         </div>
-
-        {debug && (
-          <pre className="mt-4 overflow-auto rounded-lg bg-zinc-900 p-4 text-xs text-green-400 max-h-48">
-            {debug}
-          </pre>
-        )}
 
         <p className="mt-6 text-center text-sm text-zinc-500 dark:text-zinc-400">
           Don&apos;t have an account?{" "}
