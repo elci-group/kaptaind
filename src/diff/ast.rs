@@ -111,14 +111,23 @@ pub fn api_score(cluster: &Cluster, repo_root: &Path) -> ApiAnalysis {
 }
 
 fn extract_signatures_fallback(path: &Path) -> HashSet<String> {
-    let Ok(content) = std::fs::read_to_string(path) else {
+    use std::io::{BufRead, BufReader};
+    let Ok(meta) = std::fs::metadata(path) else {
+        return HashSet::new();
+    };
+    if meta.len() > 5 * 1024 * 1024 {
+        return HashSet::new();
+    }
+    let Ok(file) = std::fs::File::open(path) else {
         return HashSet::new();
     };
 
-    content
+    let reader = BufReader::new(file);
+    reader
         .lines()
-        .map(str::trim)
-        .filter_map(signature_from_line)
+        .filter_map(Result::ok)
+        .map(|s| s.trim().to_string())
+        .filter_map(|s| signature_from_line(&s))
         .collect()
 }
 

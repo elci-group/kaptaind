@@ -2,6 +2,20 @@ use super::adapter::{ApiSurface, AstDiff, AstRepresentation, Language, LanguageA
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+
+const MAX_PARSE_SIZE_BYTES: u64 = 5 * 1024 * 1024; // 5MB
+
+fn read_lines_safe(file: &Path) -> anyhow::Result<impl Iterator<Item = String>> {
+    let meta = std::fs::metadata(file)?;
+    if meta.len() > MAX_PARSE_SIZE_BYTES {
+        anyhow::bail!("File too large for AST parsing ({} bytes)", meta.len());
+    }
+    let f = File::open(file)?;
+    let reader = BufReader::new(f);
+    Ok(reader.lines().filter_map(Result::ok))
+}
 
 fn calculate_hash<T: Hash>(t: &T) -> u64 {
     let mut s = DefaultHasher::new();
@@ -42,19 +56,21 @@ impl LanguageAdapter for RustAdapter {
         paths.iter().filter(|p| p.extension().map_or(false, |e| e == "rs")).cloned().collect()
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
-        let content = std::fs::read_to_string(file)?;
         let mut symbols = Vec::new();
-        for line in content.lines().map(str::trim) {
-            if let Some(rest) = line.strip_prefix("pub fn ") {
-                symbols.push(Symbol { name: rest.to_string(), kind: "function".to_string() });
-            } else if let Some(rest) = line.strip_prefix("pub async fn ") {
-                symbols.push(Symbol { name: rest.to_string(), kind: "function".to_string() });
-            } else if let Some(rest) = line.strip_prefix("pub struct ") {
-                symbols.push(Symbol { name: rest.to_string(), kind: "struct".to_string() });
-            } else if let Some(rest) = line.strip_prefix("pub enum ") {
-                symbols.push(Symbol { name: rest.to_string(), kind: "enum".to_string() });
-            } else if let Some(rest) = line.strip_prefix("pub trait ") {
-                symbols.push(Symbol { name: rest.to_string(), kind: "trait".to_string() });
+        if let Ok(lines) = read_lines_safe(file) {
+            for line in lines {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("pub fn ") {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "function".to_string() });
+                } else if let Some(rest) = line.strip_prefix("pub async fn ") {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "function".to_string() });
+                } else if let Some(rest) = line.strip_prefix("pub struct ") {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "struct".to_string() });
+                } else if let Some(rest) = line.strip_prefix("pub enum ") {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "enum".to_string() });
+                } else if let Some(rest) = line.strip_prefix("pub trait ") {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "trait".to_string() });
+                }
             }
         }
         let hash = calculate_hash(&symbols);
@@ -83,11 +99,13 @@ impl LanguageAdapter for TypeScriptAdapter {
         }).cloned().collect()
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
-        let content = std::fs::read_to_string(file)?;
         let mut symbols = Vec::new();
-        for line in content.lines().map(str::trim) {
-            if let Some(rest) = line.strip_prefix("export ") {
-                symbols.push(Symbol { name: rest.to_string(), kind: "export".to_string() });
+        if let Ok(lines) = read_lines_safe(file) {
+            for line in lines {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("export ") {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "export".to_string() });
+                }
             }
         }
         let hash = calculate_hash(&symbols);
@@ -116,13 +134,15 @@ impl LanguageAdapter for JavaScriptAdapter {
         }).cloned().collect()
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
-        let content = std::fs::read_to_string(file)?;
         let mut symbols = Vec::new();
-        for line in content.lines().map(str::trim) {
-            if let Some(rest) = line.strip_prefix("export ") {
-                symbols.push(Symbol { name: rest.to_string(), kind: "export".to_string() });
-            } else if let Some(rest) = line.strip_prefix("module.exports") {
-                symbols.push(Symbol { name: rest.to_string(), kind: "export".to_string() });
+        if let Ok(lines) = read_lines_safe(file) {
+            for line in lines {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("export ") {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "export".to_string() });
+                } else if let Some(rest) = line.strip_prefix("module.exports") {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "export".to_string() });
+                }
             }
         }
         let hash = calculate_hash(&symbols);
@@ -148,13 +168,15 @@ impl LanguageAdapter for PythonAdapter {
         paths.iter().filter(|p| p.extension().map_or(false, |e| e == "py")).cloned().collect()
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
-        let content = std::fs::read_to_string(file)?;
         let mut symbols = Vec::new();
-        for line in content.lines().map(str::trim) {
-            if let Some(rest) = line.strip_prefix("def ") {
-                symbols.push(Symbol { name: rest.to_string(), kind: "function".to_string() });
-            } else if let Some(rest) = line.strip_prefix("class ") {
-                symbols.push(Symbol { name: rest.to_string(), kind: "class".to_string() });
+        if let Ok(lines) = read_lines_safe(file) {
+            for line in lines {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("def ") {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "function".to_string() });
+                } else if let Some(rest) = line.strip_prefix("class ") {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "class".to_string() });
+                }
             }
         }
         let hash = calculate_hash(&symbols);
@@ -180,17 +202,19 @@ impl LanguageAdapter for GoAdapter {
         paths.iter().filter(|p| p.extension().map_or(false, |e| e == "go")).cloned().collect()
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
-        let content = std::fs::read_to_string(file)?;
         let mut symbols = Vec::new();
-        for line in content.lines().map(str::trim) {
-            if let Some(rest) = line.strip_prefix("func ") {
-                // simple heur: if first letter is uppercase, it's exported
-                if rest.chars().next().unwrap_or('a').is_uppercase() {
-                    symbols.push(Symbol { name: rest.to_string(), kind: "function".to_string() });
-                }
-            } else if let Some(rest) = line.strip_prefix("type ") {
-                if rest.chars().next().unwrap_or('a').is_uppercase() {
-                    symbols.push(Symbol { name: rest.to_string(), kind: "type".to_string() });
+        if let Ok(lines) = read_lines_safe(file) {
+            for line in lines {
+                let line = line.trim();
+                if let Some(rest) = line.strip_prefix("func ") {
+                    // simple heur: if first letter is uppercase, it's exported
+                    if rest.chars().next().unwrap_or('a').is_uppercase() {
+                        symbols.push(Symbol { name: rest.to_string(), kind: "function".to_string() });
+                    }
+                } else if let Some(rest) = line.strip_prefix("type ") {
+                    if rest.chars().next().unwrap_or('a').is_uppercase() {
+                        symbols.push(Symbol { name: rest.to_string(), kind: "type".to_string() });
+                    }
                 }
             }
         }
@@ -220,13 +244,15 @@ impl LanguageAdapter for HtmlCssAdapter {
         }).cloned().collect()
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
-        let content = std::fs::read_to_string(file)?;
         let mut symbols = Vec::new();
-        for line in content.lines().map(str::trim) {
-            if line.starts_with("--") && line.contains(':') {
-                symbols.push(Symbol { name: line.to_string(), kind: "css_var".to_string() });
-            } else if line.starts_with('.') && line.contains('{') {
-                symbols.push(Symbol { name: line.to_string(), kind: "css_class".to_string() });
+        if let Ok(lines) = read_lines_safe(file) {
+            for line in lines {
+                let line = line.trim();
+                if line.starts_with("--") && line.contains(':') {
+                    symbols.push(Symbol { name: line.to_string(), kind: "css_var".to_string() });
+                } else if line.starts_with('.') && line.contains('{') {
+                    symbols.push(Symbol { name: line.to_string(), kind: "css_class".to_string() });
+                }
             }
         }
         let hash = calculate_hash(&symbols);
