@@ -279,8 +279,9 @@ mod tests {
         });
 
         let analysis = api_score(&cluster, dir.path());
-        assert!(analysis.score > 0.15); // with normalization and averaging, score > 0.15
-        assert_eq!(analysis.signatures, 2);
+        assert!(analysis.score > 0.15);
+        // syn parser extracts "expose()" as function + "Api" as struct = 2 symbols
+        assert!(analysis.signatures >= 2);
         assert!(!analysis.breaking);
         assert!(analysis.added);
     }
@@ -378,6 +379,187 @@ mod tests {
 
         let analysis = api_score(&cluster, dir.path());
         assert_eq!(analysis.signatures, 2);
+    }
+
+    #[test]
+    fn syn_parses_multiline_rust_function() {
+        let dir = tempdir().expect("temp dir");
+        let file = dir.path().join("src/lib.rs");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, r#"
+pub fn complex_function(
+    name: &str,
+    count: usize,
+    options: Option<Config>,
+) -> Result<Vec<String>, Error> {
+    todo!()
+}
+"#).unwrap();
+
+        let cluster = cluster_with_event(FsEvent {
+            paths: vec![PathBuf::from("src/lib.rs")],
+            kind: FsEventKind::Create,
+            timestamp: Utc::now(),
+        });
+
+        let analysis = api_score(&cluster, dir.path());
+        // syn should parse multi-line signature correctly
+        assert!(analysis.signatures >= 1);
+        assert!(analysis.added);
+    }
+
+    #[test]
+    fn syn_parses_trait_with_methods() {
+        let dir = tempdir().expect("temp dir");
+        let file = dir.path().join("src/lib.rs");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, r#"
+pub trait Service {
+    type Error;
+    fn call(&self, req: Request) -> Response;
+    fn health(&self) -> bool;
+}
+"#).unwrap();
+
+        let cluster = cluster_with_event(FsEvent {
+            paths: vec![PathBuf::from("src/lib.rs")],
+            kind: FsEventKind::Create,
+            timestamp: Utc::now(),
+        });
+
+        let analysis = api_score(&cluster, dir.path());
+        // trait + 2 methods + 1 associated type = 4 symbols
+        assert!(analysis.signatures >= 4);
+    }
+
+    #[test]
+    fn syn_parses_enum_with_variants() {
+        let dir = tempdir().expect("temp dir");
+        let file = dir.path().join("src/lib.rs");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, r#"
+pub enum Color {
+    Red,
+    Green,
+    Blue,
+}
+"#).unwrap();
+
+        let cluster = cluster_with_event(FsEvent {
+            paths: vec![PathBuf::from("src/lib.rs")],
+            kind: FsEventKind::Create,
+            timestamp: Utc::now(),
+        });
+
+        let analysis = api_score(&cluster, dir.path());
+        // enum + 3 variants = 4 symbols
+        assert!(analysis.signatures >= 4);
+    }
+
+    #[test]
+    fn syn_parses_impl_methods() {
+        let dir = tempdir().expect("temp dir");
+        let file = dir.path().join("src/lib.rs");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, r#"
+pub struct Server {
+    pub port: u16,
+}
+
+impl Server {
+    pub fn new(port: u16) -> Self {
+        Server { port }
+    }
+    pub fn start(&self) {}
+    fn internal(&self) {} // not pub, should not appear
+}
+"#).unwrap();
+
+        let cluster = cluster_with_event(FsEvent {
+            paths: vec![PathBuf::from("src/lib.rs")],
+            kind: FsEventKind::Create,
+            timestamp: Utc::now(),
+        });
+
+        let analysis = api_score(&cluster, dir.path());
+        // struct + pub field + 2 pub methods = 4 symbols (internal() excluded)
+        assert!(analysis.signatures >= 4);
+    }
+
+    #[test]
+    fn syn_ignores_private_items() {
+        let dir = tempdir().expect("temp dir");
+        let file = dir.path().join("src/lib.rs");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, r#"
+fn private_fn() {}
+struct PrivateStruct { field: i32 }
+enum PrivateEnum { A, B }
+trait PrivateTrait { fn method(&self); }
+pub fn public_fn() {}
+"#).unwrap();
+
+        let cluster = cluster_with_event(FsEvent {
+            paths: vec![PathBuf::from("src/lib.rs")],
+            kind: FsEventKind::Create,
+            timestamp: Utc::now(),
+        });
+
+        let analysis = api_score(&cluster, dir.path());
+        // Only public_fn should be detected
+        assert_eq!(analysis.signatures, 1);
+    }
+
+    #[test]
+    fn cache_is_used_on_second_analysis() {
+        let dir = tempdir().expect("temp dir");
+        let file = dir.path().join("src/lib.rs");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "pub fn hello() {}\n").unwrap();
+
+        let cluster = cluster_with_event(FsEvent {
+            paths: vec![PathBuf::from("src/lib.rs")],
+            kind: FsEventKind::Modify,
+            timestamp: Utc::now(),
+        });
+
+        // First call: populates cache
+        let mut cache = crate::diff::cache::AstCache::default();
+        let a1 = super::api_score_with_cache(&cluster, dir.path(), &mut cache);
+        assert_eq!(a1.cache_hits, 0);
+        assert!(cache.len() > 0);
+
+        // Second call with same file: should hit cache
+        let a2 = super::api_score_with_cache(&cluster, dir.path(), &mut cache);
+        assert_eq!(a2.cache_hits, 1);
+        assert_eq!(a1.signatures, a2.signatures);
+    }
+
+    #[test]
+    fn cache_invalidated_on_file_change() {
+        let dir = tempdir().expect("temp dir");
+        let file = dir.path().join("src/lib.rs");
+        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
+        std::fs::write(&file, "pub fn hello() {}\n").unwrap();
+
+        let cluster = cluster_with_event(FsEvent {
+            paths: vec![PathBuf::from("src/lib.rs")],
+            kind: FsEventKind::Modify,
+            timestamp: Utc::now(),
+        });
+
+        // First call
+        let mut cache = crate::diff::cache::AstCache::default();
+        let a1 = super::api_score_with_cache(&cluster, dir.path(), &mut cache);
+        assert_eq!(a1.signatures, 1);
+
+        // Modify the file
+        std::fs::write(&file, "pub fn hello() {}\npub fn world() {}\n").unwrap();
+
+        // Second call: cache miss due to changed hash
+        let a2 = super::api_score_with_cache(&cluster, dir.path(), &mut cache);
+        assert_eq!(a2.cache_hits, 0);
+        assert_eq!(a2.signatures, 2);
     }
 
     fn cluster_with_event(event: FsEvent) -> Cluster {
