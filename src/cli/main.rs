@@ -438,6 +438,8 @@ fn generate_toml(project: &ProjectType) -> String {
         ProjectType::Node => ("npm test", "s = 0.30\na = 0.35\nd = 0.20\nr = 0.15"),
         ProjectType::Python => ("pytest", "s = 0.35\na = 0.30\nd = 0.20\nr = 0.15"),
         ProjectType::Go => ("go test ./...", "s = 0.35\na = 0.30\nd = 0.20\nr = 0.15"),
+        ProjectType::Swift => ("swift test", "s = 0.35\na = 0.30\nd = 0.20\nr = 0.15"),
+        ProjectType::Kotlin => ("./gradlew test", "s = 0.35\na = 0.30\nd = 0.20\nr = 0.15"),
         ProjectType::Unknown => ("echo 'no test command configured'", "s = 0.35\na = 0.30\nd = 0.20\nr = 0.15"),
     };
 
@@ -510,6 +512,28 @@ fn generate_ignore(project: &ProjectType) -> String {
         }
         ProjectType::Go => {
             lines.extend(["", "# Go", "vendor"]);
+        }
+        ProjectType::Swift => {
+            lines.extend([
+                "",
+                "# Swift",
+                ".build",
+                "DerivedData",
+                "*.xcodeproj/xcuserdata",
+                "*.xcworkspace/xcuserdata",
+                "Pods",
+            ]);
+        }
+        ProjectType::Kotlin => {
+            lines.extend([
+                "",
+                "# Kotlin/Gradle",
+                "build",
+                ".gradle",
+                "*.iml",
+                ".idea",
+                "local.properties",
+            ]);
         }
         ProjectType::Unknown => {}
     }

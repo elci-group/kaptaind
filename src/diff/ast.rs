@@ -136,6 +136,7 @@ fn extract_signatures_fallback(path: &Path) -> HashSet<String> {
 
 fn signature_from_line(line: &str) -> Option<String> {
     const PREFIXES: &[&str] = &[
+        // JS/TS
         "export function ",
         "export async function ",
         "export class ",
@@ -147,8 +148,26 @@ fn signature_from_line(line: &str) -> Option<String> {
         "export const ",
         "export let ",
         "export var ",
+        // Python
         "def ",
         "class ",
+        // Swift
+        "public func ",
+        "open func ",
+        "public class ",
+        "open class ",
+        "public struct ",
+        "public enum ",
+        "public protocol ",
+        // Kotlin
+        "fun ",
+        "data class ",
+        "sealed class ",
+        "enum class ",
+        "object ",
+        "interface ",
+        "suspend fun ",
+        "annotation class ",
     ];
 
     if line.starts_with("--") && line.contains(':') {
