@@ -748,13 +748,14 @@ fn notify_commit(config: &Config, version: &str, score: f32, msg: &str) {
             "🚀 **Kaptaind** shipped `v{}`\n**Score:** {:.3}\n**Message:**\n```\n{}\n```",
             version, score, msg
         );
-        let payload = if url.contains("discord.com") {
-            serde_json::json!({ "content": content })
-        } else {
-            serde_json::json!({ "text": content }) // Slack compatible
-        };
-
+        
         tokio::spawn(async move {
+            let payload = if url.contains("discord.com") {
+                serde_json::json!({ "content": content })
+            } else {
+                serde_json::json!({ "text": content }) // Slack compatible
+            };
+
             let client = reqwest::Client::new();
             if let Err(err) = client.post(&url).json(&payload).send().await {
                 tracing::warn!(error = %err, "failed to send commit webhook");
@@ -775,13 +776,14 @@ fn notify_error(config: &Config, error: &str) {
     if let Some(webhook_url) = &config.notify.webhook_url {
         let url = webhook_url.clone();
         let content = format!("🚨 **Kaptaind Error**\n```\n{}\n```", error);
-        let payload = if url.contains("discord.com") {
-            serde_json::json!({ "content": content })
-        } else {
-            serde_json::json!({ "text": content })
-        };
-
+        
         tokio::spawn(async move {
+            let payload = if url.contains("discord.com") {
+                serde_json::json!({ "content": content })
+            } else {
+                serde_json::json!({ "text": content })
+            };
+
             let client = reqwest::Client::new();
             if let Err(err) = client.post(&url).json(&payload).send().await {
                 tracing::warn!(error = %err, "failed to send error webhook");
