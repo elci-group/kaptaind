@@ -1,3 +1,4 @@
+pub mod aoc;
 pub mod cluster;
 pub mod commit;
 pub mod config;

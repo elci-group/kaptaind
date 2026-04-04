@@ -1,10 +1,11 @@
+use crate::aoc::tracer;
 use crate::cluster::engine::{Cluster, ClusterEngine};
 use crate::config::loader::TestConfig;
 use crate::config::Config;
 use crate::diff::DiffAnalysis;
 use crate::git::repo::Repo;
 use crate::version::Bump;
-use crate::watcher::FsEvent;
+use crate::watcher::{FsEvent, FsEventKind};
 use chrono::{DateTime, Utc};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use semver::Version;
@@ -78,6 +79,81 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
     }
 }
 
+/// Build and write a trace record for a cluster.
+fn write_trace_if_active(
+    repo_path: &Path,
+    cluster: &Cluster,
+    result: tracer::TraceResult,
+    test_outcome: &TestOutcome,
+) {
+    // Check if an active AoC exists
+    match crate::aoc::session::load_active(repo_path) {
+        Ok(Some(session)) => {
+            // Convert FsEvents to TraceEvents
+            let events = cluster
+                .events
+                .iter()
+                .map(|evt| tracer::TraceEvent {
+                    paths: evt
+                        .paths
+                        .iter()
+                        .filter_map(|p| p.to_str().map(|s| s.to_string()))
+                        .collect(),
+                    kind: match evt.kind {
+                        FsEventKind::Create => "create".to_string(),
+                        FsEventKind::Modify => "modify".to_string(),
+                        FsEventKind::Remove => "remove".to_string(),
+                        FsEventKind::Other => "other".to_string(),
+                    },
+                    t: evt.timestamp,
+                })
+                .collect();
+
+            // Extract test outcome
+            let test = match test_outcome {
+                TestOutcome::Passed => tracer::TraceTest {
+                    outcome: "passed".to_string(),
+                    stderr: None,
+                },
+                TestOutcome::Failed { stderr, .. } => tracer::TraceTest {
+                    outcome: "failed".to_string(),
+                    stderr: Some(stderr.clone()),
+                },
+                TestOutcome::Skipped => tracer::TraceTest {
+                    outcome: "skipped".to_string(),
+                    stderr: None,
+                },
+            };
+
+            let duration_ms = (cluster.ended_at - cluster.started_at)
+                .num_milliseconds()
+                .max(0) as u64;
+
+            let trace = tracer::TraceRecord {
+                cluster_id: cluster.id.to_string(),
+                aoc_id: session.id.clone(),
+                started_at: cluster.started_at,
+                ended_at: cluster.ended_at,
+                duration_ms,
+                events,
+                test,
+                result,
+                analysis_ref: Some(format!(".kaptaind/analysis/{}.json", cluster.id)),
+            };
+
+            if let Err(err) = tracer::write_trace(repo_path, &trace) {
+                tracing::warn!(error = %err, "failed to write AoC trace");
+            }
+        }
+        Ok(None) => {
+            // No active AoC, skip trace
+        }
+        Err(err) => {
+            tracing::debug!(error = %err, "failed to load active AoC");
+        }
+    }
+}
+
 async fn process_cluster(
     repo: &mut Repo,
     config: &Config,
@@ -86,8 +162,18 @@ async fn process_cluster(
     status: &mut StatusReport,
 ) {
     let now = Utc::now();
+    let mut test_outcome = TestOutcome::Skipped; // Default; will be overwritten if we get to testing
+
     if !rate_limit_allows(now, *last_commit_at, config.ratelimit.min_commit_interval) {
         tracing::debug!("commit rate-limited");
+        write_trace_if_active(
+            &config.repo_path,
+            &cluster,
+            tracer::TraceResult::Skipped {
+                reason: "rate_limited".to_string(),
+            },
+            &test_outcome,
+        );
         status.status = State::Idle;
         write_status(&config.repo_path, status);
         return;
@@ -106,6 +192,14 @@ async fn process_cluster(
 
     if is_clean {
         tracing::debug!("working tree clean; nothing to commit");
+        write_trace_if_active(
+            &config.repo_path,
+            &cluster,
+            tracer::TraceResult::Skipped {
+                reason: "clean_tree".to_string(),
+            },
+            &test_outcome,
+        );
         status.status = State::Idle;
         write_status(&config.repo_path, status);
         return;
@@ -115,9 +209,17 @@ async fn process_cluster(
     write_status(&config.repo_path, status);
     tracing::trace!("running test hook");
 
-    let test_outcome = run_test_hook(config).await;
+    test_outcome = run_test_hook(config).await;
     if should_block_commit(&config.test, &test_outcome) {
         log_test_failure(&test_outcome);
+        write_trace_if_active(
+            &config.repo_path,
+            &cluster,
+            tracer::TraceResult::Skipped {
+                reason: "test_failed".to_string(),
+            },
+            &test_outcome,
+        );
         status.status = State::Failed;
         if let TestOutcome::Failed { stderr, .. } = &test_outcome {
             status.last_error = Some(stderr.clone());
@@ -139,6 +241,14 @@ async fn process_cluster(
 
     if bump == Bump::None {
         tracing::debug!("no semantic version bump required");
+        write_trace_if_active(
+            &config.repo_path,
+            &cluster,
+            tracer::TraceResult::Skipped {
+                reason: "no_bump".to_string(),
+            },
+            &test_outcome,
+        );
         status.status = State::Idle;
         write_status(&config.repo_path, status);
         return;
@@ -149,6 +259,15 @@ async fn process_cluster(
     let next = crate::version::apply(previous, bump);
     if let Err(err) = save_version(&version_path, &next) {
         tracing::error!(error = %err, path = ?version_path, "failed writing VERSION file");
+        // Still write trace for visibility
+        write_trace_if_active(
+            &config.repo_path,
+            &cluster,
+            tracer::TraceResult::Skipped {
+                reason: "version_write_failed".to_string(),
+            },
+            &test_outcome,
+        );
         status.status = State::Failed;
         status.last_error = Some(err.to_string());
         write_status(&config.repo_path, status);
@@ -183,6 +302,14 @@ async fn process_cluster(
 
     if let Err(err) = crate::commit::commit(&repo.inner, &msg) {
         tracing::error!(error = %err, "commit failed");
+        write_trace_if_active(
+            &config.repo_path,
+            &cluster,
+            tracer::TraceResult::Skipped {
+                reason: "commit_failed".to_string(),
+            },
+            &test_outcome,
+        );
         status.status = State::Failed;
         status.last_error = Some(err.to_string());
         write_status(&config.repo_path, status);
@@ -193,6 +320,14 @@ async fn process_cluster(
     if config.push.enabled {
         if let Err(err) = crate::push::push(&repo.inner, &config.push.branch) {
             tracing::warn!(error = %err, "push failed");
+            write_trace_if_active(
+                &config.repo_path,
+                &cluster,
+                tracer::TraceResult::Skipped {
+                    reason: "push_failed".to_string(),
+                },
+                &test_outcome,
+            );
             status.status = State::Failed;
             status.last_error = Some(format!("push failed: {err}"));
             write_status(&config.repo_path, status);
@@ -202,7 +337,18 @@ async fn process_cluster(
     }
 
     notify_commit(config, &next.to_string(), weight.score, &msg);
-    
+
+    // Write trace record for successful commit
+    write_trace_if_active(
+        &config.repo_path,
+        &cluster,
+        tracer::TraceResult::Committed {
+            bump: format!("{bump:?}"),
+            version: next.to_string(),
+        },
+        &test_outcome,
+    );
+
     *last_commit_at = Some(now);
     status.status = State::Idle;
     status.last_version = Some(next.to_string());

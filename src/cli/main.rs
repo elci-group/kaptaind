@@ -29,6 +29,27 @@ enum Commands {
     },
     /// Perform a one-off analysis of the working tree without committing
     Analyze,
+    /// Manage Aim of Change sessions
+    #[command(subcommand)]
+    Aoc(AocCommand),
+}
+
+#[derive(Subcommand)]
+enum AocCommand {
+    /// Start a new Aim of Change session
+    Start {
+        /// User-friendly name for this AoC
+        label: String,
+    },
+    /// End and ship the current AoC session
+    Ship,
+    /// Show status of the current AoC session
+    Status,
+    /// View completed AoC sessions
+    Log {
+        #[arg(short, long, default_value_t = 10)]
+        limit: usize,
+    },
 }
 
 #[tokio::main]
@@ -50,7 +71,191 @@ async fn main() -> anyhow::Result<()> {
         Commands::Analyze => {
             handle_analyze(&config)?;
         }
+        Commands::Aoc(aoc_cmd) => {
+            handle_aoc(&config, aoc_cmd)?;
+        }
     }
+
+    Ok(())
+}
+
+fn handle_aoc(config: &Config, cmd: &AocCommand) -> anyhow::Result<()> {
+    match cmd {
+        AocCommand::Start { label } => {
+            handle_aoc_start(config, label)?;
+        }
+        AocCommand::Ship => {
+            handle_aoc_ship(config)?;
+        }
+        AocCommand::Status => {
+            handle_aoc_status(config)?;
+        }
+        AocCommand::Log { limit } => {
+            handle_aoc_log(config, *limit)?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_aoc_start(config: &Config, label: &str) -> anyhow::Result<()> {
+    // Check if an active session already exists
+    if let Ok(Some(_)) = kaptaind::aoc::session::load_active(&config.repo_path) {
+        anyhow::bail!("An AoC session is already active. Run 'aoc ship' to end it.");
+    }
+
+    // Read current version
+    let version_path = config.repo_path.join("VERSION");
+    let initial_version = if version_path.exists() {
+        fs::read_to_string(&version_path)?.trim().to_string()
+    } else {
+        "0.1.0".to_string()
+    };
+
+    // Create new session
+    let session = kaptaind::aoc::AocSession {
+        id: uuid::Uuid::new_v4().to_string(),
+        label: label.to_string(),
+        created_at: Utc::now(),
+        initial_version: initial_version.clone(),
+    };
+
+    // Save session
+    kaptaind::aoc::session::save_active(&config.repo_path, &session)?;
+
+    println!(
+        "{} {} {} {}",
+        "🎯".cyan(),
+        "AoC started:".bold().cyan(),
+        label.magenta(),
+        format!("@ v{}", initial_version).blue()
+    );
+
+    Ok(())
+}
+
+fn handle_aoc_ship(config: &Config) -> anyhow::Result<()> {
+    // Load active session
+    let session = kaptaind::aoc::session::load_active(&config.repo_path)?
+        .ok_or_else(|| anyhow::anyhow!("No active AoC session found"))?;
+
+    // Read final version
+    let version_path = config.repo_path.join("VERSION");
+    let final_version = if version_path.exists() {
+        fs::read_to_string(&version_path)?.trim().to_string()
+    } else {
+        "0.1.0".to_string()
+    };
+
+    // Read traces
+    let traces = kaptaind::aoc::tracer::read_traces_for_aoc(&config.repo_path, &session.id)?;
+
+    // Count commits and test failures
+    let commit_count = traces
+        .iter()
+        .filter(|t| matches!(t.result, kaptaind::aoc::TraceResult::Committed { .. }))
+        .count();
+    let test_failures = traces
+        .iter()
+        .filter(|t| t.test.outcome == "failed")
+        .count();
+
+    // Create manifest
+    let manifest = kaptaind::aoc::AocManifest {
+        id: session.id.clone(),
+        label: session.label.clone(),
+        created_at: session.created_at,
+        shipped_at: Utc::now(),
+        initial_version: session.initial_version.clone(),
+        final_version: final_version.clone(),
+        cluster_count: traces.len(),
+        commit_count,
+        test_failures,
+        trace_ids: traces.iter().map(|t| t.cluster_id.clone()).collect(),
+    };
+
+    // Save manifest
+    kaptaind::aoc::session::save_manifest(&config.repo_path, &manifest)?;
+
+    // Remove active session
+    kaptaind::aoc::session::remove_active(&config.repo_path)?;
+
+    // Print summary
+    println!("{} {} {} {}", "🚢".green(), "AoC shipped:".bold().green(), session.label.magenta(), "✓".green());
+    println!("{}", "---".green());
+    println!(
+        "{} {} {}",
+        "Version:".cyan(),
+        format!("{} → {}", session.initial_version, final_version).magenta(),
+        if session.initial_version != final_version { "✨" } else { "" }.yellow()
+    );
+    println!("{} {}", "Clusters:".cyan(), traces.len().to_string().yellow());
+    println!("{} {}", "Commits:".cyan(), commit_count.to_string().yellow());
+    println!("{} {}", "Test Failures:".cyan(), format!("{}", test_failures).yellow());
+
+    Ok(())
+}
+
+fn handle_aoc_status(config: &Config) -> anyhow::Result<()> {
+    match kaptaind::aoc::session::load_active(&config.repo_path)? {
+        Some(session) => {
+            // Count traces
+            let traces = kaptaind::aoc::tracer::read_traces_for_aoc(&config.repo_path, &session.id)?;
+
+            println!("{} {}", "🎯".cyan(), "Active AoC:".bold().cyan());
+            println!("{}", "---".cyan());
+            println!("{} {}", "Label:".cyan(), session.label.magenta());
+            println!("{} {}", "Started:".cyan(), format_datetime(session.created_at).blue());
+            println!("{} {}", "Initial Version:".cyan(), session.initial_version.yellow());
+            println!("{} {}", "Traces:".cyan(), traces.len().to_string().yellow());
+        }
+        None => {
+            println!("{} {}", "ℹ️".blue(), "No active AoC session.".blue());
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_aoc_log(config: &Config, limit: usize) -> anyhow::Result<()> {
+    let manifests = kaptaind::aoc::session::list_manifests(&config.repo_path)?;
+
+    if manifests.is_empty() {
+        println!("No completed AoC sessions found.");
+        return Ok(());
+    }
+
+    #[derive(Tabled)]
+    struct AocRow {
+        #[tabled(rename = "🏷️ Label")]
+        label: String,
+        #[tabled(rename = "📈 Version")]
+        version: String,
+        #[tabled(rename = "🗂️ Clusters")]
+        clusters: usize,
+        #[tabled(rename = "🚀 Commits")]
+        commits: usize,
+        #[tabled(rename = "🧪 Failures")]
+        failures: usize,
+        #[tabled(rename = "🕒 Shipped")]
+        shipped: String,
+    }
+
+    let rows: Vec<AocRow> = manifests
+        .into_iter()
+        .take(limit)
+        .map(|m| AocRow {
+            label: m.label.magenta().to_string(),
+            version: format!("{} → {}", m.initial_version, m.final_version).cyan().to_string(),
+            clusters: m.cluster_count,
+            commits: m.commit_count,
+            failures: m.test_failures,
+            shipped: format_datetime(m.shipped_at).blue().to_string(),
+        })
+        .collect();
+
+    let mut table = Table::new(rows);
+    table.with(Style::modern());
+    println!("{table}");
 
     Ok(())
 }
