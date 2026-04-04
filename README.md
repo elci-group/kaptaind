@@ -63,6 +63,16 @@ kaptaind --daemon
 
 ![Kaptaind Daemon Status](running_and_status.gif)
 
+### Quick Setup
+
+Generate a `kaptaind.toml` and `.kaptainignore` tuned to your project type:
+
+```bash
+kaptaind-cli init
+```
+
+Supported project types: Rust, Node, Python, Go, Swift, Kotlin. The command auto-detects by looking for `Cargo.toml`, `package.json`, `Package.swift`, `build.gradle.kts`, etc.
+
 ### CLI Inspection (`kaptaind-cli`)
 
 Kaptaind comes with a secondary binary to inspect the daemon's state:
@@ -76,6 +86,14 @@ kaptaind-cli log
 
 # Dry-run an analysis on the current uncommitted working tree
 kaptaind-cli analyze
+
+# Manage Aim of Change sessions
+kaptaind-cli aoc start "feature: auth flow"
+kaptaind-cli aoc status
+kaptaind-cli aoc ship
+
+# Intercept agent operations for contextual tracing
+kaptaind-cli aoc intercept --model claude-3-5-sonnet --intent "refactor auth" -- npm test
 ```
 
 ![Kaptaind Analyze and Log Demo](analyze_and_log.gif)
