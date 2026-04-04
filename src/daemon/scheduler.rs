@@ -248,6 +248,9 @@ async fn process_cluster(
     write_status(&config.repo_path, status);
 
     let mut diff = crate::diff::analyze(&cluster, &config.repo_path);
+    if config.bundle.command.is_some() {
+        diff.bundle = crate::diff::bundle::bundle_score(&config.bundle, &config.repo_path).score;
+    }
     tracing::trace!(?diff, "diff analysis complete");
     apply_test_outcome(&mut diff, &test_outcome);
     let weight = crate::weight::compute(&diff, &config.weights);

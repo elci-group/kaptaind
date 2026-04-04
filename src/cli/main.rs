@@ -366,7 +366,10 @@ fn handle_analyze(config: &Config) -> anyhow::Result<()> {
         }],
     };
 
-    let diff_analysis = kaptaind::diff::analyze(&cluster, &config.repo_path);
+    let mut diff_analysis = kaptaind::diff::analyze(&cluster, &config.repo_path);
+    if config.bundle.command.is_some() {
+        diff_analysis.bundle = kaptaind::diff::bundle::bundle_score(&config.bundle, &config.repo_path).score;
+    }
     let weight = kaptaind::weight::compute(&diff_analysis, &config.weights);
     let bump = kaptaind::version::decide(&weight);
 
