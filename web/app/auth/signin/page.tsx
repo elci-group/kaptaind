@@ -9,9 +9,14 @@ export default function SignInPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
 
+  const [debug, setDebug] = useState("");
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setDebug("");
+
+    console.log("[signin] attempting credentials login", { email });
 
     const result = await signIn("credentials", {
       email,
@@ -19,10 +24,15 @@ export default function SignInPage() {
       redirect: false,
     });
 
+    console.log("[signin] signIn result:", JSON.stringify(result));
+    setDebug(JSON.stringify(result, null, 2));
+
     if (result?.error) {
-      setError("Invalid email or password");
-    } else {
+      setError(`Auth error: ${result.error} (status ${result.status})`);
+    } else if (result?.ok) {
       window.location.href = "/dashboard";
+    } else {
+      setError("Unexpected response from auth");
     }
   };
 
@@ -95,6 +105,12 @@ export default function SignInPage() {
             </button>
           </form>
         </div>
+
+        {debug && (
+          <pre className="mt-4 overflow-auto rounded-lg bg-zinc-900 p-4 text-xs text-green-400 max-h-48">
+            {debug}
+          </pre>
+        )}
 
         <p className="mt-6 text-center text-sm text-zinc-500 dark:text-zinc-400">
           Don&apos;t have an account?{" "}
