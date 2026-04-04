@@ -2,6 +2,7 @@ pub mod api;
 pub mod ast;
 pub mod bundle;
 pub mod text;
+pub mod lang;
 
 use crate::cluster::engine::Cluster;
 use serde::{Deserialize, Serialize};

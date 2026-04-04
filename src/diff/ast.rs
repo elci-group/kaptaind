@@ -1,5 +1,6 @@
 use crate::cluster::engine::Cluster;
 use crate::watcher::FsEventKind;
+use crate::diff::lang::{normalize, AdapterRegistry};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -17,35 +18,91 @@ pub fn api_score(cluster: &Cluster, repo_root: &Path) -> ApiAnalysis {
     let mut exported_signatures = HashSet::new();
     let mut api_breaking = false;
     let mut api_added = false;
+    
+    let registry = AdapterRegistry::default_registry();
+    let mut max_score = 0.0_f32;
 
     for event in &cluster.events {
         for path in &event.paths {
             let resolved = resolve_path(repo_root, path);
-            let signatures = extract_signatures(&resolved);
-            let is_surface = is_api_surface(path) || !signatures.is_empty();
-            if !is_surface {
-                continue;
-            }
+            
+            // Check if any adapter handles this file type
+            if let Some(adapter) = registry.resolve(&resolved) {
+                let ast = adapter.parse_ast(&resolved).unwrap_or_default();
+                let api_surface = adapter.extract_api(&ast);
+                let signatures: HashSet<String> = api_surface.public_symbols.into_iter().map(|s| s.name).collect();
+                
+                // Fallback surface detection (routes, design tokens) still valid across languages
+                let is_surface = is_api_surface(path) || !signatures.is_empty();
+                if !is_surface {
+                    continue;
+                }
 
-            touches += 1;
-            exported_signatures.extend(signatures);
-            match event.kind {
-                FsEventKind::Remove => {
-                    api_breaking = true;
+                touches += 1;
+                exported_signatures.extend(signatures.clone());
+                
+                match event.kind {
+                    FsEventKind::Remove => {
+                        api_breaking = true;
+                    }
+                    FsEventKind::Create => {
+                        api_added = true;
+                    }
+                    FsEventKind::Modify | FsEventKind::Other => {}
                 }
-                FsEventKind::Create => {
-                    api_added = true;
+                
+                let local_touch_score = 0.25_f32; // per file heuristic
+                let local_sig_score = (signatures.len() as f32 / 8.0).clamp(0.0, 1.0);
+                let local_score: f32 = (0.55 * local_touch_score + 0.45 * local_sig_score).clamp(0.0, 1.0);
+                
+                let normalized_score = normalize(local_score, adapter.language());
+                if normalized_score > max_score {
+                    max_score = normalized_score;
                 }
-                FsEventKind::Modify | FsEventKind::Other => {}
+            } else {
+                // Fallback for languages not explicitly in the adapter registry
+                // but identified by path heuristics
+                let signatures = extract_signatures_fallback(&resolved);
+                let is_surface = is_api_surface(path) || !signatures.is_empty();
+                if !is_surface {
+                    continue;
+                }
+
+                touches += 1;
+                exported_signatures.extend(signatures.clone());
+                match event.kind {
+                    FsEventKind::Remove => {
+                        api_breaking = true;
+                    }
+                    FsEventKind::Create => {
+                        api_added = true;
+                    }
+                    FsEventKind::Modify | FsEventKind::Other => {}
+                }
+                
+                let local_touch_score = 0.25_f32;
+                let local_sig_score = (signatures.len() as f32 / 8.0).clamp(0.0, 1.0);
+                let local_score: f32 = (0.55 * local_touch_score + 0.45 * local_sig_score).clamp(0.0, 1.0);
+                if local_score > max_score {
+                    max_score = local_score;
+                }
             }
         }
     }
 
     let touch_score = (touches as f32 / 4.0).clamp(0.0, 1.0);
     let signature_score = (exported_signatures.len() as f32 / 8.0).clamp(0.0, 1.0);
+    let combined_global_score = (0.55 * touch_score + 0.45 * signature_score).clamp(0.0, 1.0);
+    
+    // We blend the max normalized individual file score with the global aggregate score
+    let final_score = if touches > 0 {
+        ((max_score + combined_global_score) / 2.0).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
 
     ApiAnalysis {
-        score: (0.55 * touch_score + 0.45 * signature_score).clamp(0.0, 1.0),
+        score: final_score,
         touches,
         signatures: exported_signatures.len(),
         breaking: api_breaking,
@@ -53,7 +110,7 @@ pub fn api_score(cluster: &Cluster, repo_root: &Path) -> ApiAnalysis {
     }
 }
 
-fn extract_signatures(path: &Path) -> HashSet<String> {
+fn extract_signatures_fallback(path: &Path) -> HashSet<String> {
     let Ok(content) = std::fs::read_to_string(path) else {
         return HashSet::new();
     };
@@ -67,12 +124,6 @@ fn extract_signatures(path: &Path) -> HashSet<String> {
 
 fn signature_from_line(line: &str) -> Option<String> {
     const PREFIXES: &[&str] = &[
-        "pub fn ",
-        "pub async fn ",
-        "pub struct ",
-        "pub enum ",
-        "pub trait ",
-        "pub type ",
         "export function ",
         "export async function ",
         "export class ",
@@ -88,7 +139,6 @@ fn signature_from_line(line: &str) -> Option<String> {
         "class ",
     ];
 
-    // CSS custom property (design token): `--primary: #000;`
     if line.starts_with("--") && line.contains(':') {
         return Some(line.to_string());
     }
@@ -113,7 +163,6 @@ fn is_api_surface(path: &Path) -> bool {
 /// Detects framework route files (Next.js, Remix, SvelteKit, etc.)
 fn is_route_file(path: &Path) -> bool {
     let as_text = path.to_string_lossy().to_lowercase();
-    // Handle both absolute-ish paths (/app/) and relative (app/)
     let route_dirs = ["app/", "pages/", "routes/", "src/routes/"];
     let has_route_dir = route_dirs.iter().any(|dir| {
         as_text.contains(&format!("/{dir}")) || as_text.starts_with(dir)
@@ -170,7 +219,7 @@ mod tests {
         });
 
         let analysis = api_score(&cluster, dir.path());
-        assert!(analysis.score > 0.2);
+        assert!(analysis.score > 0.15); // with normalization and averaging, score > 0.15
         assert_eq!(analysis.signatures, 2);
         assert!(!analysis.breaking);
         assert!(analysis.added);
@@ -204,6 +253,7 @@ mod tests {
         });
 
         let analysis = api_score(&cluster, dir.path());
+        // Typescript adapter handles exports
         assert_eq!(analysis.signatures, 2);
     }
 
