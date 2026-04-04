@@ -1,0 +1,37 @@
+use super::adapter::{LanguageAdapter};
+use std::path::Path;
+
+pub struct AdapterRegistry {
+    adapters: Vec<Box<dyn LanguageAdapter>>,
+}
+
+impl AdapterRegistry {
+    pub fn new() -> Self {
+        Self {
+            adapters: Vec::new(),
+        }
+    }
+
+    pub fn register(&mut self, adapter: Box<dyn LanguageAdapter>) {
+        self.adapters.push(adapter);
+    }
+
+    pub fn resolve(&self, path: &Path) -> Option<&dyn LanguageAdapter> {
+        let paths = vec![path.to_path_buf()];
+        self.adapters
+            .iter()
+            .find(|a| !a.detect_files(&paths).is_empty())
+            .map(|a| a.as_ref())
+    }
+
+    pub fn default_registry() -> Self {
+        let mut registry = Self::new();
+        registry.register(Box::new(super::heuristics::RustAdapter));
+        registry.register(Box::new(super::heuristics::TypeScriptAdapter));
+        registry.register(Box::new(super::heuristics::JavaScriptAdapter));
+        registry.register(Box::new(super::heuristics::PythonAdapter));
+        registry.register(Box::new(super::heuristics::GoAdapter));
+        registry.register(Box::new(super::heuristics::HtmlCssAdapter));
+        registry
+    }
+}
