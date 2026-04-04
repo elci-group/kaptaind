@@ -8,6 +8,12 @@ pub enum Language {
     JavaScript,
     Python,
     HtmlCss,
+    Swift,
+    Kotlin,
+    Vue,
+    Svelte,
+    Astro,
+    Scss,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
