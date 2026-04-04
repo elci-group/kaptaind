@@ -192,6 +192,312 @@ It supports:
 - Glob patterns matching relative paths (e.g. `**/*.tmp`)
 - Exact paths or directory prefixes (e.g. `target`)
 
+## Performance Tuning
+
+### Filesystem Watcher
+
+The watcher performance varies by operating system:
+- **Linux (inotify)**: Efficient for large repositories; scales well to thousands of files.
+- **macOS (FSEvents)**: Coarse-grained events; may batch multiple file changes together.
+- **Windows (ReadDirectoryChangesW)**: Works but can lag on very large directory trees.
+
+To avoid excessive clustering on rapid saves (e.g., format-on-save), adjust the cluster window:
+
+```toml
+[cluster]
+window = 5  # Default: groups events within 5 seconds
+# Increase to 10 for slower feedback; decrease to 2 for snappier responsiveness
+```
+
+### Caching & AST Parsing
+
+Kaptaind uses SHA256 file-hash caching to skip re-parsing unchanged files:
+- **Cache hit**: File hash matches → reuse cached AST, skip `syn::parse_file()`
+- **Cache miss**: File hash differs → parse with language adapter, update cache
+
+Cache files live in `.kaptaind/ast_cache.json`. On large repositories, expect 70-90% cache hit ratios across commits.
+
+If the cache becomes stale or corrupted, safely delete `.kaptaind/ast_cache.json`; it will be regenerated on the next analysis.
+
+### Staging Mode Performance
+
+Three staging modes trade off safety vs. speed:
+
+- **`all` (default)**: Stages everything, then removes `exclude` patterns. Safest; minimal overhead.
+- **`cluster`**: Stages only changed files + `VERSION` + `Cargo.toml`. Fastest for large repos; excludes unrelated changes.
+- **`pattern`**: Stages files matching `include` globs, removes `exclude` patterns. Useful for monorepos with strict file boundaries.
+
+For monorepos with 1000+ files, `cluster` staging can reduce staging time by 10-20x.
+
+### Test Hook Performance
+
+Required test hooks block commits on failure, which can be expensive:
+
+```toml
+[test]
+command = "cargo test"
+required = false  # Set to false to make hook optional; failures don't block
+```
+
+If tests are slow, consider running a fast smoke test in `kaptaind` and a full suite in CI/CD:
+
+```toml
+[test]
+command = "cargo test --lib"  # Skip integration tests for speed
+```
+
+## Bundle Size Scoring
+
+Bundle size scoring measures the impact of changes on your output artifact (JavaScript bundles, compiled binaries, etc.). This is useful for teams shipping to bandwidth-constrained environments or tracking performance regressions.
+
+### Setup
+
+First, enable bundle weight in your config:
+
+```toml
+[weights]
+s = 0.35  # Structural
+a = 0.3   # API
+d = 0.2   # Dependencies
+r = 0.15  # Runtime
+b = 0.05  # Bundle (opt-in; increase to prioritize bundle size)
+
+[bundle]
+command = "npm run build"    # Your build command
+output_dir = "dist"          # Output directory (optional; auto-detects dist, build, .next, out)
+```
+
+### How It Works
+
+1. On first analysis, kaptaind runs your build command and measures the total size of files in `output_dir`.
+2. It stores the size in `.kaptaind/bundle.json`.
+3. On subsequent analyses, it measures the new size and computes: `score = |new - old| / old`, clamped to `[0, 1]`.
+4. This score is weighted by `b` (default `0.0`, meaning disabled) and included in the overall diff score.
+
+### Example: Next.js Project
+
+```toml
+[bundle]
+command = "npm run build"
+output_dir = ".next"  # Next.js default output
+
+[weights]
+b = 0.1  # Bundle size contributes 10% to overall score; score > 0.6 triggers Minor version bump
+```
+
+After a change that increases the bundle by 5%, you might see:
+```
+kaptaind: Minor -> v0.2.0 [api-stable; paths=3; api_touches=0; deps=0; runtime=0; bundle=0.05; score=0.58]
+```
+
+### Troubleshooting Bundle Scoring
+
+- **Build fails**: If `command` fails, bundle scoring is skipped (score `0.0`). Check `.kaptaind/status.json` for error details.
+- **No output directory**: If `output_dir` doesn't exist after build, bundle score is `0.0`.
+- **Stale size**: Delete `.kaptaind/bundle.json` to force a full re-baseline on the next analysis.
+
+## Aim of Change (AoC) Sessions
+
+Aim of Change sessions group related changes into named, intent-driven clusters with full traceability. This is useful for tracking feature work, refactoring, or coordinated multi-file changes.
+
+### Starting a Session
+
+```bash
+kaptaind-cli aoc start "feature: authentication flow"
+```
+
+From this point forward, all commits will be tagged with this session and linked in `.kaptaind/aoc/active.json`.
+
+### Checking Status
+
+```bash
+kaptaind-cli aoc status
+```
+
+Shows the active session name and commit count so far.
+
+### Shipping the Session
+
+```bash
+kaptaind-cli aoc ship
+```
+
+Finalizes the session and moves the summary to `.kaptaind/aoc/manifests/<id>.json`. Useful for generating release notes or linking to deploy events.
+
+### Agent Interception
+
+For enhanced observability, pair AoC with agent-assisted change validation:
+
+```bash
+kaptaind-cli aoc intercept --model claude-3-5-sonnet --intent "refactor auth" -- npm test
+```
+
+This runs `npm test`, captures the output, and stores it alongside the AoC trace. Useful for audit trails in regulated environments.
+
+## Migration Guide: Existing Projects
+
+If your repo already has a version history (even irregular), you can safely adopt kaptaind:
+
+### Step 1: Generate Config
+
+```bash
+cd /path/to/existing/repo
+kaptaind-cli init
+```
+
+This creates `kaptaind.toml` and `.kaptainignore` based on your project type.
+
+### Step 2: Verify Current VERSION
+
+Check if a `VERSION` file exists:
+
+```bash
+cat VERSION    # If it exists, kaptaind will continue from here
+# or
+cat Cargo.toml | grep -A1 "\[package\]" | grep version  # Rust: falls back to Cargo.toml
+```
+
+If neither exists, kaptaind defaults to `0.1.0` on first commit.
+
+### Step 3: Backfill Analysis Artifacts (Optional)
+
+To preserve your version history, manually create a `.kaptaind/analysis/` directory:
+
+```bash
+mkdir -p .kaptaind/analysis
+```
+
+Existing commits won't be re-analyzed, but kaptaind will start producing analysis JSONs for new commits.
+
+### Step 4: Dry-Run
+
+Test the configuration without committing:
+
+```bash
+kaptaind-cli analyze
+```
+
+Review the output. If the score seems off, adjust weights in `kaptaind.toml`.
+
+### Step 5: Enable Daemon
+
+When confident:
+
+```bash
+kaptaind --daemon
+```
+
+The daemon will pick up on the next file change.
+
+### Notes
+
+- **Existing CI/CD**: Kaptaind doesn't interfere with GitHub Actions, GitLab CI, etc. It commits independently, and CI runs normally on those commits.
+- **Push conflicts**: If you have `[push].enabled = true`, ensure your CI doesn't also push to the same branch, or use different branches.
+- **Test hooks**: The configured `[test].command` will run before every kaptaind-triggered commit. If you want a lightweight check, use a fast smoke test here and full tests in CI.
+
+## Troubleshooting
+
+### "Kaptaind is committing too frequently"
+
+**Symptom**: A new commit appears every few seconds.
+
+**Cause**: Cluster window is too small, or your editor is saving files very rapidly.
+
+**Fix**:
+```toml
+[cluster]
+window = 10  # Increase from default 5 to 10 seconds
+```
+
+Or configure your editor to debounce saves (e.g., VS Code: `files.autoSaveDelay = 2000`).
+
+### "Kaptaind is never committing"
+
+**Symptom**: You make changes but no commits appear.
+
+**Cause**: Either the watcher isn't active, or `[test].required = true` and tests are failing.
+
+**Fix**:
+```bash
+# Check daemon is running
+ps aux | grep kaptaind
+
+# Check test command manually
+cargo test  # or your configured test command
+
+# Check status
+kaptaind-cli status
+```
+
+### "Test hook is blocking every commit"
+
+**Symptom**: Tests fail, and kaptaind refuses to commit.
+
+**Cause**: `[test].required = true` (default).
+
+**Fix**:
+```toml
+[test]
+required = false  # Tests won't block, but will still be logged
+```
+
+Or fix the failing tests.
+
+### "Daemon won't start on Linux"
+
+**Symptom**: `kaptaind --daemon` hangs or exits immediately.
+
+**Cause**: Daemonization requires write permissions to `.kaptaind/` and parent directories.
+
+**Fix**:
+```bash
+mkdir -p /path/to/repo/.kaptaind
+chmod 755 /path/to/repo/.kaptaind
+kaptaind --daemon
+```
+
+Check logs:
+```bash
+tail -50 .kaptaind/daemon.err
+```
+
+### "Cache is stale or giving wrong results"
+
+**Symptom**: AST detection seems off after a code change.
+
+**Cause**: Cache file mismatch or corruption.
+
+**Fix**:
+```bash
+rm .kaptaind/ast_cache.json
+# Next analysis will regenerate
+```
+
+### "Git status is dirty after kaptaind commit"
+
+**Symptom**: `git status` shows staged or unstaged changes after kaptaind commits.
+
+**Cause**: Staging mode is `pattern` or `cluster`, and some files weren't staged.
+
+**Fix**: Either change to `all` (default, stage everything) or intentionally stage the remaining files separately.
+
+### "Version bumps seem wrong"
+
+**Symptom**: Minor changes bump the version more than expected.
+
+**Cause**: Weights are imbalanced, or a single dimension scores high.
+
+**Fix**: Review the analysis artifact:
+```bash
+cat .kaptaind/analysis/*.json | jq '.api, .deps, .runtime, .structural'
+```
+
+Adjust weights in `kaptaind.toml` if needed:
+```toml
+[weights]
+a = 0.5  # Increase API weight if API changes matter most to you
+```
+
 ## Artifacts
 
 As `kaptaind` runs, it drops critical artifacts:
