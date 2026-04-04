@@ -52,6 +52,7 @@ pub struct TestConfig {
 pub struct NotifyConfig {
     pub on_commit: Option<String>,
     pub on_error: Option<String>,
+    pub webhook_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
