@@ -84,9 +84,13 @@
 
 ## Git behavior
 - Repo access goes through `git2`.
-- `commit::commit()` stages everything with `index.add_all(["*"])` before creating the commit.
+- `commit::orchestrator` supports three staging modes via `StagingConfig`:
+  - `all` (default): `index.add_all(["*"])` stages everything, then removes `exclude` patterns.
+  - `cluster`: only stages files from the detected cluster + `VERSION` + `Cargo.toml`.
+  - `pattern`: stages files matching `include` globs, removes `exclude` patterns.
 - The scheduler skips work when `Repo::is_clean()` reports no changes.
-- Commit message format is generated in `src/daemon/scheduler.rs` and includes bump, version, API summary, touched path count, dependency/runtime stats, score, and cluster UUID.
+- Commit message format is generated in `src/daemon/scheduler.rs` and includes bump, version, API summary, touched path count, dependency/runtime stats, score, cluster UUID, and agent model (if AoC intercepted).
+- `save_version()` writes `VERSION` and also updates `version` in `Cargo.toml` if present.
 - Pushes only happen when `config.push.enabled` is true; the code pushes `refs/heads/<branch>` to `origin`.
 
 ## Ignore and watcher behavior
