@@ -130,7 +130,7 @@ Kaptaind operates entirely in the background, minimizing developer friction whil
    Before any commit, the daemon updates `.kaptaind/status.json` and runs the pre-configured test hook (`cargo test` by default). If tests fail, the workflow aborts. It also tracks the "token cost" of the diff size and commit message size, writing to `.kaptaind/telemetry.json`.
 
 6. **Version Bump & Git Orchestration (`src/version/`, `src/commit/`)**: 
-   The weights are aggregated. Breaking APIs trigger `Major` bumps; new APIs trigger `Minor`; standard churn triggers `Patch`. The new version is flushed to the `VERSION` file, a rich commit message is generated, and a JSON artifact is stored in `.kaptaind/analysis/` before `git2` creates the commit. Optional DBUS desktop notifications (via `notify-send`) are dispatched via the `[notify]` config block.
+   The weights are aggregated. Breaking APIs trigger `Major` bumps; new APIs trigger `Minor`; standard churn triggers `Patch`. The new version is flushed to the `VERSION` file (and `Cargo.toml` if present), a rich commit message is generated, and a JSON artifact is stored in `.kaptaind/analysis/` before `git2` creates the commit. Staging is configurable: stage all files (default), only cluster-touched files, or pattern-matched files with optional excludes. Notifications are dispatched via shell hooks, Discord/Slack webhooks, or both.
 
 ## Configuration
 
@@ -154,6 +154,7 @@ s = 0.35 # Structural weight
 a = 0.3  # API weight
 d = 0.2  # Dependency weight
 r = 0.15 # Runtime weight
+b = 0.0  # Bundle size weight (opt-in, increase to enable)
 
 [push]
 enabled = false
@@ -167,10 +168,19 @@ command = "cargo test"
 required = true
 
 [notify]
-# Optional shell hooks for desktop notifications (e.g. notify-send)
-# Context variables available: $KAPTAIND_VERSION, $KAPTAIND_SCORE, $KAPTAIND_MSG, $KAPTAIND_ERROR
+# Shell hooks — env vars: $KAPTAIND_VERSION, $KAPTAIND_SCORE, $KAPTAIND_MSG, $KAPTAIND_ERROR
 # on_commit = 'notify-send "Kaptaind Bump" "Version $KAPTAIND_VERSION"'
 # on_error = 'notify-send -u critical "Kaptaind Error" "$KAPTAIND_ERROR"'
+# webhook_url = "https://discord.com/api/webhooks/..."  # Discord or Slack webhook
+
+# [bundle]
+# command = "npm run build"  # Build command to measure output size
+# output_dir = "dist"        # Output directory (defaults to dist, build, .next, or out)
+
+# [staging]
+# mode = "all"               # "all" (default), "cluster" (only changed files), or "pattern"
+# include = ["src/**"]       # Glob patterns to include (only used in "pattern" mode)
+# exclude = ["*.log", ".env*"] # Glob patterns to always exclude from commits
 ```
 
 ### .kaptainignore
