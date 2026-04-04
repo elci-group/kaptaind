@@ -428,6 +428,24 @@ fn load_version(path: &Path) -> Option<Version> {
 
 fn save_version(path: &Path, version: &Version) -> anyhow::Result<()> {
     std::fs::write(path, version.to_string())?;
+
+    // If Cargo.toml exists, update its version
+    if let Some(repo_path) = path.parent() {
+        let cargo_toml_path = repo_path.join("Cargo.toml");
+        if cargo_toml_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&cargo_toml_path) {
+                if let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() {
+                    if let Some(package) = doc.get_mut("package") {
+                        if package.get("version").is_some() {
+                            package["version"] = toml_edit::value(version.to_string());
+                            let _ = std::fs::write(&cargo_toml_path, doc.to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -647,7 +665,7 @@ fn notify_error(config: &Config, error: &str) {
 mod tests {
     use super::{
         apply_test_outcome, format_commit, looks_like_glob, persist_analysis_artifact,
-        rate_limit_allows, run_test_hook, should_block_commit, AnalysisArtifact, IgnoreMatcher,
+        rate_limit_allows, run_test_hook, save_version, should_block_commit, AnalysisArtifact, IgnoreMatcher,
         TestOutcome,
     };
     use crate::cluster::engine::Cluster;
@@ -800,6 +818,33 @@ mod tests {
 
         let outcome = run_test_hook(&config).await;
         assert!(matches!(outcome, TestOutcome::Passed));
+    }
+
+    #[test]
+    fn test_save_version_updates_cargo_toml() {
+        let dir = tempdir().expect("temp dir");
+        let repo_root = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_root).expect("create repo root");
+        let cargo_toml_path = repo_root.join("Cargo.toml");
+        
+        let cargo_toml_content = r#"[package]
+name = "kaptaind"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+"#;
+        std::fs::write(&cargo_toml_path, cargo_toml_content).expect("write Cargo.toml");
+        
+        let version_path = repo_root.join("VERSION");
+        let new_version = Version::new(0, 2, 0);
+        
+        save_version(&version_path, &new_version).expect("save version");
+        
+        let updated_cargo_toml = std::fs::read_to_string(&cargo_toml_path).expect("read Cargo.toml");
+        assert!(updated_cargo_toml.contains("version = \"0.2.0\""));
+        assert!(updated_cargo_toml.contains("anyhow = \"1\""));
     }
 
     fn sample_cluster() -> Cluster {

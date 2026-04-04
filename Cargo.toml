@@ -33,6 +33,7 @@ tabled = "0.15"
 daemonize = "0.5.0"
 libc = "0.2.184"
 colored = "3.1.1"
+toml_edit = "0.25.10"
 
 [dev-dependencies]
 tempfile = "3"
