@@ -603,6 +603,15 @@ fn handle_analyze(config: &Config) -> anyhow::Result<()> {
     println!("{}", "-----------------------------------".magenta());
     println!("{} {}", "🎯 Total Score:  ".bold().cyan(), format!("{:.3}", weight.score).bold().yellow());
     
+    let version_path = config.repo_path.join("VERSION");
+    let current_version_str = if version_path.exists() {
+        fs::read_to_string(&version_path).unwrap_or_else(|_| "0.1.0".to_string()).trim().to_string()
+    } else {
+        "0.1.0".to_string()
+    };
+    let current_version = semver::Version::parse(&current_version_str).unwrap_or_else(|_| semver::Version::new(0, 1, 0));
+    let next_version = kaptaind::version::apply(current_version, bump);
+
     let bump_str = match bump {
         kaptaind::version::Bump::Major => "🚀 Major".red().bold(),
         kaptaind::version::Bump::Minor => "✨ Minor".cyan().bold(),
@@ -610,7 +619,12 @@ fn handle_analyze(config: &Config) -> anyhow::Result<()> {
         kaptaind::version::Bump::None => "📌 Stable".blue(),
     };
     
-    println!("{} {}", "📈 Projected Bump:".bold().cyan(), bump_str);
+    if bump == kaptaind::version::Bump::None {
+        println!("{} {}", "📈 Projected Bump:".bold().cyan(), bump_str);
+    } else {
+        let bump_display = format!("{} -> v{}", bump_str, next_version);
+        println!("{} {}", "📈 Projected Bump:".bold().cyan(), bump_display);
+    }
 
     Ok(())
 }
@@ -628,9 +642,9 @@ fn handle_status(config: &Config) -> anyhow::Result<()> {
     println!("{} {}", "📂 Repository: ".bold().cyan(), config.repo_path.display().to_string().blue());
     println!("{} {}", "🏷️  Version:    ".bold().cyan(), version.magenta());
 
-    let pid_running = check_daemon_pid(config);
-    if pid_running {
-        println!("{} {}", "⚙️  Daemon:     ".bold().cyan(), "🟢 Running".green());
+    let pid_running = get_daemon_pid(config);
+    if let Some(pid) = pid_running {
+        println!("{} {} {}", "⚙️  Daemon:     ".bold().cyan(), "🟢 Running".green(), format!("(PID: {})", pid).blue());
     } else {
         println!("{} {}", "⚙️  Daemon:     ".bold().cyan(), "🛑 Stopped".red());
     }
@@ -638,15 +652,17 @@ fn handle_status(config: &Config) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn check_daemon_pid(config: &Config) -> bool {
+fn get_daemon_pid(config: &Config) -> Option<i32> {
     let pid_file = config.repo_path.join(".kaptaind").join("daemon.pid");
     if let Ok(pid_str) = fs::read_to_string(pid_file) {
         if let Ok(pid) = pid_str.trim().parse::<i32>() {
             // Signal 0 checks if the process is running and we have permissions to signal it.
-            return unsafe { libc::kill(pid, 0) } == 0;
+            if unsafe { libc::kill(pid, 0) } == 0 {
+                return Some(pid);
+            }
         }
     }
-    false
+    None
 }
 
 #[derive(Tabled)]
