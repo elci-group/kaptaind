@@ -31,6 +31,8 @@ impl AdapterRegistry {
         registry.register(Box::new(super::heuristics::JavaScriptAdapter));
         registry.register(Box::new(super::heuristics::PythonAdapter));
         registry.register(Box::new(super::heuristics::GoAdapter));
+        registry.register(Box::new(super::heuristics::SwiftAdapter));
+        registry.register(Box::new(super::heuristics::KotlinAdapter));
         registry.register(Box::new(super::heuristics::HtmlCssAdapter));
         registry
     }

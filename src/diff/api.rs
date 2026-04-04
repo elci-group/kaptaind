@@ -187,6 +187,14 @@ fn is_dependency_file(path: &Path) -> bool {
             | "bun.lockb"
             | "poetry.lock"
             | "requirements.txt"
+            | "podfile"
+            | "podfile.lock"
+            | "package.resolved"
+            | "build.gradle"
+            | "build.gradle.kts"
+            | "settings.gradle"
+            | "settings.gradle.kts"
+            | "gradle.lockfile"
     )
 }
 
