@@ -10,18 +10,29 @@
 - `cargo build` — build the binary.
 
 ## Repository layout
-- `src/main.rs` — startup wiring.
-- `src/config/` — config loading and path normalization.
+- `src/main.rs` — startup wiring, daemonization.
+- `src/cli/main.rs` — CLI binary (`kaptaind-cli`) with `status`, `log`, `analyze`, `init`, and `aoc` subcommands.
+- `src/config/` — config loading, path normalization, staging/bundle/notify config structs.
 - `src/watcher/` — filesystem event types and notify-based watcher thread.
-- `src/daemon/` — async runtime and scheduler loop.
+- `src/daemon/` — async runtime, scheduler loop, telemetry tracking.
 - `src/cluster/` — event clustering by time window.
-- `src/diff/` — scoring for structural, API, dependency, and runtime impact.
-- `src/weight/` — weighted score calculation.
+- `src/diff/` — scoring across five dimensions:
+  - `text.rs` — structural scoring (event density, path spread, churn).
+  - `ast.rs` — API surface detection with fallback line scanning.
+  - `api.rs` — dependency file detection, runtime/web/mobile config detection.
+  - `bundle.rs` — opt-in bundle size scoring.
+  - `lang/` — language adapter framework:
+    - `adapter.rs` — `Language` enum, `LanguageAdapter` trait, `Symbol`, `AstRepresentation`, `ApiSurface`, `AstDiff`.
+    - `registry.rs` — `AdapterRegistry` resolves file paths to language adapters.
+    - `heuristics.rs` — concrete adapters: Rust, Go, Swift, Kotlin, TypeScript, JavaScript, Vue, Svelte, Astro, SCSS, HTML/CSS, Python.
+- `src/weight/` — weighted score calculation (`s*structural + a*api + d*deps + r*runtime + b*bundle`).
 - `src/version/` — semantic bump decision and `semver::Version` mutation.
-- `src/commit/` — git commit orchestration.
+- `src/commit/` — git commit orchestration with configurable staging (all/cluster/pattern modes + exclude patterns).
 - `src/push/` — git push orchestration.
 - `src/git/` — thin repository wrapper.
-- Root docs present: `MVP_ASSESSMENT.md`, `PHASE_2_PLAN.md`.
+- `src/aoc/` — Aim of Change sessions, traces, agent interception, manifests.
+- `tests/cli_integration.rs` — integration tests for CLI commands.
+- `web/` — Kaptaind Pro SaaS website (Next.js + Tailwind + NextAuth + Prisma).
 
 ## Runtime flow
 1. `config::loader::load()` reads `kaptaind.toml` from the current working directory, or falls back to defaults.
