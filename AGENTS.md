@@ -56,7 +56,13 @@
   - `watch.path` and `watch.ignore_file` are resolved relative to `repo_path`.
 - Runtime artifacts:
   - `VERSION` in `repo_path` is read/written as the authoritative semantic version.
-  - `.kaptaind/analysis/<cluster-id>.json` stores a pretty-printed serialized analysis artifact for each processed cluster.
+  - `.kaptaind/analysis/<cluster-id>.json` stores analysis artifacts for each processed cluster.
+  - `.kaptaind/status.json` — daemon state for external integrations.
+  - `.kaptaind/telemetry.json` — token usage and cost tracking.
+  - `.kaptaind/bundle.json` — previous bundle size (when bundle scoring is enabled).
+  - `.kaptaind/traces/<cluster-id>.json` — per-cluster trace records linked to AoC sessions.
+  - `.kaptaind/aoc/active.json` — active Aim of Change session.
+  - `.kaptaind/aoc/manifests/<id>.json` — shipped AoC session summaries.
 
 ## Code patterns and conventions
 - Module pattern is simple and explicit: each `mod.rs` re-exports the module’s public entry points.
