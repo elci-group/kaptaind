@@ -35,10 +35,10 @@
 - `web/` — Kaptaind Pro SaaS website (Next.js + Tailwind + NextAuth + Prisma).
 
 ## Runtime flow
-1. `config::loader::load()` reads `kaptaind.toml` from the current working directory, or falls back to defaults.
+1. `config::loader::load()` reads `kaptaind.toml` from the current working directory, or falls back to defaults. Includes `StagingConfig`, `BundleConfig`, `NotifyConfig`.
 2. `daemon::runtime::start()` creates a Tokio MPSC channel, starts the watcher thread, and spawns the scheduler task.
 3. `watcher::fs::start()` converts `notify` events into `FsEvent` values and sends them across the channel.
-4. `daemon::scheduler::run()` batches events with `ClusterEngine`, filters ignored paths, rate-limits commits, runs the configured test hook, analyzes the diff, computes weight + bump, writes `VERSION`, stores an analysis artifact under `.kaptaind/analysis/`, commits, and optionally pushes.
+4. `daemon::scheduler::run()` batches events with `ClusterEngine`, filters ignored paths, rate-limits commits, runs the configured test hook, analyzes the diff (structural + API + deps + runtime + optional bundle), computes weight + bump, writes `VERSION` (+ updates `Cargo.toml`), stores an analysis artifact, commits with configurable staging, optionally pushes, sends notifications, writes AoC traces if a session is active, and auto-prunes old artifacts.
 
 ## Configuration and on-disk files
 - Main config file: `kaptaind.toml` in the current working directory.
