@@ -299,8 +299,36 @@ async fn process_cluster(
         tracing::warn!(error = %err, "failed to persist analysis artifact");
     }
 
-    let msg = format_commit(&cluster, &diff, &weight, bump, &next, &agent_event);
-    
+    // Collect cluster paths early for staging and inference
+    let cluster_paths: Vec<PathBuf> = cluster
+        .events
+        .iter()
+        .flat_map(|e| e.paths.iter().cloned())
+        .collect();
+
+    let metadata_line = format_commit(&cluster, &diff, &weight, bump, &next, &agent_event);
+
+    let msg = if config.ollama.enabled {
+        let ctx = crate::inference::ollama::CommitContext {
+            cluster: &cluster,
+            diff: &diff,
+            weight: &weight,
+            bump,
+            previous: &previous,
+            next: &next,
+            cluster_paths: &cluster_paths,
+        };
+        match crate::inference::ollama::generate_commit_message(&config.ollama, &ctx).await {
+            Some(narrative) => format!("{narrative}\n\n{metadata_line}"),
+            None => {
+                tracing::warn!("ollama inference unavailable; using deterministic message");
+                metadata_line
+            }
+        }
+    } else {
+        metadata_line
+    };
+
     // Abstract token calculation
     let mut input_tokens = 0;
     for event in &cluster.events {
@@ -319,13 +347,6 @@ async fn process_cluster(
         aggregate_cost = %metrics.aggregate_cost,
         "Token usage and cost tracking"
     );
-
-    // Collect cluster paths for selective staging
-    let cluster_paths: Vec<PathBuf> = cluster
-        .events
-        .iter()
-        .flat_map(|e| e.paths.iter().cloned())
-        .collect();
 
     if let Err(err) = crate::commit::orchestrator::commit_with_staging(
         &repo.inner,

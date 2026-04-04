@@ -5,6 +5,7 @@ pub mod config;
 pub mod daemon;
 pub mod diff;
 pub mod git;
+pub mod inference;
 pub mod push;
 pub mod version;
 pub mod watcher;

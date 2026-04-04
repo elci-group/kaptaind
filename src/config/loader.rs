@@ -16,6 +16,8 @@ pub struct Config {
     pub bundle: BundleConfig,
     #[serde(default)]
     pub staging: StagingConfig,
+    #[serde(default)]
+    pub ollama: OllamaConfig,
     pub repo_path: PathBuf,
 }
 
@@ -97,6 +99,41 @@ pub struct StagingConfig {
     pub exclude: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct OllamaConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_ollama_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_ollama_model")]
+    pub model: String,
+    #[serde(default = "default_ollama_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_ollama_base_url() -> String {
+    "http://localhost:11434".to_string()
+}
+
+fn default_ollama_model() -> String {
+    "llama3.2".to_string()
+}
+
+fn default_ollama_timeout_secs() -> u64 {
+    15
+}
+
+impl Default for OllamaConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: default_ollama_base_url(),
+            model: default_ollama_model(),
+            timeout_secs: default_ollama_timeout_secs(),
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -130,6 +167,7 @@ impl Default for Config {
             notify: NotifyConfig::default(),
             bundle: BundleConfig::default(),
             staging: StagingConfig::default(),
+            ollama: OllamaConfig::default(),
             repo_path: cwd,
         }
     }

@@ -1,0 +1,259 @@
+use crate::cluster::engine::Cluster;
+use crate::config::loader::OllamaConfig;
+use crate::diff::DiffAnalysis;
+use crate::version::Bump;
+use crate::weight::WeightResult;
+use semver::Version;
+use std::path::PathBuf;
+use std::time::Duration;
+
+/// Contextual data available at commit time for Ollama inference.
+pub struct CommitContext<'a> {
+    pub cluster: &'a Cluster,
+    pub diff: &'a DiffAnalysis,
+    pub weight: &'a WeightResult,
+    pub bump: Bump,
+    pub previous: &'a Version,
+    pub next: &'a Version,
+    pub cluster_paths: &'a [PathBuf],
+}
+
+/// Serde types for Ollama API communication
+#[derive(serde::Serialize)]
+struct ChatRequest<'a> {
+    model: &'a str,
+    stream: bool,
+    messages: Vec<Message<'a>>,
+}
+
+#[derive(serde::Serialize)]
+struct Message<'a> {
+    role: &'a str,
+    content: String,
+}
+
+#[derive(serde::Deserialize)]
+struct ChatResponse {
+    message: ResponseMessage,
+}
+
+#[derive(serde::Deserialize)]
+struct ResponseMessage {
+    content: String,
+}
+
+/// Builds the user prompt from commit context.
+fn build_user_prompt(ctx: &CommitContext<'_>) -> String {
+    // Collect file paths (up to 20)
+    let file_list = ctx
+        .cluster_paths
+        .iter()
+        .take(20)
+        .filter_map(|p| p.to_str())
+        .map(|s| format!("  - {}", s))
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let api_summary = if ctx.diff.api_breaking {
+        "api-breaking"
+    } else if ctx.diff.api_added {
+        "api-added"
+    } else {
+        "api-stable"
+    };
+
+    format!(
+        "Describe this code change in one subject line (max 72 chars).\n\n\
+         Bump type: {:?} (Patch=tweak, Minor=new feature, Major=breaking)\n\
+         Version: v{} → v{}\n\
+         API status: {}\n\
+         Composite score: {:.3}\n\n\
+         Changed files ({} total):\n\
+         {}\n\n\
+         Scores: structural={:.3} api={:.3} deps={:.3} runtime={:.3}\n\
+         API touches: {}, signatures changed: {}\n\
+         Dependency nodes affected: {}",
+        ctx.bump,
+        ctx.previous,
+        ctx.next,
+        api_summary,
+        ctx.weight.score,
+        ctx.cluster_paths.len(),
+        file_list,
+        ctx.diff.structural,
+        ctx.diff.api,
+        ctx.diff.deps,
+        ctx.diff.runtime,
+        ctx.diff.api_touches,
+        ctx.diff.api_signatures,
+        ctx.diff.dependency_nodes,
+    )
+}
+
+/// Calls Ollama /api/chat to generate a commit message subject line.
+/// Returns `None` on any error (timeout, network, malformed response, empty content).
+/// Logs warnings for all failures; never panics.
+pub async fn generate_commit_message(
+    config: &OllamaConfig,
+    ctx: &CommitContext<'_>,
+) -> Option<String> {
+    if !config.enabled {
+        return None;
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(config.timeout_secs))
+        .build()
+        .ok()?;
+
+    let system_prompt = "You are a precise software commit message author. Write a single subject line (max 72 characters) describing what changed. Use conventional commit format (feat:, fix:, refactor:, chore:) when it fits. Output ONLY the subject line — no body, no explanation.";
+
+    let user_prompt = build_user_prompt(ctx);
+
+    let request = ChatRequest {
+        model: &config.model,
+        stream: false,
+        messages: vec![
+            Message {
+                role: "system",
+                content: system_prompt.to_string(),
+            },
+            Message {
+                role: "user",
+                content: user_prompt,
+            },
+        ],
+    };
+
+    let response = match client
+        .post(format!("{}/api/chat", config.base_url))
+        .json(&request)
+        .send()
+        .await
+    {
+        Ok(resp) => resp,
+        Err(e) => {
+            tracing::warn!(error = %e, "ollama request failed");
+            return None;
+        }
+    };
+
+    if !response.status().is_success() {
+        tracing::warn!(status = %response.status(), "ollama returned non-200 status");
+        return None;
+    }
+
+    let chat_response: ChatResponse = match response.json().await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(error = %e, "failed to parse ollama response");
+            return None;
+        }
+    };
+
+    let content = chat_response.message.content.trim();
+    if content.is_empty() {
+        tracing::warn!("ollama returned empty content");
+        return None;
+    }
+
+    // Take first line and truncate to 72 chars
+    let subject = content
+        .lines()
+        .next()
+        .unwrap_or("")
+        .chars()
+        .take(72)
+        .collect::<String>();
+
+    if subject.is_empty() {
+        tracing::warn!("ollama subject line was empty after truncation");
+        return None;
+    }
+
+    Some(subject)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_user_prompt_includes_bump_type() {
+        // Minimal valid context
+        let cluster = Cluster {
+            id: uuid::Uuid::new_v4(),
+            events: vec![],
+            started_at: chrono::Utc::now(),
+            ended_at: chrono::Utc::now(),
+        };
+        let diff = DiffAnalysis::default();
+        let weight = WeightResult {
+            score: 0.5,
+            api_breaking: false,
+            api_added: true,
+        };
+        let previous = Version::parse("0.1.0").unwrap();
+        let next = Version::parse("0.2.0").unwrap();
+        let paths = vec![];
+
+        let ctx = CommitContext {
+            cluster: &cluster,
+            diff: &diff,
+            weight: &weight,
+            bump: Bump::Minor,
+            previous: &previous,
+            next: &next,
+            cluster_paths: &paths,
+        };
+
+        let prompt = build_user_prompt(&ctx);
+        assert!(prompt.contains("Minor"));
+        assert!(prompt.contains("0.1.0"));
+        assert!(prompt.contains("0.2.0"));
+        assert!(prompt.contains("api-added"));
+    }
+
+    #[test]
+    fn build_user_prompt_includes_file_paths() {
+        let cluster = Cluster {
+            id: uuid::Uuid::new_v4(),
+            events: vec![],
+            started_at: chrono::Utc::now(),
+            ended_at: chrono::Utc::now(),
+        };
+        let diff = DiffAnalysis::default();
+        let weight = WeightResult {
+            score: 0.5,
+            api_breaking: false,
+            api_added: false,
+        };
+        let previous = Version::parse("0.1.0").unwrap();
+        let next = Version::parse("0.1.1").unwrap();
+        let paths = vec![PathBuf::from("src/main.rs"), PathBuf::from("src/lib.rs")];
+
+        let ctx = CommitContext {
+            cluster: &cluster,
+            diff: &diff,
+            weight: &weight,
+            bump: Bump::Patch,
+            previous: &previous,
+            next: &next,
+            cluster_paths: &paths,
+        };
+
+        let prompt = build_user_prompt(&ctx);
+        assert!(prompt.contains("src/main.rs"));
+        assert!(prompt.contains("src/lib.rs"));
+    }
+
+    #[test]
+    fn subject_line_truncation_at_72_chars() {
+        let long_line = "a".repeat(100);
+        let truncated = long_line
+            .chars()
+            .take(72)
+            .collect::<String>();
+        assert_eq!(truncated.len(), 72);
+    }
+}
