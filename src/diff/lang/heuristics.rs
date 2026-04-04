@@ -632,3 +632,168 @@ impl LanguageAdapter for HtmlCssAdapter {
         false
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn swift_detects_public_api() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("API.swift");
+        std::fs::write(&file, "public func greet() {}\npublic class Router {}\nprivate func helper() {}\n").unwrap();
+
+        let adapter = SwiftAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        let api = adapter.extract_api(&ast);
+        assert_eq!(api.public_symbols.len(), 2);
+        assert!(api.public_symbols.iter().any(|s| s.kind == "function"));
+        assert!(api.public_symbols.iter().any(|s| s.kind == "class"));
+    }
+
+    #[test]
+    fn swift_detects_protocols_and_enums() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("Types.swift");
+        std::fs::write(&file, "public protocol Networking {}\npublic enum AppError {}\nopen class Base {}\n").unwrap();
+
+        let adapter = SwiftAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        assert_eq!(ast.symbols.len(), 3);
+    }
+
+    #[test]
+    fn kotlin_detects_public_api() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("App.kt");
+        std::fs::write(&file, "fun greet() {}\ndata class User(val name: String)\nprivate fun helper() {}\n").unwrap();
+
+        let adapter = KotlinAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        let api = adapter.extract_api(&ast);
+        assert_eq!(api.public_symbols.len(), 2);
+    }
+
+    #[test]
+    fn kotlin_detects_composables() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("UI.kt");
+        std::fs::write(&file, "@Composable\nfun Greeting() {}\nsealed class State {}\n").unwrap();
+
+        let adapter = KotlinAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        assert!(ast.symbols.iter().any(|s| s.kind == "composable"));
+        assert!(ast.symbols.iter().any(|s| s.kind == "sealed_class"));
+    }
+
+    #[test]
+    fn typescript_detects_hooks_and_middleware() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("hooks.ts");
+        std::fs::write(&file, "export function useAuth() {}\nexport const useTheme = () => {}\nexport function middleware(req: any) {}\n").unwrap();
+
+        let adapter = TypeScriptAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        assert!(ast.symbols.iter().any(|s| s.kind == "hook"));
+        assert!(ast.symbols.iter().any(|s| s.kind == "middleware"));
+    }
+
+    #[test]
+    fn typescript_classifies_export_kinds() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("api.ts");
+        std::fs::write(&file, "export default function main() {}\nexport interface Config {}\nexport type ID = string;\nexport const VERSION = 1;\n").unwrap();
+
+        let adapter = TypeScriptAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        let kinds: Vec<&str> = ast.symbols.iter().map(|s| s.kind.as_str()).collect();
+        assert!(kinds.contains(&"default_export"));
+        assert!(kinds.contains(&"interface"));
+        assert!(kinds.contains(&"type"));
+        assert!(kinds.contains(&"binding"));
+    }
+
+    #[test]
+    fn vue_detects_define_props_and_emits() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("Button.vue");
+        std::fs::write(&file, "<script setup>\nconst props = defineProps<{label: string}>()\nconst emit = defineEmits(['click'])\n</script>\n<template><button>{{ props.label }}</button></template>\n").unwrap();
+
+        let adapter = VueAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        assert!(ast.symbols.iter().any(|s| s.kind == "props"));
+        assert!(ast.symbols.iter().any(|s| s.kind == "emits"));
+    }
+
+    #[test]
+    fn vue_removing_props_is_breaking() {
+        let adapter = VueAdapter;
+        let diff = AstDiff {
+            added: vec![],
+            removed: vec![Symbol { name: "defineProps".to_string(), kind: "props".to_string() }],
+            modified: vec![],
+        };
+        assert!(adapter.detect_breaking_changes(&diff));
+    }
+
+    #[test]
+    fn svelte_detects_exported_props() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("Card.svelte");
+        std::fs::write(&file, "<script>\nexport let title = '';\nexport let variant = 'default';\n</script>\n<div>{title}</div>\n").unwrap();
+
+        let adapter = SvelteAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        assert_eq!(ast.symbols.iter().filter(|s| s.kind == "prop").count(), 2);
+    }
+
+    #[test]
+    fn astro_detects_frontmatter_exports() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("Page.astro");
+        std::fs::write(&file, "---\nexport const prerender = true;\nconst { title } = Astro.props;\n---\n<html>{title}</html>\n").unwrap();
+
+        let adapter = AstroAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        assert!(ast.symbols.iter().any(|s| s.kind == "export"));
+        assert!(ast.symbols.iter().any(|s| s.kind == "props"));
+    }
+
+    #[test]
+    fn scss_detects_variables_and_mixins() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("theme.scss");
+        std::fs::write(&file, "$primary: #007bff;\n$spacing: 1rem;\n@mixin flex-center {\n  display: flex;\n}\n--brand-color: #000;\n").unwrap();
+
+        let adapter = ScssAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        assert_eq!(ast.symbols.iter().filter(|s| s.kind == "variable").count(), 2);
+        assert!(ast.symbols.iter().any(|s| s.kind == "mixin"));
+        assert!(ast.symbols.iter().any(|s| s.kind == "css_var"));
+    }
+
+    #[test]
+    fn scss_removing_mixin_is_breaking() {
+        let adapter = ScssAdapter;
+        let diff = AstDiff {
+            added: vec![],
+            removed: vec![Symbol { name: "flex-center".to_string(), kind: "mixin".to_string() }],
+            modified: vec![],
+        };
+        assert!(adapter.detect_breaking_changes(&diff));
+    }
+
+    #[test]
+    fn less_detects_variables() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("vars.less");
+        std::fs::write(&file, "@primary: #007bff;\n@media (max-width: 768px) {}\n@import 'base.less';\n").unwrap();
+
+        let adapter = ScssAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        // Only @primary should be detected, not @media or @import
+        assert_eq!(ast.symbols.len(), 1);
+        assert_eq!(ast.symbols[0].kind, "variable");
+    }
+}
