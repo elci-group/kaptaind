@@ -23,6 +23,27 @@ fn calculate_hash<T: Hash>(t: &T) -> u64 {
     s.finish()
 }
 
+/// Classify a TypeScript/JavaScript export line into a more specific kind.
+fn classify_ts_export(rest: &str) -> String {
+    if rest.starts_with("default function ") || rest.starts_with("default class ") || rest == "default" || rest.starts_with("default ") {
+        "default_export".to_string()
+    } else if rest.starts_with("function ") || rest.starts_with("async function ") {
+        "function".to_string()
+    } else if rest.starts_with("class ") {
+        "class".to_string()
+    } else if rest.starts_with("interface ") {
+        "interface".to_string()
+    } else if rest.starts_with("type ") {
+        "type".to_string()
+    } else if rest.starts_with("const ") || rest.starts_with("let ") || rest.starts_with("var ") {
+        "binding".to_string()
+    } else if rest.starts_with("enum ") {
+        "enum".to_string()
+    } else {
+        "export".to_string()
+    }
+}
+
 // Basic diffing based on names and kinds
 fn basic_diff(old: &AstRepresentation, new: &AstRepresentation) -> AstDiff {
     let old_names: std::collections::HashSet<_> = old.symbols.iter().map(|s| &s.name).collect();
