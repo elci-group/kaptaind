@@ -467,6 +467,11 @@ min_commit_interval = 10
 [test]
 command = "{test_cmd}"
 required = true
+
+# [staging]
+# mode = "all"        # "all" (default), "cluster" (only changed files), or "pattern"
+# include = ["src/**"] # only used in "pattern" mode
+# exclude = ["*.log", ".env*"]
 "#
     )
 }
