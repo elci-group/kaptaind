@@ -196,8 +196,13 @@ It supports:
 
 As `kaptaind` runs, it drops critical artifacts:
 - `VERSION`: Contains the authoritative, dynamically-managed semantic version (e.g. `0.1.2`).
-- `.kaptaind/analysis/<uuid>.json`: Retains full structured evidence of exactly *why* a semantic bump occurred for every cluster that resulted in a commit.
-- `.kaptaind/status.json`: Contains the real-time status of the daemon (`Idle`, `Clustering`, `Testing`, `Committing`, `Failed`), useful for integration with `i3status` or `polybar`.
+- `.kaptaind/analysis/<uuid>.json`: Full structured evidence of *why* a semantic bump occurred for every cluster that resulted in a commit.
+- `.kaptaind/status.json`: Real-time daemon state (`Idle`, `Clustering`, `Testing`, `Committing`, `Failed`), useful for integration with `i3status` or `polybar`.
+- `.kaptaind/telemetry.json`: Token usage and cost tracking metrics.
+- `.kaptaind/bundle.json`: Previous bundle size state (when bundle scoring is enabled).
+- `.kaptaind/traces/<uuid>.json`: Per-cluster trace records linked to AoC sessions.
+- `.kaptaind/aoc/active.json`: Currently active Aim of Change session.
+- `.kaptaind/aoc/manifests/<id>.json`: Shipped AoC session summaries.
 
 ## License
 
