@@ -3,7 +3,6 @@ use chrono::Utc;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use uuid::Uuid;
 
 /// Logs an agent event to the interceptor log file.
 pub fn log_event(repo_path: &Path, event: &AgentEvent) -> anyhow::Result<()> {

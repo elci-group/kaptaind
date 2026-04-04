@@ -16,7 +16,7 @@ fn basic_diff(old: &AstRepresentation, new: &AstRepresentation) -> AstDiff {
 
     let mut added = Vec::new();
     let mut removed = Vec::new();
-    let mut modified = Vec::new();
+    let modified = Vec::new();
 
     for s in &new.symbols {
         if !old_names.contains(&s.name) {
