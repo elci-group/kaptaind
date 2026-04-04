@@ -806,6 +806,147 @@ mod tests {
     use tempfile::tempdir;
 
     #[test]
+    fn rust_syn_parses_pub_function_with_args() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("lib.rs");
+        std::fs::write(&file, r#"
+pub fn greet(name: &str, count: usize) -> String {
+    format!("{name}: {count}")
+}
+fn private() {}
+"#).unwrap();
+
+        let adapter = RustAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        let api = adapter.extract_api(&ast);
+        assert_eq!(api.public_symbols.len(), 1);
+        assert!(api.public_symbols[0].name.contains("greet"));
+        assert!(api.public_symbols[0].name.contains("name"));
+        assert!(api.public_symbols[0].name.contains("count"));
+        assert_eq!(api.public_symbols[0].kind, "function");
+    }
+
+    #[test]
+    fn rust_syn_parses_async_function() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("lib.rs");
+        std::fs::write(&file, "pub async fn fetch(url: &str) -> Result<String, Error> { todo!() }\n").unwrap();
+
+        let adapter = RustAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        assert_eq!(ast.symbols.len(), 1);
+        assert_eq!(ast.symbols[0].kind, "async_function");
+    }
+
+    #[test]
+    fn rust_syn_parses_struct_with_pub_fields() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("lib.rs");
+        std::fs::write(&file, r#"
+pub struct Config {
+    pub host: String,
+    pub port: u16,
+    secret: String,  // private field
+}
+"#).unwrap();
+
+        let adapter = RustAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        let kinds: Vec<&str> = ast.symbols.iter().map(|s| s.kind.as_str()).collect();
+        assert!(kinds.contains(&"struct"));
+        assert_eq!(ast.symbols.iter().filter(|s| s.kind == "field").count(), 2); // only pub fields
+    }
+
+    #[test]
+    fn rust_syn_parses_trait_methods_and_assoc_types() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("lib.rs");
+        std::fs::write(&file, r#"
+pub trait Handler {
+    type Output;
+    fn handle(&self, input: &[u8]) -> Self::Output;
+    fn name(&self) -> &str;
+}
+"#).unwrap();
+
+        let adapter = RustAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        assert!(ast.symbols.iter().any(|s| s.kind == "trait" && s.name == "Handler"));
+        assert!(ast.symbols.iter().any(|s| s.kind == "associated_type" && s.name.contains("Output")));
+        assert_eq!(ast.symbols.iter().filter(|s| s.kind == "trait_method").count(), 2);
+    }
+
+    #[test]
+    fn rust_syn_parses_enum_variants() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("lib.rs");
+        std::fs::write(&file, r#"
+pub enum Status {
+    Active,
+    Inactive,
+    Pending,
+}
+"#).unwrap();
+
+        let adapter = RustAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        assert!(ast.symbols.iter().any(|s| s.kind == "enum" && s.name == "Status"));
+        assert_eq!(ast.symbols.iter().filter(|s| s.kind == "variant").count(), 3);
+        assert!(ast.symbols.iter().any(|s| s.name == "Status::Active"));
+    }
+
+    #[test]
+    fn rust_syn_parses_impl_pub_methods() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("lib.rs");
+        std::fs::write(&file, r#"
+pub struct Db;
+impl Db {
+    pub fn connect(url: &str) -> Self { Db }
+    pub fn query(&self, sql: &str) -> Vec<Row> { vec![] }
+    fn internal(&self) {}
+}
+struct Row;
+"#).unwrap();
+
+        let adapter = RustAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        let methods: Vec<_> = ast.symbols.iter().filter(|s| s.kind == "method").collect();
+        assert_eq!(methods.len(), 2); // connect and query, not internal
+        assert!(methods.iter().any(|s| s.name.contains("connect")));
+        assert!(methods.iter().any(|s| s.name.contains("query")));
+    }
+
+    #[test]
+    fn rust_syn_parses_const_and_type_alias() {
+        let dir = tempdir().unwrap();
+        let file = dir.path().join("lib.rs");
+        std::fs::write(&file, r#"
+pub const VERSION: &str = "1.0.0";
+pub type Result<T> = std::result::Result<T, Error>;
+pub static COUNTER: AtomicUsize = AtomicUsize::new(0);
+struct Error;
+"#).unwrap();
+
+        let adapter = RustAdapter;
+        let ast = adapter.parse_ast(&file).unwrap();
+        assert!(ast.symbols.iter().any(|s| s.kind == "const" && s.name == "VERSION"));
+        assert!(ast.symbols.iter().any(|s| s.kind == "type_alias" && s.name == "Result"));
+        assert!(ast.symbols.iter().any(|s| s.kind == "static" && s.name == "COUNTER"));
+    }
+
+    #[test]
+    fn rust_syn_detects_breaking_removal() {
+        let adapter = RustAdapter;
+        let diff = AstDiff {
+            added: vec![],
+            removed: vec![Symbol { name: "handle(req)".to_string(), kind: "method".to_string() }],
+            modified: vec![],
+        };
+        assert!(adapter.detect_breaking_changes(&diff));
+    }
+
+    #[test]
     fn swift_detects_public_api() {
         let dir = tempdir().unwrap();
         let file = dir.path().join("API.swift");
