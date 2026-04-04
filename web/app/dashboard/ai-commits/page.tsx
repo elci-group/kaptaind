@@ -62,12 +62,15 @@ export default async function AiCommitsPage() {
                 {a.diff.touched_paths}; score={a.weight.score.toFixed(3)};
                 cluster={a.cluster_id.slice(0, 8)}]
               </div>
-              <div className="rounded-lg border border-violet-200 bg-violet-50 p-3 text-sm text-zinc-700 dark:border-violet-800 dark:bg-violet-900/10 dark:text-zinc-300">
-                <p className="italic text-zinc-400">
-                  AI narrative will be generated on demand via the API.
-                  Connect the &quot;Generate&quot; button to POST /api/ai/commit-message.
-                </p>
-              </div>
+              <AiGenerateButton
+                endpoint="/api/ai/commit-message"
+                payload={{
+                  projectId: "default",
+                  clusterId: a.cluster_id,
+                }}
+                label="Generate Narrative"
+                resultLabel="Narrative"
+              />
             </Card>
           ))}
         </div>
