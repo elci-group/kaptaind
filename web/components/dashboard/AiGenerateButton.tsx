@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { AlertCircle, Loader2 } from "lucide-react";
 
 interface AiGenerateButtonProps {
   endpoint: string;
@@ -59,20 +58,12 @@ export function AiGenerateButton({
         variant="outline"
         className="w-full"
       >
-        {loading ? (
-          <>
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            Generating...
-          </>
-        ) : (
-          label
-        )}
+        {loading ? "⏳ Generating..." : `✨ ${label}`}
       </Button>
 
       {error && (
-        <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700 flex gap-2">
-          <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
-          <div>{error}</div>
+        <div className="rounded-lg bg-red-50 p-3 text-sm text-red-700">
+          <strong>⚠️ Error:</strong> {error}
         </div>
       )}
 
