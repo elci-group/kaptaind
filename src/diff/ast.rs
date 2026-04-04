@@ -1,4 +1,5 @@
 use crate::cluster::engine::Cluster;
+use crate::diff::cache::{self, AstCache};
 use crate::watcher::FsEventKind;
 use crate::diff::lang::{normalize, AdapterRegistry};
 use std::collections::HashSet;
@@ -11,24 +12,51 @@ pub struct ApiAnalysis {
     pub signatures: usize,
     pub breaking: bool,
     pub added: bool,
+    /// Number of files served from cache (skipped re-parsing).
+    pub cache_hits: usize,
 }
 
 pub fn api_score(cluster: &Cluster, repo_root: &Path) -> ApiAnalysis {
+    let mut ast_cache = AstCache::load(repo_root);
+    let result = api_score_with_cache(cluster, repo_root, &mut ast_cache);
+    ast_cache.save(repo_root);
+    result
+}
+
+pub fn api_score_with_cache(cluster: &Cluster, repo_root: &Path, ast_cache: &mut AstCache) -> ApiAnalysis {
     let mut touches = 0_usize;
     let mut exported_signatures = HashSet::new();
     let mut api_breaking = false;
     let mut api_added = false;
-    
+    let mut cache_hits = 0_usize;
+
     let registry = AdapterRegistry::default_registry();
     let mut max_score = 0.0_f32;
 
     for event in &cluster.events {
         for path in &event.paths {
             let resolved = resolve_path(repo_root, path);
-            
+
             // Check if any adapter handles this file type
             if let Some(adapter) = registry.resolve(&resolved) {
-                let ast = adapter.parse_ast(&resolved).unwrap_or_default();
+                // Try cache first: hash the file and check for a cached AST
+                let relative = path.strip_prefix(repo_root).unwrap_or(path);
+                let relative_str = relative.to_string_lossy().to_string();
+                let file_hash = cache::hash_file(&resolved);
+
+                let ast = if let Some(ref h) = file_hash {
+                    if let Some(cached) = ast_cache.get(&relative_str, h) {
+                        cache_hits += 1;
+                        cached
+                    } else {
+                        let parsed = adapter.parse_ast(&resolved).unwrap_or_default();
+                        ast_cache.put(&relative_str, h, &parsed);
+                        parsed
+                    }
+                } else {
+                    adapter.parse_ast(&resolved).unwrap_or_default()
+                };
+
                 let api_surface = adapter.extract_api(&ast);
                 let signatures: HashSet<String> = api_surface.public_symbols.into_iter().map(|s| s.name).collect();
                 
