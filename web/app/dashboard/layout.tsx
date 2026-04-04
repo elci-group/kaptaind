@@ -1,20 +1,31 @@
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { getUserTier } from "@/lib/subscription";
 import Sidebar from "@/components/layout/Sidebar";
+
+export const dynamic = "force-dynamic";
 
 export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const session = await getServerSession(authOptions);
+  // Force cookie access so Next.js treats this as dynamic
+  const cookieStore = await cookies();
+  const hasToken = cookieStore.has("next-auth.session-token");
 
-  console.log("[dashboard] getServerSession result:", JSON.stringify(session));
+  console.log("[dashboard] hasToken:", hasToken);
+
+  if (!hasToken) {
+    redirect("/auth/signin");
+  }
+
+  const session = await getServerSession(authOptions);
+  console.log("[dashboard] session:", JSON.stringify(session));
 
   if (!session?.user?.id) {
-    console.log("[dashboard] no session or no user.id, redirecting to signin");
     redirect("/auth/signin");
   }
 
