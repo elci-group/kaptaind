@@ -21,9 +21,38 @@ impl Cluster {
         }
     }
 
-    pub fn add_event(&mut self, event: FsEvent) {
+    pub fn add_event(&mut self, mut event: FsEvent) {
         self.ended_at = event.timestamp;
         self.events.push(event);
+
+        if self.events.len() >= 1000 {
+            self.compact();
+        }
+    }
+
+    fn compact(&mut self) {
+        let mut grouped: std::collections::HashMap<crate::watcher::FsEventKind, Vec<std::path::PathBuf>> = std::collections::HashMap::new();
+        let mut latest_ts = self.started_at;
+        
+        for event in self.events.drain(..) {
+            if event.timestamp > latest_ts {
+                latest_ts = event.timestamp;
+            }
+            let entry = grouped.entry(event.kind).or_default();
+            for path in event.paths {
+                entry.push(path);
+            }
+        }
+        
+        for (kind, mut paths) in grouped {
+            paths.sort_unstable();
+            paths.dedup();
+            self.events.push(FsEvent {
+                paths,
+                kind,
+                timestamp: latest_ts,
+            });
+        }
     }
 }
 

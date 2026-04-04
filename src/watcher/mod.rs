@@ -12,7 +12,7 @@ pub struct FsEvent {
     pub timestamp: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum FsEventKind {
     Create,
     Modify,

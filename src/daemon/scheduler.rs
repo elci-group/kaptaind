@@ -375,6 +375,98 @@ async fn process_cluster(
     status.last_action_time = now;
     status.last_error = None;
     write_status(&config.repo_path, status);
+
+    // Run pruning in the background
+    let repo_path = config.repo_path.clone();
+    tokio::spawn(async move {
+        auto_prune(&repo_path).await;
+    });
+}
+
+async fn auto_prune(repo_path: &Path) {
+    // Keep max 1000 items in analysis/ and traces/
+    prune_directory(&repo_path.join(".kaptaind").join("analysis"), 1000).await;
+    prune_directory(&repo_path.join(".kaptaind").join("traces"), 1000).await;
+    
+    // Auto-reap stale AoC sessions (older than 72 hours)
+    if let Ok(Some(session)) = crate::aoc::session::load_active(repo_path) {
+        if Utc::now().signed_duration_since(session.created_at).num_hours() > 72 {
+            tracing::info!(aoc_id = %session.id, "auto-reaping stale AoC session");
+            // Perform an auto-ship of the stale session
+            let _ = auto_ship_aoc(repo_path, &session).await;
+        }
+    }
+}
+
+async fn auto_ship_aoc(repo_path: &Path, session: &crate::aoc::AocSession) -> anyhow::Result<()> {
+    let version_path = repo_path.join("VERSION");
+    let final_version = if version_path.exists() {
+        std::fs::read_to_string(&version_path)?.trim().to_string()
+    } else {
+        "0.1.0".to_string()
+    };
+
+    let traces = crate::aoc::tracer::read_traces_for_aoc(repo_path, &session.id)?;
+    
+    let commit_count = traces
+        .iter()
+        .filter(|t| matches!(t.result, crate::aoc::TraceResult::Committed { .. }))
+        .count();
+        
+    let test_failures = traces
+        .iter()
+        .filter(|t| t.test.outcome == "failed")
+        .count();
+
+    let manifest = crate::aoc::AocManifest {
+        id: session.id.clone(),
+        label: format!("{} (auto-reaped)", session.label),
+        created_at: session.created_at,
+        shipped_at: Utc::now(),
+        initial_version: session.initial_version.clone(),
+        final_version,
+        cluster_count: traces.len(),
+        commit_count,
+        test_failures,
+        trace_ids: traces.iter().map(|t| t.cluster_id.clone()).collect(),
+    };
+
+    crate::aoc::session::save_manifest(repo_path, &manifest)?;
+    crate::aoc::session::remove_active(repo_path)?;
+    Ok(())
+}
+
+async fn prune_directory(dir_path: &Path, max_items: usize) {
+    if !dir_path.exists() || !dir_path.is_dir() {
+        return;
+    }
+
+    let Ok(mut entries) = tokio::fs::read_dir(dir_path).await else {
+        return;
+    };
+
+    let mut files = Vec::new();
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        if let Ok(meta) = entry.metadata().await {
+            if meta.is_file() {
+                if let Ok(modified) = meta.modified() {
+                    files.push((entry.path(), modified));
+                }
+            }
+        }
+    }
+
+    if files.len() <= max_items {
+        return;
+    }
+
+    // Sort by modified time, newest first
+    files.sort_by(|a, b| b.1.cmp(&a.1));
+
+    // Delete everything after max_items
+    for (path, _) in files.into_iter().skip(max_items) {
+        let _ = tokio::fs::remove_file(path).await;
+    }
 }
 
 fn rate_limit_allows(now: DateTime<Utc>, last: Option<DateTime<Utc>>, min_interval: Duration) -> bool {
