@@ -157,3 +157,48 @@ fn test_analyze_command_on_dirty_repo() {
     assert!(stdout.contains("Dry-run Analysis Result"));
     assert!(stdout.contains("Touched Paths"));
 }
+
+#[test]
+fn test_init_detects_node_project() {
+    let dir = tempdir().expect("temp dir");
+    let _repo = git2::Repository::init(dir.path()).unwrap();
+    std::fs::write(dir.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .arg("init")
+        .output()
+        .expect("run command");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "Command failed with stderr: {}", stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Node"));
+
+    let toml_content = std::fs::read_to_string(dir.path().join("kaptaind.toml")).unwrap();
+    assert!(toml_content.contains("npm test"));
+
+    let ignore_content = std::fs::read_to_string(dir.path().join(".kaptainignore")).unwrap();
+    assert!(ignore_content.contains("node_modules"));
+}
+
+#[test]
+fn test_init_does_not_overwrite_existing() {
+    let dir = tempdir().expect("temp dir");
+    let _repo = git2::Repository::init(dir.path()).unwrap();
+    std::fs::write(dir.path().join("kaptaind.toml"), "# existing config").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .arg("init")
+        .output()
+        .expect("run command");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "Command failed with stderr: {}", stderr);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("already exists"));
+
+    let content = std::fs::read_to_string(dir.path().join("kaptaind.toml")).unwrap();
+    assert_eq!(content, "# existing config");
+}

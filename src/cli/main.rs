@@ -70,6 +70,21 @@ enum AocCommand {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+
+    // Init command works without a valid config
+    if matches!(&cli.command, Commands::Init) {
+        let repo_path = cli
+            .repo
+            .map(|p| p.canonicalize().unwrap_or(p))
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+        let config = Config {
+            repo_path,
+            ..Config::default()
+        };
+        handle_init(&config)?;
+        return Ok(());
+    }
+
     let mut config = loader::load()?;
 
     if let Some(repo_override) = cli.repo {
