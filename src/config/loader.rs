@@ -14,6 +14,8 @@ pub struct Config {
     pub notify: NotifyConfig,
     #[serde(default)]
     pub bundle: BundleConfig,
+    #[serde(default)]
+    pub staging: StagingConfig,
     pub repo_path: PathBuf,
 }
 
@@ -66,6 +68,35 @@ fn default_output_dir() -> String {
     "dist".to_string()
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StagingMode {
+    /// Stage all modified files (current behavior, default)
+    All,
+    /// Only stage files that were part of the detected cluster
+    Cluster,
+    /// Stage files matching include patterns, skip exclude patterns
+    Pattern,
+}
+
+impl Default for StagingMode {
+    fn default() -> Self {
+        StagingMode::All
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct StagingConfig {
+    #[serde(default)]
+    pub mode: StagingMode,
+    /// Glob patterns for files to include (only used in Pattern mode)
+    #[serde(default)]
+    pub include: Vec<String>,
+    /// Glob patterns for files to always exclude from staging
+    #[serde(default)]
+    pub exclude: Vec<String>,
+}
+
 impl Default for Config {
     fn default() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -98,6 +129,7 @@ impl Default for Config {
             },
             notify: NotifyConfig::default(),
             bundle: BundleConfig::default(),
+            staging: StagingConfig::default(),
             repo_path: cwd,
         }
     }

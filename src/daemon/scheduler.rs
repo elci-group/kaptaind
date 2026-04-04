@@ -320,7 +320,19 @@ async fn process_cluster(
         "Token usage and cost tracking"
     );
 
-    if let Err(err) = crate::commit::commit(&repo.inner, &msg) {
+    // Collect cluster paths for selective staging
+    let cluster_paths: Vec<PathBuf> = cluster
+        .events
+        .iter()
+        .flat_map(|e| e.paths.iter().cloned())
+        .collect();
+
+    if let Err(err) = crate::commit::orchestrator::commit_with_staging(
+        &repo.inner,
+        &msg,
+        &config.staging,
+        &cluster_paths,
+    ) {
         tracing::error!(error = %err, "commit failed");
         write_trace_if_active(
             &config.repo_path,
