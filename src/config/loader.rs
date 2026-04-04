@@ -12,6 +12,8 @@ pub struct Config {
     pub test: TestConfig,
     #[serde(default)]
     pub notify: NotifyConfig,
+    #[serde(default)]
+    pub bundle: BundleConfig,
     pub repo_path: PathBuf,
 }
 
@@ -52,6 +54,17 @@ pub struct NotifyConfig {
     pub on_error: Option<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct BundleConfig {
+    pub command: Option<String>,
+    #[serde(default = "default_output_dir")]
+    pub output_dir: String,
+}
+
+fn default_output_dir() -> String {
+    "dist".to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -69,6 +82,7 @@ impl Default for Config {
                 a: 0.3,
                 d: 0.2,
                 r: 0.15,
+                b: 0.0,
             },
             push: PushConfig {
                 enabled: false,
@@ -82,6 +96,7 @@ impl Default for Config {
                 required: true,
             },
             notify: NotifyConfig::default(),
+            bundle: BundleConfig::default(),
             repo_path: cwd,
         }
     }

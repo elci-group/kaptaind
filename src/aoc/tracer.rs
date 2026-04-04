@@ -34,6 +34,17 @@ pub enum TraceResult {
     },
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentEvent {
+    pub id: String,
+    pub timestamp: DateTime<Utc>,
+    pub model: Option<String>,
+    pub input: Option<serde_json::Value>,
+    pub output: Option<serde_json::Value>,
+    pub tools: Vec<String>,
+    pub latency_ms: u64,
+}
+
 /// A complete trace record for a cluster processed during an AoC.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceRecord {
@@ -47,6 +58,8 @@ pub struct TraceRecord {
     pub result: TraceResult,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub analysis_ref: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_event: Option<AgentEvent>,
 }
 
 /// Write a trace record to disk.
@@ -117,6 +130,7 @@ mod tests {
                 version: "0.1.1".to_string(),
             },
             analysis_ref: None,
+            agent_event: None,
         };
 
         write_trace(repo_path, &trace).unwrap();

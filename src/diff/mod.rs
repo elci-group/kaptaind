@@ -1,5 +1,6 @@
 pub mod api;
 pub mod ast;
+pub mod bundle;
 pub mod text;
 
 use crate::cluster::engine::Cluster;
@@ -22,6 +23,8 @@ pub struct DiffAnalysis {
     pub dependency_nodes: usize,
     pub dependency_edges: usize,
     pub runtime_paths: usize,
+    #[serde(default)]
+    pub bundle: f32,
 }
 
 pub fn analyze(cluster: &Cluster, repo_root: &Path) -> DiffAnalysis {
@@ -44,6 +47,7 @@ pub fn analyze(cluster: &Cluster, repo_root: &Path) -> DiffAnalysis {
         dependency_nodes: deps.nodes,
         dependency_edges: deps.edges,
         runtime_paths: runtime.paths,
+        bundle: 0.0, // Bundle score is calculated after diff analysis
     }
 }
 

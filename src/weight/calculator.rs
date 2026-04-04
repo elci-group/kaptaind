@@ -7,6 +7,8 @@ pub struct WeightConfig {
     pub a: f32,
     pub d: f32,
     pub r: f32,
+    #[serde(default)]
+    pub b: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,7 +19,7 @@ pub struct WeightResult {
 }
 
 pub fn compute(diff: &DiffAnalysis, cfg: &WeightConfig) -> WeightResult {
-    let score = cfg.s * diff.structural + cfg.a * diff.api + cfg.d * diff.deps + cfg.r * diff.runtime;
+    let score = cfg.s * diff.structural + cfg.a * diff.api + cfg.d * diff.deps + cfg.r * diff.runtime + cfg.b * diff.bundle;
 
     WeightResult {
         score,

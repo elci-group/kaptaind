@@ -45,6 +45,19 @@ enum AocCommand {
     Ship,
     /// Show status of the current AoC session
     Status,
+    /// Intercept agent operations for contextual tracing
+    Intercept {
+        /// Agent model used (e.g. "claude-3-5-sonnet")
+        #[arg(short, long)]
+        model: Option<String>,
+        /// Intent or task description
+        #[arg(short, long)]
+        intent: Option<String>,
+        /// Command to wrap and execute
+        command: String,
+        /// Arguments for the command
+        args: Vec<String>,
+    },
     /// View completed AoC sessions
     Log {
         #[arg(short, long, default_value_t = 10)]
@@ -89,6 +102,9 @@ fn handle_aoc(config: &Config, cmd: &AocCommand) -> anyhow::Result<()> {
         }
         AocCommand::Status => {
             handle_aoc_status(config)?;
+        }
+        AocCommand::Intercept { model, intent, command, args } => {
+            handle_aoc_intercept(config, model.clone(), intent.clone(), command, args)?;
         }
         AocCommand::Log { limit } => {
             handle_aoc_log(config, *limit)?;
@@ -211,6 +227,58 @@ fn handle_aoc_status(config: &Config) -> anyhow::Result<()> {
         None => {
             println!("{} {}", "ℹ️".blue(), "No active AoC session.".blue());
         }
+    }
+
+    Ok(())
+}
+
+fn handle_aoc_intercept(
+    config: &Config,
+    model: Option<String>,
+    intent: Option<String>,
+    command: &str,
+    args: &[String],
+) -> anyhow::Result<()> {
+    // Check if an active session already exists, start one if not
+    let mut tmp_aoc = false;
+    if kaptaind::aoc::session::load_active(&config.repo_path)?.is_none() {
+        tmp_aoc = true;
+        let label = intent.clone().unwrap_or_else(|| "agent-intercept".to_string());
+        handle_aoc_start(config, &label)?;
+    }
+
+    let start_time = Utc::now();
+    let id = uuid::Uuid::new_v4().to_string();
+
+    println!("{} {}", "🤖".cyan(), "Intercepting Agent execution...".bold().cyan());
+
+    // Spawn command
+    let mut child = std::process::Command::new(command)
+        .args(args)
+        .spawn()?;
+    
+    let status = child.wait()?;
+
+    let end_time = Utc::now();
+    let duration = (end_time - start_time).num_milliseconds().max(0) as u64;
+
+    // Build AgentEvent
+    let agent_event = kaptaind::aoc::AgentEvent {
+        id,
+        timestamp: start_time,
+        model: model.clone(),
+        input: intent.map(|s| serde_json::Value::String(s)),
+        output: Some(serde_json::Value::String(format!("exit code: {:?}", status.code()))),
+        tools: vec![command.to_string()], // simple tool recording
+        latency_ms: duration,
+    };
+
+    kaptaind::aoc::interceptor::log_event(&config.repo_path, &agent_event)?;
+
+    println!("{} {}", "✅".green(), "Agent event logged for context mapping.".bold().green());
+
+    if tmp_aoc {
+        println!("{} {}", "ℹ️".blue(), "AoC session remains active for daemon to process clusters. Run 'kaptaind-cli aoc ship' later.".blue());
     }
 
     Ok(())

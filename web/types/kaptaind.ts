@@ -82,6 +82,16 @@ export type TraceResult =
   | { type: "committed"; bump: string; version: string }
   | { type: "skipped"; reason: string };
 
+export interface AgentEvent {
+  id: string;
+  timestamp: string;
+  model?: string;
+  input?: any;
+  output?: any;
+  tools: string[];
+  latency_ms: number;
+}
+
 export interface TraceRecord {
   cluster_id: string;
   aoc_id: string;
@@ -92,4 +102,5 @@ export interface TraceRecord {
   test: TraceTest;
   result: TraceResult;
   analysis_ref?: string;
+  agent_event?: AgentEvent;
 }

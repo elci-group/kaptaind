@@ -85,6 +85,7 @@ fn write_trace_if_active(
     cluster: &Cluster,
     result: tracer::TraceResult,
     test_outcome: &TestOutcome,
+    agent_event: Option<crate::aoc::AgentEvent>,
 ) {
     // Check if an active AoC exists
     match crate::aoc::session::load_active(repo_path) {
@@ -139,6 +140,7 @@ fn write_trace_if_active(
                 test,
                 result,
                 analysis_ref: Some(format!(".kaptaind/analysis/{}.json", cluster.id)),
+                agent_event,
             };
 
             if let Err(err) = tracer::write_trace(repo_path, &trace) {
@@ -164,6 +166,16 @@ async fn process_cluster(
     let now = Utc::now();
     let mut test_outcome = TestOutcome::Skipped; // Default; will be overwritten if we get to testing
 
+    // Attempt to link interceptor agent events matching this cluster
+    let agent_events = crate::aoc::interceptor::consume_events_in_window(
+        &config.repo_path,
+        cluster.started_at - chrono::Duration::seconds(5),
+        cluster.ended_at + chrono::Duration::seconds(5),
+    ).unwrap_or_default();
+            
+    // Just take the latest relevant event if any
+    let agent_event = agent_events.into_iter().last();
+
     if !rate_limit_allows(now, *last_commit_at, config.ratelimit.min_commit_interval) {
         tracing::debug!("commit rate-limited");
         write_trace_if_active(
@@ -173,6 +185,7 @@ async fn process_cluster(
                 reason: "rate_limited".to_string(),
             },
             &test_outcome,
+            agent_event.clone(),
         );
         status.status = State::Idle;
         write_status(&config.repo_path, status);
@@ -199,6 +212,7 @@ async fn process_cluster(
                 reason: "clean_tree".to_string(),
             },
             &test_outcome,
+            agent_event.clone(),
         );
         status.status = State::Idle;
         write_status(&config.repo_path, status);
@@ -219,6 +233,7 @@ async fn process_cluster(
                 reason: "test_failed".to_string(),
             },
             &test_outcome,
+            agent_event.clone(),
         );
         status.status = State::Failed;
         if let TestOutcome::Failed { stderr, .. } = &test_outcome {
@@ -248,6 +263,7 @@ async fn process_cluster(
                 reason: "no_bump".to_string(),
             },
             &test_outcome,
+            agent_event.clone(),
         );
         status.status = State::Idle;
         write_status(&config.repo_path, status);
@@ -267,6 +283,7 @@ async fn process_cluster(
                 reason: "version_write_failed".to_string(),
             },
             &test_outcome,
+            agent_event.clone(),
         );
         status.status = State::Failed;
         status.last_error = Some(err.to_string());
@@ -279,7 +296,7 @@ async fn process_cluster(
         tracing::warn!(error = %err, "failed to persist analysis artifact");
     }
 
-    let msg = format_commit(&cluster, &diff, &weight, bump, &next);
+    let msg = format_commit(&cluster, &diff, &weight, bump, &next, &agent_event);
     
     // Abstract token calculation
     let mut input_tokens = 0;
@@ -309,6 +326,7 @@ async fn process_cluster(
                 reason: "commit_failed".to_string(),
             },
             &test_outcome,
+            agent_event.clone(),
         );
         status.status = State::Failed;
         status.last_error = Some(err.to_string());
@@ -327,6 +345,7 @@ async fn process_cluster(
                     reason: "push_failed".to_string(),
                 },
                 &test_outcome,
+                agent_event.clone(),
             );
             status.status = State::Failed;
             status.last_error = Some(format!("push failed: {err}"));
@@ -347,6 +366,7 @@ async fn process_cluster(
             version: next.to_string(),
         },
         &test_outcome,
+        agent_event,
     );
 
     *last_commit_at = Some(now);
@@ -373,6 +393,7 @@ fn format_commit(
     weight: &crate::weight::WeightResult,
     bump: Bump,
     version: &Version,
+    agent_event: &Option<crate::aoc::AgentEvent>,
 ) -> String {
     let api_summary = if diff.api_breaking {
         "breaking-api"
@@ -382,8 +403,15 @@ fn format_commit(
         "api-stable"
     };
 
+    let agent_info = if let Some(agent) = agent_event {
+        let model = agent.model.as_deref().unwrap_or("unknown");
+        format!("; agent={model}")
+    } else {
+        String::new()
+    };
+
     format!(
-        "kaptaind: {bump:?} -> v{version} [{api_summary}; paths={}; api_touches={}; deps={}; runtime={}; score={:.3}; cluster={}]",
+        "kaptaind: {bump:?} -> v{version} [{api_summary}; paths={}; api_touches={}; deps={}; runtime={}; score={:.3}; cluster={}{agent_info}]",
         diff.touched_paths,
         diff.api_touches,
         diff.dependency_nodes,
@@ -709,7 +737,7 @@ mod tests {
             api_added: true,
         };
 
-        let message = format_commit(&cluster, &diff, &weight, crate::version::Bump::Minor, &Version::new(0, 2, 0));
+        let message = format_commit(&cluster, &diff, &weight, crate::version::Bump::Minor, &Version::new(0, 2, 0), &None);
         assert!(message.contains("api-added"));
         assert!(message.contains("paths=4"));
         assert!(message.contains("deps=5"));
