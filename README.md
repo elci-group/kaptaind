@@ -119,11 +119,12 @@ Kaptaind operates entirely in the background, minimizing developer friction whil
    As file events stream in, the `ClusterEngine` groups them based on the `[cluster].window` (default 5s). This prevents rapid saves (e.g., from an IDE format-on-save) from triggering dozens of distinct commits.
 
 4. **Analysis Pipeline (`src/diff/`)**: 
-   Once a cluster window closes, the diff is scored across four specific engines:
-   - *Structural:* Counts raw path touches.
-   - *AST/API:* Regex-scans code for exported signatures (`pub fn`, `export class`, `def`).
-   - *Dependencies:* Parses `Cargo.toml`, `package.json`, etc.
-   - *Runtime:* Detects changes to deployment orchestration files (Dockerfiles, Kubernetes configs).
+   Once a cluster window closes, the diff is scored across five engines:
+   - *Structural (`text.rs`):* Counts raw path touches, path spread, and churn.
+   - *AST/API (`ast.rs` + `lang/`):* Language-aware adapters extract exported symbols for Rust, Go, Swift, Kotlin, TypeScript, JavaScript, Vue, Svelte, Astro, SCSS, HTML/CSS, and Python. A fallback line scanner handles unrecognized files.
+   - *Dependencies (`api.rs`):* Parses `Cargo.toml`, `package.json`, `requirements.txt`; recognizes lock files for npm, Yarn, pnpm, Bun, Cargo, Poetry, CocoaPods, and Gradle.
+   - *Runtime (`api.rs`):* Detects changes to deployment orchestration files (Docker, k8s, Helm), web framework configs (Next.js, Vite, Nuxt, Svelte, Astro, Tailwind, PostCSS, webpack), and mobile platform configs (Xcode, Gradle, Android).
+   - *Bundle Size (`bundle.rs`, opt-in):* Runs a build command, measures output size, and scores the delta against the previous build.
 
 5. **Test Hook & Telemetry Gating (`src/daemon/scheduler.rs`)**: 
    Before any commit, the daemon updates `.kaptaind/status.json` and runs the pre-configured test hook (`cargo test` by default). If tests fail, the workflow aborts. It also tracks the "token cost" of the diff size and commit message size, writing to `.kaptaind/telemetry.json`.
