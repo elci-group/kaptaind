@@ -275,7 +275,7 @@ async fn process_cluster(
 
     let version_path = config.repo_path.join("VERSION");
     let previous = load_version(&version_path).unwrap_or_else(|| Version::new(0, 1, 0));
-    let next = crate::version::apply(previous, bump);
+    let next = crate::version::apply(previous.clone(), bump);
     if let Err(err) = save_version(&version_path, &next) {
         tracing::error!(error = %err, path = ?version_path, "failed writing VERSION file");
         // Still write trace for visibility
