@@ -1,12 +1,28 @@
-use git2::{Direction, PushOptions, Repository};
+use git2::Repository;
+use std::process::Command;
 
-pub fn push(repo: &Repository, branch: &str) -> Result<(), git2::Error> {
-    let mut remote = repo.find_remote("origin")?;
-    remote.connect(Direction::Push)?;
+pub fn push(repo: &Repository, branch: &str) -> anyhow::Result<()> {
+    let workdir = repo
+        .workdir()
+        .ok_or_else(|| anyhow::anyhow!("Repository has no working directory"))?;
 
+    // Attempting to push using the system git binary.
+    // This dramatically reduces friction with third-party tools (SSH agents, 2FA,
+    // credential helpers, corporate proxies) because it inherits the user's existing environment.
     let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
-    let mut options = PushOptions::new();
-    remote.push(&[&refspec], Some(&mut options))?;
+    
+    let output = Command::new("git")
+        .current_dir(workdir)
+        .arg("push")
+        .arg("origin")
+        .arg(&refspec)
+        .output()
+        .map_err(|e| anyhow::anyhow!("Failed to execute git command: {}", e))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        anyhow::bail!("Git push failed: {}", stderr.trim());
+    }
 
     Ok(())
 }
