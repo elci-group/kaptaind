@@ -409,12 +409,18 @@ enum ProjectType {
     Node,
     Python,
     Go,
+    Swift,
+    Kotlin,
     Unknown,
 }
 
 fn detect_project_type(root: &std::path::Path) -> ProjectType {
     if root.join("Cargo.toml").exists() {
         ProjectType::Rust
+    } else if root.join("Package.swift").exists() {
+        ProjectType::Swift
+    } else if root.join("build.gradle.kts").exists() || root.join("build.gradle").exists() {
+        ProjectType::Kotlin
     } else if root.join("package.json").exists() {
         ProjectType::Node
     } else if root.join("pyproject.toml").exists() || root.join("requirements.txt").exists() {

@@ -249,6 +249,25 @@ fn is_web_config(path: &Path) -> bool {
     is_mobile_config(path)
 }
 
+/// Detects mobile/native platform config files (Xcode, Gradle, Android)
+fn is_mobile_config(path: &Path) -> bool {
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let lower = file_name.to_lowercase();
+
+    matches!(
+        lower.as_str(),
+        "info.plist"
+            | "project.pbxproj"
+            | "androidmanifest.xml"
+            | "proguard-rules.pro"
+            | "gradle.properties"
+    ) || lower.ends_with(".xcconfig")
+      || lower.ends_with(".entitlements")
+}
+
 fn resolve_path(repo_root: &Path, path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
