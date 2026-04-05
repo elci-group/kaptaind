@@ -308,8 +308,8 @@ async fn process_cluster(
 
     let metadata_line = format_commit(&cluster, &diff, &weight, bump, &next, &agent_event);
 
-    let msg = if config.ollama.enabled {
-        let ctx = crate::inference::ollama::CommitContext {
+    let msg = if config.inference.enabled {
+        let ctx = crate::inference::CommitContext {
             cluster: &cluster,
             diff: &diff,
             weight: &weight,
@@ -318,7 +318,7 @@ async fn process_cluster(
             next: &next,
             cluster_paths: &cluster_paths,
         };
-        match crate::inference::ollama::generate_commit_message(&config.ollama, &ctx).await {
+        match crate::inference::generate_commit_message(&config.inference, &ctx).await {
             Some(narrative) => format!("{narrative}\n\n{metadata_line}"),
             None => {
                 tracing::warn!("ollama inference unavailable; using deterministic message");

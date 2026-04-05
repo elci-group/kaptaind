@@ -1,22 +1,11 @@
-use crate::cluster::engine::Cluster;
-use crate::config::loader::OllamaConfig;
+use crate::config::loader::InferenceConfig;
 use crate::diff::DiffAnalysis;
 use crate::version::Bump;
 use crate::weight::WeightResult;
 use semver::Version;
-use std::path::PathBuf;
 use std::time::Duration;
 
-/// Contextual data available at commit time for Ollama inference.
-pub struct CommitContext<'a> {
-    pub cluster: &'a Cluster,
-    pub diff: &'a DiffAnalysis,
-    pub weight: &'a WeightResult,
-    pub bump: Bump,
-    pub previous: &'a Version,
-    pub next: &'a Version,
-    pub cluster_paths: &'a [PathBuf],
-}
+pub use super::CommitContext;
 
 /// Serde types for Ollama API communication
 #[derive(serde::Serialize)]
@@ -43,7 +32,7 @@ struct ResponseMessage {
 }
 
 /// Builds the user prompt from commit context.
-fn build_user_prompt(ctx: &CommitContext<'_>) -> String {
+pub(super) fn build_user_prompt(ctx: &CommitContext<'_>) -> String {
     // Collect file paths (up to 20)
     let file_list = ctx
         .cluster_paths
@@ -93,14 +82,11 @@ fn build_user_prompt(ctx: &CommitContext<'_>) -> String {
 /// Calls Ollama /api/chat to generate a commit message subject line.
 /// Returns `None` on any error (timeout, network, malformed response, empty content).
 /// Logs warnings for all failures; never panics.
-pub async fn generate_commit_message(
-    config: &OllamaConfig,
+pub async fn generate(
+    config: &InferenceConfig,
     ctx: &CommitContext<'_>,
+    model: &str,
 ) -> Option<String> {
-    if !config.enabled {
-        return None;
-    }
-
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(config.timeout_secs))
         .build()
@@ -111,7 +97,7 @@ pub async fn generate_commit_message(
     let user_prompt = build_user_prompt(ctx);
 
     let request = ChatRequest {
-        model: &config.model,
+        model,
         stream: false,
         messages: vec![
             Message {
@@ -126,7 +112,7 @@ pub async fn generate_commit_message(
     };
 
     let response = match client
-        .post(format!("{}/api/chat", config.base_url))
+        .post(format!("{}/api/chat", config.ollama_base_url))
         .json(&request)
         .send()
         .await
@@ -177,6 +163,12 @@ pub async fn generate_commit_message(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cluster::engine::Cluster;
+    use crate::diff::DiffAnalysis;
+    use crate::version::Bump;
+    use crate::weight::WeightResult;
+    use semver::Version;
+    use std::path::PathBuf;
 
     #[test]
     fn build_user_prompt_includes_bump_type() {

@@ -17,7 +17,7 @@ pub struct Config {
     #[serde(default)]
     pub staging: StagingConfig,
     #[serde(default)]
-    pub ollama: OllamaConfig,
+    pub inference: InferenceConfig,
     pub repo_path: PathBuf,
 }
 
@@ -100,36 +100,43 @@ pub struct StagingConfig {
 }
 
 #[derive(Debug, Clone, Deserialize)]
-pub struct OllamaConfig {
+pub struct InferenceConfig {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default = "default_ollama_base_url")]
-    pub base_url: String,
-    #[serde(default = "default_ollama_model")]
+    #[serde(default = "default_inference_provider")]
+    pub provider: String,
+    #[serde(default = "default_inference_model")]
     pub model: String,
-    #[serde(default = "default_ollama_timeout_secs")]
+    #[serde(default = "default_inference_timeout_secs")]
     pub timeout_secs: u64,
+    #[serde(default = "default_ollama_base_url")]
+    pub ollama_base_url: String,
+}
+
+fn default_inference_provider() -> String {
+    "auto".to_string()
+}
+
+fn default_inference_model() -> String {
+    "auto".to_string()
+}
+
+fn default_inference_timeout_secs() -> u64 {
+    15
 }
 
 fn default_ollama_base_url() -> String {
     "http://localhost:11434".to_string()
 }
 
-fn default_ollama_model() -> String {
-    "llama3.2".to_string()
-}
-
-fn default_ollama_timeout_secs() -> u64 {
-    15
-}
-
-impl Default for OllamaConfig {
+impl Default for InferenceConfig {
     fn default() -> Self {
         Self {
             enabled: false,
-            base_url: default_ollama_base_url(),
-            model: default_ollama_model(),
-            timeout_secs: default_ollama_timeout_secs(),
+            provider: default_inference_provider(),
+            model: default_inference_model(),
+            timeout_secs: default_inference_timeout_secs(),
+            ollama_base_url: default_ollama_base_url(),
         }
     }
 }
@@ -167,7 +174,7 @@ impl Default for Config {
             notify: NotifyConfig::default(),
             bundle: BundleConfig::default(),
             staging: StagingConfig::default(),
-            ollama: OllamaConfig::default(),
+            inference: InferenceConfig::default(),
             repo_path: cwd,
         }
     }
