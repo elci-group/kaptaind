@@ -48,12 +48,51 @@ It eliminates manual version bumping and subjective commit messages by replacing
 
 ### Installation
 
-Clone the repository and build using Cargo:
+Three ways to install kaptaind:
+
+#### 🚀 Quick Install (CLI Installer) — Recommended
+
+One-liner installer for Linux, macOS, and WSL:
 
 ```bash
-cargo build --release
-cp target/release/kaptaind ~/.local/bin/
+curl -fsSL https://raw.githubusercontent.com/elci-group/kaptaind/main/install.sh | bash
 ```
+
+Or clone and run:
+
+```bash
+git clone https://github.com/elci-group/kaptaind.git
+cd kaptaind
+bash install.sh
+```
+
+See `install.sh --help` for options (custom path, system-wide, debug build, etc.).
+
+#### 💻 GUI Installer
+
+For a graphical installation experience:
+
+```bash
+cargo build --release --features gui --bin kaptaind-installer
+./target/release/kaptaind-installer
+```
+
+Walks you through dependency checks, installation path selection, and build options with a friendly interface.
+
+#### 📦 Manual Installation
+
+Build and install manually:
+
+```bash
+git clone https://github.com/elci-group/kaptaind.git
+cd kaptaind
+cargo build --release
+mkdir -p ~/.local/bin
+cp target/release/{kaptaind,kaptaind-cli} ~/.local/bin/
+chmod +x ~/.local/bin/kaptaind*
+```
+
+**For detailed installation instructions**, see [INSTALL.md](INSTALL.md).
 
 ### Running
 
