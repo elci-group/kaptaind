@@ -161,6 +161,30 @@ enum Commands {
         #[arg(short, long, default_value = "text")]
         format: String,
     },
+
+    /// ✅ Enable auto-start for kaptaind daemon
+    ///
+    /// Configures the system to automatically start kaptaind on boot or shell login.
+    ///
+    /// Linux/systemd: Installs a user systemd service that starts with the user session
+    /// macOS: Adds a launchd plist to ~/.Library/LaunchAgents/
+    /// Cross-platform fallback: Adds shell initialization to ~/.bashrc and ~/.zshrc
+    ///
+    /// After enabling, the daemon will start automatically on next login/reboot.
+    ///
+    /// Usage: kaptaind-cli enable-autostart
+    EnableAutostart,
+
+    /// ❌ Disable auto-start for kaptaind daemon
+    ///
+    /// Removes auto-start configuration so kaptaind no longer starts automatically.
+    ///
+    /// For systemd: Disables the user service
+    /// For launchd: Removes the plist
+    /// For shell: Removes the init lines from ~/.bashrc and ~/.zshrc
+    ///
+    /// Usage: kaptaind-cli disable-autostart
+    DisableAutostart,
 }
 
 #[derive(Subcommand)]

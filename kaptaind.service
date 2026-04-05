@@ -1,0 +1,20 @@
+[Unit]
+Description=Kaptaind - Automated Semantic Versioning Daemon
+Documentation=https://github.com/elci-group/kaptaind
+After=network.target
+
+[Service]
+Type=simple
+User=%u
+ExecStart=%h/.local/bin/kaptaind
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kaptaind
+Environment="RUST_LOG=info"
+
+[Install]
+WantedBy=default.target
