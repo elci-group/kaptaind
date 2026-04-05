@@ -4,6 +4,24 @@ All notable changes to kaptaind are documented here.
 
 ## [Unreleased]
 
+### Added
+- **Adaptive Clustering:** `ClusterEngine` linearly interpolates the merge window from `window` toward `max_window_secs` as the current cluster grows toward `burst_threshold`; opt-in via `[cluster] adaptive = true`
+- **LV-SCL (Language Version Syntax Contextualization Layer):** All 12 language adapters are now version-aware. Language versions are detected from project manifests (`Cargo.toml` edition, `go.mod`, `.python-version`, `tsconfig.json` target, `package.json` engines, etc.) and cached at `.kaptaind/version_cache.json` with a 1-hour TTL. Version-specific syntax recognized: Python 3.10+ `match`/`case` + 3.12 `type_alias`; Go 1.18+ generics; TypeScript 3.8+ `export type` / 5.0+ `type_alias`; Svelte 5 `$state`/`$derived` runes. Per-file parse metadata (language, version, parser kind, fallback flag) is emitted into every analysis artifact.
+- **Intelligent Thresholds:** `decide(weight, &VersionThresholdConfig)` reads `[version_thresholds].minor` and `.patch` from config (defaults: `0.6` / `0.1`). `decide_default()` preserves legacy behaviour.
+- **Incremental LLM Gate:** `[inference] min_score_for_inference` — inference is skipped when `weight.score` is below this value, saving API quota on trivial changes.
+- **Plugin Architecture:** `PluginAdapter` executes any external script/binary as a language adapter using a JSON stdio protocol (`stdin: {"file":"<path>"}` → `stdout: {"symbols":[...]}`). Configure under `[[plugins.adapters]]`. `Language::Plugin` variant added; plugins participate in the full cache, version-detection, and scoring pipeline.
+- **Post-Commit Qualification & Release Pipeline:** When `[qualification] enabled = true`, the daemon runs a build, updates a continuous stability score (`Sₙ = clamp(Sₙ₋₁ + w₁·T + w₂·B − w₃·Δ − w₄·R − λ·Δt, 0, 1)`), evaluates qualification (score threshold, pass streak, diff-spike guard, cooldown, test gate, build gate), packages a `.tar.gz` artifact with a SHA-256 `manifest.json`, and distributes it. Idempotent via `.kaptaind/releases/index.json`.
+- **Stability Scoring:** Persistent per-commit stability record at `.kaptaind/stability.json` — score, history, last regression timestamp.
+- **`kaptaind-cli dashboard`:** Live terminal dashboard showing version, daemon state, stability bar, LLM cost, release history, and the 5 most recent analysis artifacts.
+- **`kaptaind-cli ci-hint`:** Emits release/hold recommendation in `text`, `json`, or `github` (GitHub Actions annotations + `set-output`) format, driven by qualification policy thresholds.
+- New artifacts: `.kaptaind/stability.json`, `.kaptaind/version_cache.json`, `.kaptaind/releases/index.json`, `.kaptaind/release_version`, `.kaptaind/releases/<version>.tar.gz`
+
+### Changed
+- `diff::analyze` gains sibling `analyze_with_plugins(cluster, repo_root, &PluginsConfig)` — scheduler now calls this to pass plugin adapters through the full pipeline
+- `api_score_with_cache` refactored into `api_score_inner(registry)` so both the default and plugin-extended registries share one implementation
+- Telemetry now tracks `stability`, `releases`, and `failed_releases` counters
+- `AocSession` gains optional `intent` and `target_stability` fields for stability-aware session tracking
+
 ## [v0.1.44]
 
 ### Added

@@ -27,10 +27,16 @@ It eliminates manual version bumping and subjective commit messages by replacing
   - *Dependency Tracking:* Parses `Cargo.toml`, `package.json`, `requirements.txt`. Recognizes `yarn.lock`, `bun.lockb`, `pnpm-lock.yaml`, `Podfile`, `build.gradle(.kts)`, and `gradle.lockfile`.
   - *Runtime Impact:* Triggers high severity when deployment configs (`docker`, `k8s`, `.service`), web configs (`next.config.*`, `vite.config.*`, `vercel.json`, `tsconfig.*`), or mobile configs (`Info.plist`, `AndroidManifest.xml`, `*.xcconfig`) are modified.
   - *Bundle Size (opt-in):* Runs a configurable build command, measures output directory size, and scores based on delta from previous build.
+- **Adaptive Clustering:** Optionally expands the clustering window during bursts. When `adaptive = true`, the window interpolates linearly from `base_window` toward `max_window` as the event count approaches `burst_threshold`, giving burst protection without sacrificing normal responsiveness.
+- **Language Version Syntax Contextualization (LV-SCL):** Version-aware parsing for all 12 adapters. Language versions are detected from project manifests (`Cargo.toml` edition, `go.mod`, `.python-version`, `tsconfig.json` target, `package.json` engines, etc.) and cached with a 1-hour TTL. Version-specific syntax (Python 3.10+ `match`/`case`, Go 1.18+ generics, TypeScript 3.8+ `export type`, Svelte 5 runes) is recognized automatically. Per-file parse metadata (language, detected version, parser used) is emitted into every analysis artifact.
+- **Plugin Architecture:** Extend kaptaind to any language with an external script or binary. Plugins use a simple JSON stdio protocol (`stdin: {"file":"<path>"}` → `stdout: {"symbols":[...]}`). Configure one or more plugin adapters under `[plugins]`. Plugins are loaded into the adapter registry alongside built-in adapters and receive the same cache, version detection, and scoring pipeline.
 - **Semantic Auto-versioning:**
   - **Major:** Automatically bumped on breaking API removals.
-  - **Minor:** Automatically bumped when new APIs are added, or diff scores reach the `> 0.6` threshold.
-  - **Patch:** Bumped for standard structural churn and minor improvements.
+  - **Minor:** Automatically bumped when new APIs are added, or diff scores reach the configurable `[version_thresholds].minor` cutoff (default `0.6`).
+  - **Patch:** Bumped for standard structural churn and minor improvements above the `[version_thresholds].patch` cutoff (default `0.1`).
+- **Post-Commit Qualification & Release Pipeline (opt-in):** After every successful commit, kaptaind can run a build, update a stability score, evaluate release qualification, package a `.tar.gz` artifact with a SHA-256 manifest, and distribute it — all automatically. Gated by `[qualification].enabled = true`. Qualification checks include: minimum stability score, minimum pass streak, diff-spike guard, cooldown, test gate, and build gate.
+- **Stability Scoring:** Tracks a per-commit stability score `Sₙ = clamp(Sₙ₋₁ + w₁·T + w₂·B − w₃·Δ − w₄·R − λ·Δt, 0, 1)` across the full commit history. Scores persist to `.kaptaind/stability.json` and are surfaced in the dashboard and CI hint.
+- **Incremental LLM Gate:** Inference is skipped automatically when `weight.score < config.inference.min_score_for_inference`, saving API quota on trivial changes.
 - **Automated Commit Formatting:** Git commits are generated for each bump, summarizing what changed semantically (e.g., `kaptaind: Minor -> v0.2.0 [api-added; paths=4; api_touches=2; deps=0; runtime=0; score=0.62]`).
 - **Test Hook Gating:** Automatically runs a configurable test hook (like `cargo test`) before committing; fails block the commit entirely.
 - **Configurable staging:** Choose between staging all files (default), only cluster-touched files, or pattern-matched files. Exclude patterns prevent sensitive files from being committed.
@@ -96,6 +102,14 @@ kaptaind-cli aoc ship
 
 # Intercept agent operations for contextual tracing
 kaptaind-cli aoc intercept --model claude-3-5-sonnet --intent "refactor auth" -- npm test
+
+# Live dashboard: version, daemon state, stability bar, releases, recent analyses
+kaptaind-cli dashboard
+
+# CI/CD hint: release or hold recommendation based on stability and qualification
+kaptaind-cli ci-hint                  # plain text
+kaptaind-cli ci-hint --format json    # machine-readable JSON
+kaptaind-cli ci-hint --format github  # GitHub Actions annotations + set-output
 ```
 
 ![Kaptaind Analyze and Log Demo](analyze_and_log.gif)
@@ -149,7 +163,12 @@ recursive = true
 ignore_file = ".kaptainignore"
 
 [cluster]
-window = 5 # Events within 5 seconds belong to the same cluster
+window = 5            # Events within 5 seconds belong to the same cluster
+# Adaptive clustering (opt-in) — expands window during event bursts
+# adaptive = true
+# min_window_secs = 2
+# max_window_secs = 30
+# burst_threshold = 10  # Events before window starts expanding
 
 [weights]
 s = 0.35 # Structural weight
@@ -171,16 +190,44 @@ required = true
 
 [inference]
 enabled = true
-provider = "auto"          # "auto" (detect from env), "anthropic", "openai", or "ollama"
-model = "auto"             # "auto" (provider default), or explicit model name
+provider = "auto"              # "auto" (detect from env), "anthropic", "openai", or "ollama"
+model = "auto"                 # "auto" (provider default), or explicit model name
 timeout_secs = 15
 ollama_base_url = "http://localhost:11434"  # Only used when provider = "ollama"
+min_score_for_inference = 0.0  # Skip LLM when score is below this threshold (saves quota)
 
 [notify]
 # Shell hooks — env vars: $KAPTAIND_VERSION, $KAPTAIND_SCORE, $KAPTAIND_MSG, $KAPTAIND_ERROR
 # on_commit = 'notify-send "Kaptaind Bump" "Version $KAPTAIND_VERSION"'
 # on_error = 'notify-send -u critical "Kaptaind Error" "$KAPTAIND_ERROR"'
 # webhook_url = "https://discord.com/api/webhooks/..."  # Discord or Slack webhook
+
+# Configurable version bump thresholds (defaults shown)
+# [version_thresholds]
+# minor = 0.6   # Score above this triggers a Minor bump
+# patch = 0.1   # Score above this triggers a Patch bump
+
+# Post-commit qualification and release pipeline (opt-in)
+# [qualification]
+# enabled = false
+# stability_threshold = 0.85   # Minimum stability score to qualify
+# min_pass_streak = 3          # Trailing passing commits required
+# max_allowed_diff = 0.7       # Reject if latest diff spike exceeds this
+# cooldown = "5m"              # Minimum time between releases
+
+# [build]
+# command = "cargo build --release"
+# timeout_secs = 120
+
+# [release]
+# intent = "local"   # "local", "s3", or "registry"
+
+# Plugin adapters — extend to any language via JSON stdio protocol
+# [[plugins.adapters]]
+# name = "ruby"
+# command = "python3 /path/to/ruby_adapter.py"
+# extensions = [".rb"]
+# language_confidence = 0.8
 
 # [bundle]
 # command = "npm run build"  # Build command to measure output size
@@ -202,6 +249,21 @@ It supports:
 - Exact paths or directory prefixes (e.g. `target`)
 
 ## Performance Tuning
+
+### Adaptive Clustering
+
+For repositories with irregular save patterns (e.g. large IDE reformats), enable adaptive clustering to automatically extend the window during bursts:
+
+```toml
+[cluster]
+window = 5           # Base window in seconds
+adaptive = true
+min_window_secs = 2  # Floor: never shrink below this
+max_window_secs = 30 # Ceiling: never extend beyond this
+burst_threshold = 10 # Events at which the window reaches max_window
+```
+
+With `adaptive = true`, the effective window interpolates linearly from `window` → `max_window_secs` as the event count in the current cluster grows toward `burst_threshold`. At `burst_threshold` events, the window locks at `max_window_secs` for the duration of the burst.
 
 ### Filesystem Watcher
 
@@ -342,6 +404,74 @@ kaptaind-cli aoc intercept --model claude-3-5-sonnet --intent "refactor auth" --
 ```
 
 This runs `npm test`, captures the output, and stores it alongside the AoC trace. Useful for audit trails in regulated environments.
+
+## Dashboard
+
+`kaptaind-cli dashboard` renders a live, color-coded terminal view of the entire system at a glance:
+
+```
+╔══════════════════════════════════════════════╗
+║          kaptaind  ·  Live Dashboard         ║
+╚══════════════════════════════════════════════╝
+
+── Project ─────────────────────────────────────
+  Version:  9.2.587
+  Repo:     /home/you/myproject
+  Daemon:   Idle
+
+── Stability ───────────────────────────────────
+  Score:  [████████████████░░░░]  0.821  (47 commits tracked)
+
+── Telemetry ───────────────────────────────────
+  LLM cost:  $0.0031  ($0.000012 this session)
+  Releases:  3  failed: 0
+
+── Releases ────────────────────────────────────
+  ▸ v9.2.580  2025-03-12 14:22  S=0.831
+
+── Recent Analyses ─────────────────────────────
+  🩹 9.2.587  score=0.142  bump=Patch  paths=4
+```
+
+No flags required — reads all `.kaptaind/` state files and renders them in one view.
+
+## CI/CD Integration
+
+`kaptaind-cli ci-hint` emits a release/hold recommendation based on the current stability score and qualification policy. Designed to be called from a CI pipeline step:
+
+```bash
+# Text (human-readable, default)
+kaptaind-cli ci-hint
+
+# Machine-readable JSON
+kaptaind-cli ci-hint --format json
+# {
+#   "qualified": true,
+#   "stability_score": 0.871,
+#   "pass_streak": 5,
+#   "threshold": 0.85,
+#   "current_version": "9.2.587",
+#   "recommendation": "release"
+# }
+
+# GitHub Actions (annotations + set-output)
+kaptaind-cli ci-hint --format github
+# ::notice title=kaptaind::Release qualified — v9.2.587 (stability=0.871, streak=5)
+# ::set-output name=qualified::true
+# ::set-output name=version::9.2.587
+```
+
+### Example GitHub Actions workflow
+
+```yaml
+- name: kaptaind CI hint
+  id: kaptaind
+  run: kaptaind-cli ci-hint --format github
+
+- name: Release
+  if: steps.kaptaind.outputs.qualified == 'true'
+  run: ./scripts/release.sh ${{ steps.kaptaind.outputs.version }}
+```
 
 ## Multi-Provider Inference Routing
 
@@ -607,10 +737,16 @@ a = 0.5  # Increase API weight if API changes matter most to you
 
 As `kaptaind` runs, it drops critical artifacts:
 - `VERSION`: Contains the authoritative, dynamically-managed semantic version (e.g. `0.1.2`).
-- `.kaptaind/analysis/<uuid>.json`: Full structured evidence of *why* a semantic bump occurred for every cluster that resulted in a commit.
+- `.kaptaind/analysis/<uuid>.json`: Full structured evidence of *why* a semantic bump occurred for every cluster that resulted in a commit. Includes per-file LV-SCL parse metadata (language, detected version, parser kind).
 - `.kaptaind/status.json`: Real-time daemon state (`Idle`, `Clustering`, `Testing`, `Committing`, `Failed`), useful for integration with `i3status` or `polybar`.
-- `.kaptaind/telemetry.json`: Token usage and cost tracking metrics.
+- `.kaptaind/telemetry.json`: Token usage, cost tracking, stability score, and release counters.
+- `.kaptaind/stability.json`: Full stability history with per-commit score deltas, test/build outcomes, and regression timestamps.
+- `.kaptaind/ast_cache.json`: SHA-256 file-hash cache for parsed ASTs (70-90% hit ratio on large repos).
+- `.kaptaind/version_cache.json`: Detected language versions from project manifests, cached with a 1-hour TTL.
 - `.kaptaind/bundle.json`: Previous bundle size state (when bundle scoring is enabled).
+- `.kaptaind/releases/index.json`: Index of all releases emitted by the qualification pipeline (version, commit, stability, timestamp, tarball path).
+- `.kaptaind/release_version`: Plain-text file holding the last successfully released version.
+- `.kaptaind/releases/<version>.tar.gz`: Packaged release artifact with SHA-256 manifest (when qualification is enabled).
 - `.kaptaind/traces/<uuid>.json`: Per-cluster trace records linked to AoC sessions.
 - `.kaptaind/aoc/active.json`: Currently active Aim of Change session.
 - `.kaptaind/aoc/manifests/<id>.json`: Shipped AoC session summaries.
