@@ -35,6 +35,7 @@ It eliminates manual version bumping and subjective commit messages by replacing
 - **Test Hook Gating:** Automatically runs a configurable test hook (like `cargo test`) before committing; fails block the commit entirely.
 - **Configurable staging:** Choose between staging all files (default), only cluster-touched files, or pattern-matched files. Exclude patterns prevent sensitive files from being committed.
 - **Aim of Change (AoC) sessions:** Group related changes into named sessions with full trace history, agent interception, and shipped manifests.
+- **Multi-Provider Inference Routing:** Intelligently routes commit message generation to the best available inference provider. Automatically detects and prioritizes: **Anthropic Claude** → **OpenAI GPT-4o** → **Local Ollama** fallback. No API keys needed; works offline with Ollama.
 
 ## Getting Started
 
@@ -166,6 +167,13 @@ min_commit_interval = 10 # Seconds
 [test]
 command = "cargo test"
 required = true
+
+[inference]
+enabled = true
+provider = "auto"          # "auto" (detect from env), "anthropic", "openai", or "ollama"
+model = "auto"             # "auto" (provider default), or explicit model name
+timeout_secs = 15
+ollama_base_url = "http://localhost:11434"  # Only used when provider = "ollama"
 
 [notify]
 # Shell hooks — env vars: $KAPTAIND_VERSION, $KAPTAIND_SCORE, $KAPTAIND_MSG, $KAPTAIND_ERROR
