@@ -4,7 +4,7 @@ pub mod ollama;
 pub mod openai;
 
 use crate::cluster::engine::Cluster;
-use crate::config::loader::InferenceConfig;
+use crate::config::loader::{InferenceConfig, ValidationMode};
 use crate::diff::DiffAnalysis;
 use crate::version::Bump;
 use crate::weight::WeightResult;
@@ -48,7 +48,7 @@ fn resolve_model<'a>(config: &'a InferenceConfig, provider: &str) -> &'a str {
     }
 }
 
-/// Top-level dispatcher — routes to the selected provider.
+/// Top-level dispatcher — routes to the selected validation mode and provider.
 pub async fn generate_commit_message(
     config: &InferenceConfig,
     ctx: &CommitContext<'_>,
@@ -56,13 +56,21 @@ pub async fn generate_commit_message(
     if !config.enabled {
         return None;
     }
-    let provider = resolve_provider(config);
-    let model = resolve_model(config, provider);
-    tracing::info!(provider, model, "inference provider selected");
 
-    match provider {
-        "anthropic" => anthropic::generate(config, ctx, model).await,
-        "openai" => openai::generate(config, ctx, model).await,
-        _ => ollama::generate(config, ctx, model).await,
+    tracing::info!(mode = ?config.validation_mode, "inference mode selected");
+
+    match config.validation_mode {
+        ValidationMode::Fast => {
+            let provider = resolve_provider(config);
+            let model = resolve_model(config, provider);
+            tracing::info!(provider, model, "fast mode: inference provider selected");
+
+            match provider {
+                "anthropic" => anthropic::generate(config, ctx, model).await,
+                "openai" => openai::generate(config, ctx, model).await,
+                _ => ollama::generate(config, ctx, model).await,
+            }
+        }
+        ValidationMode::Consensus => consensus::generate(config, ctx).await,
     }
 }

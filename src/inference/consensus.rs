@@ -3,12 +3,11 @@ use super::CommitContext;
 use std::collections::HashSet;
 
 /// Content words to strip before Jaccard similarity computation.
-/// Includes conventional commit prefixes so similar intents share tokens.
+/// Only includes very common words that add little semantic meaning.
+/// Intentionally excludes commit prefixes (fix, feat, etc.) and action verbs (add, implement, etc.).
 const STOP_WORDS: &[&str] = &[
     "a", "an", "the", "is", "to", "for", "in", "of", "and", "or", "but",
     "with", "from", "at", "by", "on", "as", "be", "this", "that", "it",
-    "feat:", "fix:", "chore:", "refactor:", "docs:", "test:", "style:",
-    "build:", "ci:", "perf:", "revert:",
 ];
 
 /// Tokenizes a subject line into content word tokens for Jaccard comparison.
@@ -182,9 +181,12 @@ mod tests {
     fn content_tokens_strips_stop_words() {
         let s = "feat: add OAuth2 provider support";
         let tokens = content_tokens(s);
-        // "feat:" is in STOP_WORDS, "add" is in STOP_WORDS
-        assert!(!tokens.contains("feat"));
-        assert!(!tokens.contains("add"));
+        // Common prepositions and articles are stripped
+        assert!(!tokens.contains("the"));
+        assert!(!tokens.contains("a"));
+        // But domain-specific words are retained
+        assert!(tokens.contains("feat"));
+        assert!(tokens.contains("add"));
         assert!(tokens.contains("oauth2"));
         assert!(tokens.contains("provider"));
         assert!(tokens.contains("support"));
