@@ -4,6 +4,8 @@ All notable changes to kaptaind are documented here.
 
 ## [Unreleased]
 
+## [v0.1.44]
+
 ### Added
 - Furnace integration: SHA256 file-hash caching for AST parsing (70-90% cache hit ratio on large repos)
 - Furnace integration: `syn`-based Rust AST parser replacing line-based heuristics
