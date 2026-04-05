@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { resolveRepoPath } from "@/lib/kaptaind/reader";
 import { getAnalysisArtifact } from "@/lib/kaptaind/analysis";
-import { ollamaChat } from "@/lib/ollama";
+import { inferenceChat } from "@/lib/inference";
 import type { AnalysisArtifact } from "@/types/kaptaind";
 
 export async function POST(req: Request) {
@@ -62,7 +62,7 @@ Dependency nodes affected: ${artifact.diff.dependency_nodes}`;
 
   const systemPrompt = `You are a precise software commit message author. Write a single subject line (max 72 characters) describing what changed. Use conventional commit format (feat:, fix:, refactor:, chore:) when it fits. Output ONLY the subject line — no body, no explanation.`;
 
-  const response = await ollamaChat([
+  const response = await inferenceChat([
     { role: "system", content: systemPrompt },
     { role: "user", content: userPrompt },
   ]);
