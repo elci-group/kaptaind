@@ -25,7 +25,7 @@ pub struct ReleaseIndex {
 ///
 /// Runs the full post-commit pipeline:
 ///   1. Run build (if configured)
-///   2. Update stability score
+///   2. Update stability score (with parse confidence penalty)
 ///   3. Evaluate qualification
 ///   4. If qualified and intent ≠ None: package + distribute
 pub async fn post_commit(
@@ -36,6 +36,7 @@ pub async fn post_commit(
     tests_passed: bool,
     diff_score: f64,
     runtime_paths: u32,
+    parse_confidence: f64,
 ) {
     if !config.qualification.enabled {
         return;
@@ -71,6 +72,7 @@ pub async fn post_commit(
         runtime_flags: runtime_paths,
         resulting_score: 0.0, // filled in by engine
         timestamp: now_ts,
+        parse_confidence: parse_confidence.clamp(0.0, 1.0),
     };
 
     crate::stability::engine::update(&mut stability, entry, delta_t_mins);

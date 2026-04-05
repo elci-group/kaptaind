@@ -50,6 +50,7 @@ impl VersionCache {
         Some(LanguageVersion {
             version: entry.version.clone(),
             detected_from: entry.detected_from.clone(),
+            source: Default::default(),
         })
     }
 
@@ -76,7 +77,7 @@ mod tests {
         let dir = tempdir().unwrap();
         std::fs::create_dir_all(dir.path().join(".kaptaind")).unwrap();
         let mut cache = VersionCache::default();
-        cache.put("rust", &LanguageVersion { version: "2021".into(), detected_from: "Cargo.toml".into() });
+        cache.put("rust", &LanguageVersion { version: "2021".into(), detected_from: "Cargo.toml".into(), source: Default::default() });
         cache.save(dir.path());
         let loaded = VersionCache::load(dir.path());
         let got = loaded.get("rust").unwrap();

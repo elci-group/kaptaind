@@ -49,6 +49,21 @@ pub struct AstRepresentation {
     pub parser_kind: ParserKind,
 }
 
+/// Version match confidence level.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VersionMatch {
+    /// Version was detected from a runtime source (highest confidence).
+    Runtime,
+    /// Version was detected from a manifest (high confidence).
+    Manifest,
+    /// Version was inferred or defaults were used (medium confidence).
+    Inferred,
+    /// Version could not be determined; system proceeded with defaults.
+    #[default]
+    Unknown,
+}
+
 /// Per-file parse metadata emitted into `.kaptaind/analysis/<uuid>.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileParseMetadata {
@@ -57,6 +72,16 @@ pub struct FileParseMetadata {
     pub version: String,
     pub parser_used: String,
     pub fallback_used: bool,
+    /// Parser confidence (0.0–1.0). Adjusted down if version is uncertain or fallback was used.
+    #[serde(default = "default_confidence")]
+    pub confidence: f64,
+    /// How the version was resolved (runtime > manifest > inferred > unknown).
+    #[serde(default)]
+    pub version_match: VersionMatch,
+}
+
+fn default_confidence() -> f64 {
+    1.0
 }
 
 #[derive(Debug, Clone, Default)]

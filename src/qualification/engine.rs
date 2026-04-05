@@ -120,6 +120,7 @@ mod tests {
                 runtime_flags: 0,
                 resulting_score: score,
                 timestamp: chrono::Utc::now().timestamp(),
+                parse_confidence: 0.95,
             });
         }
         rec

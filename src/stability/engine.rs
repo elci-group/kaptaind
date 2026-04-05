@@ -6,6 +6,7 @@ const W1_TESTS: f64 = 0.25;
 const W2_BUILD: f64 = 0.15;
 const W3_DIFF: f64 = 0.30;
 const W4_RUNTIME: f64 = 0.20;
+const W5_CONFIDENCE: f64 = 0.10;
 /// Decay per minute of wall-clock time between commits.
 const LAMBDA: f64 = 0.01;
 
@@ -14,13 +15,16 @@ const LAMBDA: f64 = 0.01;
 /// `delta_t_mins` is minutes elapsed since the previous update (for time decay).
 ///
 /// ```text
-/// Sₙ = clamp(Sₙ₋₁ + w₁·T + w₂·B − w₃·Δ − w₄·R − λ·Δt, 0, 1)
+/// Sₙ = clamp(Sₙ₋₁ + w₁·T + w₂·B − w₃·Δ − w₄·R − w₅·(1−C) − λ·Δt, 0, 1)
 /// ```
+/// where C is the parse confidence (0–1).
 pub fn update(record: &mut StabilityRecord, entry: StabilityEntry, delta_t_mins: f64) {
     let t: f64 = if entry.tests == "pass" { 1.0 } else { 0.0 };
     let b: f64 = if entry.build == "pass" { 1.0 } else { 0.0 };
     // Normalise runtime_flags into a 0–1 penalty (saturates at 5 paths).
     let r: f64 = (entry.runtime_flags as f64 / 5.0).min(1.0);
+    // Parse confidence penalty: low confidence (0–1) becomes a penalty (0–1).
+    let confidence_penalty: f64 = 1.0 - entry.parse_confidence;
 
     let was = record.score;
     let new_score = (record.score
@@ -28,6 +32,7 @@ pub fn update(record: &mut StabilityRecord, entry: StabilityEntry, delta_t_mins:
         + W2_BUILD * b
         - W3_DIFF * entry.delta_score
         - W4_RUNTIME * r
+        - W5_CONFIDENCE * confidence_penalty
         - LAMBDA * delta_t_mins.max(0.0))
     .clamp(0.0, 1.0);
 
@@ -96,6 +101,7 @@ mod tests {
             runtime_flags: runtime,
             resulting_score: 0.0,
             timestamp: chrono::Utc::now().timestamp(),
+            parse_confidence: 0.95,
         }
     }
 

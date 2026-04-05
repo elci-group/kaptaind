@@ -429,6 +429,12 @@ async fn process_cluster(
         let tests_passed = matches!(test_outcome, TestOutcome::Passed);
         let diff_f64 = weight.score as f64;
         let runtime_paths = diff.runtime_paths as u32;
+        // Compute mean parse confidence from analysis metadata
+        let parse_confidence = if diff.parse_metadata.is_empty() {
+            1.0
+        } else {
+            diff.parse_metadata.iter().map(|m| m.confidence).sum::<f64>() / diff.parse_metadata.len() as f64
+        };
         tokio::spawn(async move {
             crate::release::orchestrator::post_commit(
                 &repo_path,
@@ -438,6 +444,7 @@ async fn process_cluster(
                 tests_passed,
                 diff_f64,
                 runtime_paths,
+                parse_confidence,
             )
             .await;
         });

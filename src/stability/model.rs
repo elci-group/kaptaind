@@ -30,4 +30,12 @@ pub struct StabilityEntry {
     pub resulting_score: f64,
     /// Unix timestamp.
     pub timestamp: i64,
+    /// Mean parse confidence across all files in this commit (0.0–1.0).
+    /// Used to penalize commits with uncertain parsing.
+    #[serde(default = "default_confidence")]
+    pub parse_confidence: f64,
+}
+
+fn default_confidence() -> f64 {
+    1.0
 }

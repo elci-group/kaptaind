@@ -81,11 +81,9 @@ fn api_score_inner(
                 let file_hash = cache::hash_file(&resolved);
 
                 // Resolve version string for this language
-                let version_str = lang_versions
-                    .get(&adapter.language())
-                    .map(|lv| lv.version.as_str())
-                    .unwrap_or("unknown")
-                    .to_string();
+                let lang_version = lang_versions.get(&adapter.language()).cloned();
+                let version_str = lang_version.as_ref().map(|lv| lv.version.as_str()).unwrap_or("unknown").to_string();
+                let version_source = lang_version.as_ref().map(|lv| lv.source);
 
                 let ast = if let Some(ref h) = file_hash {
                     if let Some(cached) = ast_cache.get(&relative_str, h) {
@@ -104,6 +102,26 @@ fn api_score_inner(
                         .unwrap_or_default()
                 };
 
+                // Compute confidence: start at 1.0 for AST, reduce if fallback or version uncertain
+                let mut confidence: f64 = if ast.fallback_used { 0.65 } else { 0.95 };
+                let version_match_enum = match version_source {
+                    Some(crate::diff::version::detector::VersionSource::Runtime) => {
+                        confidence = confidence.max(0.98);
+                        crate::diff::lang::adapter::VersionMatch::Runtime
+                    }
+                    Some(crate::diff::version::detector::VersionSource::Manifest) => {
+                        crate::diff::lang::adapter::VersionMatch::Manifest
+                    }
+                    Some(crate::diff::version::detector::VersionSource::Inferred) => {
+                        confidence *= 0.85;
+                        crate::diff::lang::adapter::VersionMatch::Inferred
+                    }
+                    None => {
+                        confidence *= 0.70;
+                        crate::diff::lang::adapter::VersionMatch::Unknown
+                    }
+                };
+
                 // Record LV-SCL metadata for this file
                 parse_metadata.push(FileParseMetadata {
                     file: relative_str.clone(),
@@ -111,6 +129,8 @@ fn api_score_inner(
                     version: version_str,
                     parser_used: format!("{:?}", ast.parser_kind),
                     fallback_used: ast.fallback_used,
+                    confidence: confidence.clamp(0.0, 1.0),
+                    version_match: version_match_enum,
                 });
 
                 let api_surface = adapter.extract_api(&ast);
@@ -163,6 +183,8 @@ fn api_score_inner(
                     version: "unknown".to_string(),
                     parser_used: "FallbackLineScanner".to_string(),
                     fallback_used: true,
+                    confidence: 0.45,
+                    version_match: crate::diff::lang::adapter::VersionMatch::Unknown,
                 });
 
                 touches += 1;

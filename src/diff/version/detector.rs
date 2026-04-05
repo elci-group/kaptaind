@@ -4,6 +4,19 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
 
+/// Source priority for version detection.
+#[derive(Debug, Clone, Copy, PartialEq, Default, Serialize, Deserialize, PartialOrd, Eq, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum VersionSource {
+    /// Version came from the actual runtime (e.g., `node --version`).
+    Runtime,
+    /// Version came from a manifest file (e.g., Cargo.toml, package.json).
+    Manifest,
+    /// Version was inferred or defaulted.
+    #[default]
+    Inferred,
+}
+
 /// Detected version for a single language in this project.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LanguageVersion {
@@ -11,6 +24,9 @@ pub struct LanguageVersion {
     pub version: String,
     /// Which file the version was read from.
     pub detected_from: String,
+    /// Source priority (runtime > manifest > inferred).
+    #[serde(default)]
+    pub source: VersionSource,
 }
 
 impl LanguageVersion {
@@ -18,6 +34,7 @@ impl LanguageVersion {
         Self {
             version: "unknown".to_string(),
             detected_from: "none".to_string(),
+            source: VersionSource::Inferred,
         }
     }
 }
@@ -76,6 +93,7 @@ fn detect_rust(repo_path: &Path) -> Option<LanguageVersion> {
     Some(LanguageVersion {
         version: edition.to_string(),
         detected_from: "Cargo.toml".to_string(),
+        source: VersionSource::Manifest,
     })
 }
 
@@ -88,6 +106,7 @@ fn detect_go(repo_path: &Path) -> Option<LanguageVersion> {
             return Some(LanguageVersion {
                 version: ver.trim().to_string(),
                 detected_from: "go.mod".to_string(),
+            source: VersionSource::Manifest,
             });
         }
     }
@@ -102,6 +121,7 @@ fn detect_python(repo_path: &Path) -> Option<LanguageVersion> {
             return Some(LanguageVersion {
                 version: normalise_python_version(&ver),
                 detected_from: ".python-version".to_string(),
+            source: VersionSource::Manifest,
             });
         }
     }
@@ -120,6 +140,7 @@ fn detect_python(repo_path: &Path) -> Option<LanguageVersion> {
                     return Some(LanguageVersion {
                         version: normalise_python_version(ver),
                         detected_from: "pyproject.toml".to_string(),
+            source: VersionSource::Manifest,
                     });
                 }
             }
@@ -135,6 +156,7 @@ fn detect_python(repo_path: &Path) -> Option<LanguageVersion> {
                     return Some(LanguageVersion {
                         version: normalise_python_version(ver.trim()),
                         detected_from: "setup.cfg".to_string(),
+            source: VersionSource::Manifest,
                     });
                 }
             }
@@ -167,6 +189,7 @@ fn detect_typescript(repo_path: &Path) -> Option<LanguageVersion> {
                 return Some(LanguageVersion {
                     version: target.to_uppercase(),
                     detected_from: "tsconfig.json".to_string(),
+            source: VersionSource::Manifest,
                 });
             }
         }
@@ -189,6 +212,7 @@ fn detect_javascript(repo_path: &Path) -> Option<LanguageVersion> {
                 return Some(LanguageVersion {
                     version: node_ver.trim_start_matches(|c: char| !c.is_ascii_digit()).to_string(),
                     detected_from: "package.json (engines.node)".to_string(),
+            source: VersionSource::Manifest,
                 });
             }
         }
@@ -208,6 +232,7 @@ fn detect_kotlin(repo_path: &Path) -> Option<LanguageVersion> {
                         return Some(LanguageVersion {
                             version: ver,
                             detected_from: filename.to_string(),
+                            source: VersionSource::Manifest,
                         });
                     }
                 }
@@ -217,6 +242,7 @@ fn detect_kotlin(repo_path: &Path) -> Option<LanguageVersion> {
                         return Some(LanguageVersion {
                             version: ver,
                             detected_from: filename.to_string(),
+                            source: VersionSource::Manifest,
                         });
                     }
                 }
@@ -235,6 +261,7 @@ fn detect_swift(repo_path: &Path) -> Option<LanguageVersion> {
             return Some(LanguageVersion {
                 version: rest.trim().to_string(),
                 detected_from: "Package.swift".to_string(),
+            source: VersionSource::Manifest,
             });
         }
     }
@@ -243,6 +270,7 @@ fn detect_swift(repo_path: &Path) -> Option<LanguageVersion> {
         return Some(LanguageVersion {
             version: "5".to_string(),
             detected_from: "Package.swift".to_string(),
+            source: VersionSource::Manifest,
         });
     }
     None
@@ -273,6 +301,7 @@ fn detect_npm_dep_version(repo_path: &Path, package: &str) -> Option<LanguageVer
             return Some(LanguageVersion {
                 version: clean.to_string(),
                 detected_from: format!("package.json ({section}.{package})"),
+                source: VersionSource::Manifest,
             });
         }
     }
