@@ -15,6 +15,8 @@ pub enum Language {
     Svelte,
     Astro,
     Scss,
+    /// Handled by an external plugin adapter (JSON stdio protocol).
+    Plugin,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

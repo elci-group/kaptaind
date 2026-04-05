@@ -34,6 +34,36 @@ pub struct DiffAnalysis {
     pub parse_metadata: Vec<FileParseMetadata>,
 }
 
+pub fn analyze_with_plugins(
+    cluster: &Cluster,
+    repo_root: &Path,
+    plugins: &crate::config::loader::PluginsConfig,
+) -> DiffAnalysis {
+    let mut ast_cache = crate::diff::cache::AstCache::load(repo_root);
+    let api = ast::api_score_with_plugins(cluster, repo_root, &mut ast_cache, plugins);
+    ast_cache.save(repo_root);
+    let deps = api::dependency_score(cluster, repo_root);
+    let runtime = api::runtime_score(cluster);
+    let structural = text::structural_score(cluster);
+    DiffAnalysis {
+        structural,
+        api: api.score,
+        deps: deps.score,
+        runtime: runtime.score,
+        api_breaking: api.breaking,
+        api_added: api.added,
+        touched_paths: touched_paths(cluster),
+        api_touches: api.touches,
+        api_signatures: api.signatures,
+        dependency_manifests: deps.manifests,
+        dependency_nodes: deps.nodes,
+        dependency_edges: deps.edges,
+        runtime_paths: runtime.paths,
+        bundle: 0.0,
+        parse_metadata: api.parse_metadata,
+    }
+}
+
 pub fn analyze(cluster: &Cluster, repo_root: &Path) -> DiffAnalysis {
     let structural = text::structural_score(cluster);
     let api = ast::api_score(cluster, repo_root);

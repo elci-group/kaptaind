@@ -35,14 +35,35 @@ fn load_versions(repo_root: &Path) -> std::collections::HashMap<crate::diff::lan
 }
 
 pub fn api_score_with_cache(cluster: &Cluster, repo_root: &Path, ast_cache: &mut AstCache) -> ApiAnalysis {
+    api_score_inner(cluster, repo_root, ast_cache, AdapterRegistry::default_registry())
+}
+
+pub fn api_score_with_plugins(
+    cluster: &Cluster,
+    repo_root: &Path,
+    ast_cache: &mut AstCache,
+    plugins: &crate::config::loader::PluginsConfig,
+) -> ApiAnalysis {
+    api_score_inner(
+        cluster,
+        repo_root,
+        ast_cache,
+        AdapterRegistry::default_registry_with_plugins(plugins),
+    )
+}
+
+fn api_score_inner(
+    cluster: &Cluster,
+    repo_root: &Path,
+    ast_cache: &mut AstCache,
+    registry: AdapterRegistry,
+) -> ApiAnalysis {
     let mut touches = 0_usize;
     let mut exported_signatures = HashSet::new();
     let mut api_breaking = false;
     let mut api_added = false;
     let mut cache_hits = 0_usize;
     let mut parse_metadata: Vec<FileParseMetadata> = Vec::new();
-
-    let registry = AdapterRegistry::default_registry();
     let mut max_score = 0.0_f32;
 
     // Detect language versions once per analysis run
@@ -94,7 +115,7 @@ pub fn api_score_with_cache(cluster: &Cluster, repo_root: &Path, ast_cache: &mut
 
                 let api_surface = adapter.extract_api(&ast);
                 let signatures: HashSet<String> = api_surface.public_symbols.into_iter().map(|s| s.name).collect();
-                
+
                 // Fallback surface detection (routes, design tokens) still valid across languages
                 let is_surface = is_api_surface(path) || !signatures.is_empty();
                 if !is_surface {
@@ -103,7 +124,7 @@ pub fn api_score_with_cache(cluster: &Cluster, repo_root: &Path, ast_cache: &mut
 
                 touches += 1;
                 exported_signatures.extend(signatures.clone());
-                
+
                 // Note: Full AST diff requires old state which we approximate here
                 match event.kind {
                     FsEventKind::Remove => {
@@ -116,11 +137,11 @@ pub fn api_score_with_cache(cluster: &Cluster, repo_root: &Path, ast_cache: &mut
                         // Rough assumption based on current event capabilities
                     }
                 }
-                
+
                 let local_touch_score = 0.25_f32; // per file heuristic
                 let local_sig_score = (signatures.len() as f32 / 8.0).clamp(0.0, 1.0);
                 let local_score: f32 = (0.55 * local_touch_score + 0.45 * local_sig_score).clamp(0.0, 1.0);
-                
+
                 let normalized_score = normalize(local_score, adapter.language());
                 if normalized_score > max_score {
                     max_score = normalized_score;
@@ -169,7 +190,7 @@ pub fn api_score_with_cache(cluster: &Cluster, repo_root: &Path, ast_cache: &mut
     let touch_score = (touches as f32 / 4.0).clamp(0.0, 1.0);
     let signature_score = (exported_signatures.len() as f32 / 8.0).clamp(0.0, 1.0);
     let combined_global_score = (0.55 * touch_score + 0.45 * signature_score).clamp(0.0, 1.0);
-    
+
     // We blend the max normalized individual file score with the global aggregate score
     let final_score = if touches > 0 {
         ((max_score + combined_global_score) / 2.0).clamp(0.0, 1.0)

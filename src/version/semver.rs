@@ -1,3 +1,4 @@
+use crate::config::loader::VersionThresholdConfig;
 use crate::weight::WeightResult;
 use semver::Version;
 
@@ -9,16 +10,24 @@ pub enum Bump {
     Major,
 }
 
-pub fn decide(weight: &WeightResult) -> Bump {
+/// Decide the version bump using configurable score thresholds.
+///
+/// Legacy callers that have no config can use `decide_default(weight)`.
+pub fn decide(weight: &WeightResult, thresholds: &VersionThresholdConfig) -> Bump {
     if weight.api_breaking {
         Bump::Major
-    } else if weight.api_added || weight.score > 0.6 {
+    } else if weight.api_added || weight.score > thresholds.minor {
         Bump::Minor
-    } else if weight.score > 0.1 {
+    } else if weight.score > thresholds.patch {
         Bump::Patch
     } else {
         Bump::None
     }
+}
+
+/// Convenience wrapper using legacy hardcoded thresholds (0.6 / 0.1).
+pub fn decide_default(weight: &WeightResult) -> Bump {
+    decide(weight, &VersionThresholdConfig::default())
 }
 
 pub fn apply(mut v: Version, bump: Bump) -> Version {
@@ -42,7 +51,7 @@ pub fn apply(mut v: Version, bump: Bump) -> Version {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply, decide, Bump};
+    use super::{apply, decide_default, Bump};
     use crate::weight::WeightResult;
     use semver::Version;
 
@@ -53,7 +62,7 @@ mod tests {
             api_breaking: true,
             api_added: false,
         };
-        assert_eq!(decide(&weight), Bump::Major);
+        assert_eq!(decide_default(&weight), Bump::Major);
     }
 
     #[test]
@@ -63,7 +72,7 @@ mod tests {
             api_breaking: false,
             api_added: true,
         };
-        assert_eq!(decide(&weight), Bump::Minor);
+        assert_eq!(decide_default(&weight), Bump::Minor);
     }
 
     #[test]
@@ -79,8 +88,8 @@ mod tests {
             api_added: false,
         };
 
-        assert_eq!(decide(&patch), Bump::Patch);
-        assert_eq!(decide(&minor), Bump::Minor);
+        assert_eq!(decide_default(&patch), Bump::Patch);
+        assert_eq!(decide_default(&minor), Bump::Minor);
     }
 
     #[test]

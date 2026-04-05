@@ -17,7 +17,7 @@ use tokio::process::Command;
 use tokio::sync::mpsc::Receiver;
 
 pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
-    let mut cluster_engine = ClusterEngine::new(config.cluster.window);
+    let mut cluster_engine = ClusterEngine::new_from_config(&config.cluster);
     let mut repo = match Repo::open(&config.repo_path) {
         Ok(repo) => repo,
         Err(err) => {
@@ -247,7 +247,7 @@ async fn process_cluster(
     status.status = State::Committing;
     write_status(&config.repo_path, status);
 
-    let mut diff = crate::diff::analyze(&cluster, &config.repo_path);
+    let mut diff = crate::diff::analyze_with_plugins(&cluster, &config.repo_path, &config.plugins);
     if config.bundle.command.is_some() {
         diff.bundle = crate::diff::bundle::bundle_score(&config.bundle, &config.repo_path).score;
     }
@@ -255,7 +255,7 @@ async fn process_cluster(
     apply_test_outcome(&mut diff, &test_outcome);
     let weight = crate::weight::compute(&diff, &config.weights);
     tracing::trace!(?weight, "weight computation complete");
-    let bump = crate::version::decide(&weight);
+    let bump = crate::version::decide(&weight, &config.version_thresholds);
 
     if bump == Bump::None {
         tracing::debug!("no semantic version bump required");
@@ -308,7 +308,9 @@ async fn process_cluster(
 
     let metadata_line = format_commit(&cluster, &diff, &weight, bump, &next, &agent_event);
 
-    let msg = if config.inference.enabled {
+    let msg = if config.inference.enabled
+        && weight.score >= config.inference.min_score_for_inference as f32
+    {
         let ctx = crate::inference::CommitContext {
             cluster: &cluster,
             diff: &diff,

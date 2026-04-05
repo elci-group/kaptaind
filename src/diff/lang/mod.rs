@@ -1,5 +1,6 @@
 pub mod adapter;
 pub mod heuristics;
+pub mod plugin;
 pub mod registry;
 
 pub use adapter::{ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, Symbol};
@@ -17,5 +18,6 @@ pub fn normalize(score: f32, lang: Language) -> f32 {
         Language::JavaScript => score * 0.7,
         Language::Scss => score * 0.5,
         Language::HtmlCss => score * 0.4,
+        Language::Plugin => score * 0.75,
     }
 }

@@ -34,6 +34,14 @@ enum Commands {
     Aoc(AocCommand),
     /// Initialize kaptaind config for the current project
     Init,
+    /// Show live dashboard: status, stability, releases, and recent analyses
+    Dashboard,
+    /// Emit a CI/CD hint based on the current stability and qualification state
+    CiHint {
+        /// Output format: text, json, or github (GitHub Actions annotations)
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -106,6 +114,12 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Init => {
             handle_init(&config)?;
+        }
+        Commands::Dashboard => {
+            handle_dashboard(&config)?;
+        }
+        Commands::CiHint { format } => {
+            handle_ci_hint(&config, format)?;
         }
     }
 
@@ -592,7 +606,7 @@ fn handle_analyze(config: &Config) -> anyhow::Result<()> {
         diff_analysis.bundle = kaptaind::diff::bundle::bundle_score(&config.bundle, &config.repo_path).score;
     }
     let weight = kaptaind::weight::compute(&diff_analysis, &config.weights);
-    let bump = kaptaind::version::decide(&weight);
+    let bump = kaptaind::version::decide(&weight, &config.version_thresholds);
 
     println!("{}", "🧪 Dry-run Analysis Result:".bold().magenta());
     println!("{}", "-----------------------------------".magenta());
@@ -769,3 +783,256 @@ fn handle_log(config: &Config, limit: usize) -> anyhow::Result<()> {
 fn format_datetime(dt: DateTime<Utc>) -> String {
     dt.format("%Y-%m-%d %H:%M:%S").to_string()
 }
+
+fn handle_dashboard(config: &Config) -> anyhow::Result<()> {
+    let kd = config.repo_path.join(".kaptaind");
+
+    // --- Version ---
+    let version = fs::read_to_string(config.repo_path.join("VERSION"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    // --- Daemon status ---
+    let daemon_state = fs::read_to_string(kd.join("status.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<kaptaind::daemon::scheduler::StatusReport>(&s).ok());
+
+    // --- Telemetry ---
+    let telemetry = fs::read_to_string(kd.join("telemetry.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<kaptaind::daemon::telemetry::TokenMetrics>(&s).ok());
+
+    // --- Stability ---
+    let stability = fs::read_to_string(kd.join("stability.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<kaptaind::stability::model::StabilityRecord>(&s).ok());
+
+    // --- Releases index ---
+    let release_index = fs::read_to_string(kd.join("releases").join("index.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<kaptaind::release::orchestrator::ReleaseIndex>(&s).ok());
+
+    // --- Recent analyses ---
+    let analysis_dir = kd.join("analysis");
+    let mut recent_analyses: Vec<kaptaind::daemon::scheduler::AnalysisArtifact> = Vec::new();
+    if analysis_dir.exists() {
+        let mut entries: Vec<_> = fs::read_dir(&analysis_dir)
+            .into_iter()
+            .flatten()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
+            .collect();
+        entries.sort_by_key(|e| std::cmp::Reverse(e.file_name()));
+        for entry in entries.iter().take(5) {
+            if let Ok(content) = fs::read_to_string(entry.path()) {
+                if let Ok(a) = serde_json::from_str::<kaptaind::daemon::scheduler::AnalysisArtifact>(&content) {
+                    recent_analyses.push(a);
+                }
+            }
+        }
+    }
+
+    // ======= Render =======
+    println!();
+    println!("{}", "╔══════════════════════════════════════════════╗".cyan());
+    println!("{}", "║          kaptaind  ·  Live Dashboard         ║".cyan().bold());
+    println!("{}", "╚══════════════════════════════════════════════╝".cyan());
+    println!();
+
+    // Version + daemon
+    println!("{}", "── Project ─────────────────────────────────────".bright_black());
+    println!("  {}  {}", "Version:".bold(), version.magenta().bold());
+    println!("  {}  {}", "Repo:   ".bold(), config.repo_path.display().to_string().blue());
+    if let Some(ref st) = daemon_state {
+        let state_str = match st.status {
+            kaptaind::daemon::scheduler::State::Idle => "Idle".green().to_string(),
+            kaptaind::daemon::scheduler::State::Clustering => "Clustering".cyan().to_string(),
+            kaptaind::daemon::scheduler::State::Testing => "Testing".yellow().to_string(),
+            kaptaind::daemon::scheduler::State::Committing => "Committing".magenta().to_string(),
+            kaptaind::daemon::scheduler::State::Failed => "Failed".red().bold().to_string(),
+        };
+        println!("  {}  {}", "Daemon: ".bold(), state_str);
+        if let Some(ref err) = st.last_error {
+            println!("  {}  {}", "Error:  ".bold(), err.red());
+        }
+    } else {
+        println!("  {}  {}", "Daemon: ".bold(), "Not running / no status file".bright_black());
+    }
+    println!();
+
+    // Stability
+    println!("{}", "── Stability ───────────────────────────────────".bright_black());
+    if let Some(ref s) = stability {
+        let bar = stability_bar(s.score);
+        let score_colored = if s.score >= 0.85 {
+            format!("{:.3}", s.score).green().bold().to_string()
+        } else if s.score >= 0.6 {
+            format!("{:.3}", s.score).yellow().to_string()
+        } else {
+            format!("{:.3}", s.score).red().to_string()
+        };
+        println!("  Score:  {} {}  {}", bar, score_colored, format!("({} commits tracked)", s.history.len()).bright_black());
+        if let Some(reg_ts) = s.last_regression {
+            let reg_dt = chrono::DateTime::<chrono::Utc>::from_timestamp(reg_ts, 0)
+                .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_else(|| "unknown".to_string());
+            println!("  Last regression: {}", reg_dt.yellow());
+        }
+    } else {
+        println!("  {}", "No stability data yet.".bright_black());
+    }
+    println!();
+
+    // Telemetry
+    println!("{}", "── Telemetry ───────────────────────────────────".bright_black());
+    if let Some(ref t) = telemetry {
+        println!("  {}  ${:.4}  (${:.6} this session)", "LLM cost:".bold(), t.aggregate_cost, t.marginal_cost);
+        println!("  {}  {}  failed: {}", "Releases:".bold(), t.releases.to_string().green(), t.failed_releases.to_string().red());
+    } else {
+        println!("  {}", "No telemetry data.".bright_black());
+    }
+    println!();
+
+    // Recent releases
+    println!("{}", "── Releases ────────────────────────────────────".bright_black());
+    if let Some(ref idx) = release_index {
+        if idx.releases.is_empty() {
+            println!("  {}", "No releases yet.".bright_black());
+        } else {
+            for entry in idx.releases.iter().rev().take(5) {
+                let ts = chrono::DateTime::<chrono::Utc>::from_timestamp(entry.released_at, 0)
+                    .map(|d| d.format("%Y-%m-%d %H:%M").to_string())
+                    .unwrap_or_else(|| "unknown".to_string());
+                println!(
+                    "  {} {}  {}  S={:.3}",
+                    "▸".green(),
+                    format!("v{}", entry.version).magenta().bold(),
+                    ts.bright_black(),
+                    entry.stability
+                );
+            }
+        }
+    } else {
+        println!("  {}", "No release index found.".bright_black());
+    }
+    println!();
+
+    // Recent analyses
+    println!("{}", "── Recent Analyses ─────────────────────────────".bright_black());
+    if recent_analyses.is_empty() {
+        println!("  {}", "No analyses yet.".bright_black());
+    } else {
+        for a in &recent_analyses {
+            let bump_sym = match a.bump.as_str() {
+                "Major" => "🚀".to_string(),
+                "Minor" => "✨".to_string(),
+                "Patch" => "🩹".to_string(),
+                _ => "─".to_string(),
+            };
+            println!(
+                "  {} {}  score={:.3}  bump={}{}  paths={}",
+                bump_sym,
+                a.version.magenta(),
+                a.weight.score,
+                a.bump.cyan(),
+                if a.weight.api_breaking { " [BREAKING]".red().to_string() } else { String::new() },
+                a.diff.touched_paths
+            );
+        }
+    }
+    println!();
+
+    Ok(())
+}
+
+fn stability_bar(score: f64) -> String {
+    let filled = (score * 20.0).round() as usize;
+    let empty = 20usize.saturating_sub(filled);
+    let bar: String = std::iter::repeat('█').take(filled)
+        .chain(std::iter::repeat('░').take(empty))
+        .collect();
+    format!("[{}]", bar)
+}
+
+fn handle_ci_hint(config: &Config, format: &str) -> anyhow::Result<()> {
+    let kd = config.repo_path.join(".kaptaind");
+
+    let stability = fs::read_to_string(kd.join("stability.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<kaptaind::stability::model::StabilityRecord>(&s).ok());
+
+    let release_index = fs::read_to_string(kd.join("releases").join("index.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str::<kaptaind::release::orchestrator::ReleaseIndex>(&s).ok());
+
+    let current_score = stability.as_ref().map(|s| s.score).unwrap_or(0.0);
+    let pass_streak = stability.as_ref().map(|s| kaptaind::stability::engine::pass_streak(s)).unwrap_or(0);
+    let threshold = config.qualification.stability_threshold;
+    let min_streak = config.qualification.min_pass_streak;
+
+    let qualified = current_score >= threshold && pass_streak >= min_streak;
+    let last_version = release_index
+        .as_ref()
+        .and_then(|idx| idx.releases.last())
+        .map(|e| e.version.clone())
+        .unwrap_or_else(|| "none".to_string());
+    let current_version = fs::read_to_string(config.repo_path.join("VERSION"))
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "unknown".to_string());
+
+    match format {
+        "json" => {
+            let out = serde_json::json!({
+                "qualified": qualified,
+                "stability_score": current_score,
+                "pass_streak": pass_streak,
+                "threshold": threshold,
+                "min_streak": min_streak,
+                "current_version": current_version,
+                "last_released_version": last_version,
+                "recommendation": if qualified { "release" } else { "hold" }
+            });
+            println!("{}", serde_json::to_string_pretty(&out)?);
+        }
+        "github" => {
+            // GitHub Actions workflow command format
+            if qualified {
+                println!("::notice title=kaptaind::Release qualified — v{current_version} (stability={current_score:.3}, streak={pass_streak})");
+                println!("::set-output name=qualified::true");
+                println!("::set-output name=version::{current_version}");
+            } else {
+                println!("::warning title=kaptaind::Hold — stability={current_score:.3} (need {threshold:.3}), streak={pass_streak} (need {min_streak})");
+                println!("::set-output name=qualified::false");
+                println!("::set-output name=version::{current_version}");
+            }
+        }
+        _ => {
+            // Plain text
+            let status_str = if qualified {
+                "RELEASE".green().bold().to_string()
+            } else {
+                "HOLD".yellow().bold().to_string()
+            };
+            println!("{} {}", "CI Hint:".bold(), status_str);
+            println!("  Stability score : {:.3}  (threshold: {:.3})", current_score, threshold);
+            println!("  Pass streak     : {}  (required: {})", pass_streak, min_streak);
+            println!("  Current version : {}", current_version.magenta());
+            println!("  Last release    : {}", last_version.blue());
+            if qualified {
+                println!("  → Recommendation: {}", "ship v".green().to_string() + &current_version);
+            } else {
+                let missing_score = (threshold - current_score).max(0.0);
+                let missing_streak = min_streak.saturating_sub(pass_streak);
+                if missing_score > 0.001 {
+                    println!("  → Need +{:.3} stability score to qualify", missing_score);
+                }
+                if missing_streak > 0 {
+                    println!("  → Need {} more passing commit(s) in streak", missing_streak);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+

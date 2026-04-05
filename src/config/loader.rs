@@ -27,6 +27,10 @@ pub struct Config {
     pub release: ReleaseConfig,
     #[serde(default)]
     pub distribution: DistributionConfig,
+    #[serde(default)]
+    pub version_thresholds: VersionThresholdConfig,
+    #[serde(default)]
+    pub plugins: PluginsConfig,
     pub repo_path: PathBuf,
 }
 
@@ -145,7 +149,23 @@ pub struct WatchConfig {
 pub struct ClusterConfig {
     #[serde(with = "duration_secs")]
     pub window: Duration,
+    /// Enable adaptive window sizing based on event burst detection.
+    #[serde(default)]
+    pub adaptive: bool,
+    /// Minimum window when adaptive mode shrinks it (seconds, default 2).
+    #[serde(default = "default_min_window_secs")]
+    pub min_window_secs: u64,
+    /// Maximum window when a burst is detected (seconds, default 30).
+    #[serde(default = "default_max_window_secs")]
+    pub max_window_secs: u64,
+    /// Number of events in a window before it is classified as a burst.
+    #[serde(default = "default_burst_threshold")]
+    pub burst_threshold: usize,
 }
+
+fn default_min_window_secs() -> u64 { 2 }
+fn default_max_window_secs() -> u64 { 30 }
+fn default_burst_threshold() -> usize { 10 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PushConfig {
@@ -242,6 +262,11 @@ pub struct InferenceConfig {
     pub consensus_threshold: f64,
     #[serde(default = "default_consensus_min_agreement")]
     pub consensus_min_agreement: usize,
+    /// Minimum combined diff score required before the LLM is invoked.
+    /// Clusters scoring below this threshold use the deterministic message only.
+    /// Default 0.0 (always invoke when inference.enabled = true).
+    #[serde(default)]
+    pub min_score_for_inference: f64,
 }
 
 fn default_inference_provider() -> String {
@@ -284,6 +309,7 @@ impl Default for InferenceConfig {
             consensus_models: default_consensus_models(),
             consensus_threshold: default_consensus_threshold(),
             consensus_min_agreement: default_consensus_min_agreement(),
+            min_score_for_inference: 0.0,
         }
     }
 }
@@ -299,6 +325,10 @@ impl Default for Config {
             },
             cluster: ClusterConfig {
                 window: Duration::from_secs(5),
+                adaptive: false,
+                min_window_secs: default_min_window_secs(),
+                max_window_secs: default_max_window_secs(),
+                burst_threshold: default_burst_threshold(),
             },
             weights: crate::weight::WeightConfig {
                 s: 0.35,
@@ -326,6 +356,8 @@ impl Default for Config {
             build: BuildConfig::default(),
             release: ReleaseConfig::default(),
             distribution: DistributionConfig::default(),
+            version_thresholds: VersionThresholdConfig::default(),
+            plugins: PluginsConfig::default(),
             repo_path: cwd,
         }
     }
@@ -372,6 +404,56 @@ fn absolutize(base: &Path, path: &Path) -> PathBuf {
         base.join(path)
     }
 }
+
+// ---------------------------------------------------------------------------
+// Version bump threshold config
+// ---------------------------------------------------------------------------
+
+/// `[version_thresholds]` block in `kaptaind.toml`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct VersionThresholdConfig {
+    /// Score above which a commit is bumped Minor (default 0.6).
+    #[serde(default = "default_minor_threshold")]
+    pub minor: f32,
+    /// Score above which a commit is bumped Patch (default 0.1).
+    #[serde(default = "default_patch_threshold")]
+    pub patch: f32,
+}
+
+fn default_minor_threshold() -> f32 { 0.6 }
+fn default_patch_threshold() -> f32 { 0.1 }
+
+impl Default for VersionThresholdConfig {
+    fn default() -> Self {
+        Self { minor: 0.6, patch: 0.1 }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Plugin architecture
+// ---------------------------------------------------------------------------
+
+/// `[plugins]` block in `kaptaind.toml`.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PluginsConfig {
+    #[serde(default)]
+    pub adapters: Vec<PluginAdapterConfig>,
+}
+
+/// One external language adapter entry under `[[plugins.adapters]]`.
+///
+/// The command is called with the file path as its sole argument.
+/// It must print JSON to stdout: `{"symbols":[{"name":"...","kind":"..."}]}`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PluginAdapterConfig {
+    pub name: String,
+    pub command: String,
+    pub extensions: Vec<String>,
+    #[serde(default = "default_plugin_confidence")]
+    pub language_confidence: f32,
+}
+
+fn default_plugin_confidence() -> f32 { 0.8 }
 
 mod duration_secs {
     use serde::{Deserialize, Deserializer};
