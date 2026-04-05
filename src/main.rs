@@ -3,21 +3,65 @@ use colored::*;
 use std::fs::File;
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    name = "kaptaind",
+    version = "0.1.0",
+    author = "Elci Group <kaptaind@example.com>",
+    about = "Automated semantic versioning daemon for dynamic release management",
+    long_about = "kaptaind watches your repository for changes, analyzes them across multiple \
+dimensions (API, dependencies, runtime), computes semantic version bumps, and automatically \
+commits with rich, AI-generated commit messages.\n\n\
+It's a self-governing release system that eliminates manual version bumping and subjective \
+commit messages by replacing them with deterministic, rule-based Git operations.\n\n\
+USAGE:\n  \
+  kaptaind              Run in foreground (interactive, with logs)\n  \
+  kaptaind --daemon     Run as background daemon\n  \
+  kaptaind --dock       View watched projects\n  \
+  kaptaind --radar      View active projects and event rates\n  \
+  kaptaind --lanes      View service/model load breakdown\n\n\
+ENVIRONMENT:\n  \
+  RUST_LOG              Set logging level (debug, info, warn, error)\n  \
+  KAPTAIND_CONFIG       Path to kaptaind.toml (default: ./kaptaind.toml)\n\n\
+CONFIG FILE:\n  \
+  Default location: ./kaptaind.toml\n  \
+  Generate with:   kaptaind-cli init\n\n\
+DAEMON MODE:\n  \
+  Start:   kaptaind --daemon\n  \
+  Check:   kaptaind-cli status\n  \
+  Stop:    pkill -f 'kaptaind.*daemon'\n  \
+  Logs:    tail -f .kaptaind/daemon.out\n\n\
+DOCUMENTATION:\n  \
+  https://github.com/elci-group/kaptaind\n  \
+  https://github.com/elci-group/kaptaind/blob/main/README.md"
+)]
 struct Cli {
-    /// Run kaptaind as a background daemon
+    /// 🌙 Run kaptaind as a background daemon (non-blocking)
+    ///
+    /// Detaches from the terminal and runs in the background, writing logs to
+    /// .kaptaind/daemon.out and .kaptaind/daemon.err. PID is stored in
+    /// .kaptaind/daemon.pid for later termination.
     #[arg(short, long)]
     daemon: bool,
 
-    /// See an index of watched static projects
+    /// 🏗️ Show watched static projects (Dock view)
+    ///
+    /// Lists all projects being watched with their status. Useful for debugging
+    /// which repositories kaptaind is monitoring.
     #[arg(long)]
     dock: bool,
 
-    /// See an index of active projects
+    /// 📡 Show active projects and event rates (Radar view)
+    ///
+    /// Displays real-time project activity: event frequency, last action time,
+    /// and current load. Great for monitoring cluster formation.
     #[arg(long)]
     radar: bool,
 
-    /// See a breakdown of which models/services are under load
+    /// 🛣️ Show service/model load breakdown (Lanes view)
+    ///
+    /// Internal view of which components are under heavy load (diff engine,
+    /// dependency grapher, version heuristics, LLM inference). Useful for
+    /// performance profiling.
     #[arg(long)]
     lanes: bool,
 }

@@ -8,37 +8,156 @@ use std::path::PathBuf;
 use tabled::{settings::Style, Table, Tabled};
 
 #[derive(Parser)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    name = "kaptaind-cli",
+    version = "0.1.0",
+    author = "Elci Group <kaptaind@example.com>",
+    about = "CLI companion to kaptaind daemon for inspection and management",
+    long_about = "kaptaind-cli provides visibility into the daemon's state and offers one-off \
+analysis and session management without starting the daemon.\n\n\
+COMMANDS:\n  \
+  status              View current daemon health and version\n  \
+  log                 View recent automated commits and analysis decisions\n  \
+  analyze             Dry-run: analyze working tree without committing\n  \
+  dashboard           Live dashboard: stability, releases, recent analyses\n  \
+  ci-hint             Release/hold recommendation for CI/CD pipelines\n  \
+  aoc                 Manage Aim of Change sessions (multi-commit grouping)\n  \
+  init                Initialize kaptaind config for a project\n\n\
+EXAMPLES:\n  \
+  kaptaind-cli status                     # Check daemon health\n  \
+  kaptaind-cli log --limit 20             # View last 20 commits\n  \
+  kaptaind-cli analyze                    # Dry-run diff analysis\n  \
+  kaptaind-cli dashboard                  # Live terminal dashboard\n  \
+  kaptaind-cli ci-hint --format json      # JSON output for CI\n  \
+  kaptaind-cli aoc start \"feature: auth\"  # Begin a feature session\n  \
+  kaptaind-cli init                       # Generate kaptaind.toml\n\n\
+ENVIRONMENT:\n  \
+  KAPTAIND_CONFIG     Path to kaptaind.toml (default: ./kaptaind.toml)\n\n\
+CONFIG FILE:\n  \
+  Location: ./kaptaind.toml or ~/.kaptaind/config.toml\n  \
+  Run init to generate:\n  \
+    kaptaind-cli init\n  \
+  Then start daemon:\n  \
+    kaptaind --daemon\n\n\
+DOCUMENTATION:\n  \
+  https://github.com/elci-group/kaptaind\n  \
+  https://github.com/elci-group/kaptaind/blob/main/README.md\n  \
+  https://github.com/elci-group/kaptaind/blob/main/INSTALL.md"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// Optional path to the repository to operate on (overrides kaptaind.toml)
+    /// 📁 Repository path (overrides kaptaind.toml)
+    ///
+    /// If specified, operates on this repository instead of reading from
+    /// kaptaind.toml. Useful for multi-repo workflows.
     #[arg(short, long)]
     repo: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Show current daemon status
+    /// 🟢 View current daemon health and version
+    ///
+    /// Shows the daemon's current state (Idle, Clustering, Testing, Committing, Failed),
+    /// the current version, installed binary locations, and recent error messages if any.
+    ///
+    /// Usage: kaptaind-cli status
     Status,
-    /// View analysis history
+
+    /// 📜 View recent automated commits and analysis decisions
+    ///
+    /// Lists the last N commits made by kaptaind, including version bumps, scores,
+    /// and the reasons for each bump (API, deps, runtime, bundle changes).
+    ///
+    /// Examples:
+    ///   kaptaind-cli log                    # Last 10 commits (default)
+    ///   kaptaind-cli log --limit 50         # Last 50 commits
+    ///   kaptaind-cli log -l 5               # Last 5 commits
     Log {
+        /// Number of commits to display (default: 10)
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
     },
-    /// Perform a one-off analysis of the working tree without committing
+
+    /// 🔬 Analyze working tree without committing (dry-run)
+    ///
+    /// Performs a full semantic diff analysis on your current uncommitted changes
+    /// without actually committing. Shows what version bump would be made and why.
+    /// Great for testing bump logic before the daemon sees the changes.
+    ///
+    /// Output includes: score breakdown, API changes, dependency changes, runtime changes,
+    /// projected version bump.
+    ///
+    /// Usage: kaptaind-cli analyze
     Analyze,
-    /// Manage Aim of Change sessions
+
+    /// 🎯 Manage Aim of Change sessions
+    ///
+    /// Group related changes into named intent-driven sessions with full traceability.
+    /// Useful for features, refactors, or coordinated multi-file changes.
+    ///
+    /// Examples:
+    ///   kaptaind-cli aoc start "feature: auth flow"
+    ///   kaptaind-cli aoc status
+    ///   kaptaind-cli aoc ship
+    ///   kaptaind-cli aoc intercept --intent "refactor" -- npm test
     #[command(subcommand)]
     Aoc(AocCommand),
-    /// Initialize kaptaind config for the current project
+
+    /// ⚙️ Initialize kaptaind config for the current project
+    ///
+    /// Auto-generates kaptaind.toml based on project type detection:
+    /// - Rust (Cargo.toml) → cargo test, cargo build
+    /// - Node (package.json) → npm test, npm run build
+    /// - Python (pyproject.toml) → pytest, python -m build
+    /// - Go (go.mod) → go test, go build
+    /// - And more...
+    ///
+    /// Also creates .kaptainignore with sensible defaults.
+    ///
+    /// Usage: kaptaind-cli init
     Init,
-    /// Show live dashboard: status, stability, releases, and recent analyses
+
+    /// 📊 Live terminal dashboard
+    ///
+    /// Real-time view of kaptaind's state: version, daemon status, stability score,
+    /// LLM costs, release history, and recent analysis artifacts.
+    ///
+    /// Perfect for monitoring your automation at a glance. Updates intelligently
+    /// by reading the latest .kaptaind/ state files.
+    ///
+    /// Usage: kaptaind-cli dashboard
     Dashboard,
-    /// Emit a CI/CD hint based on the current stability and qualification state
+
+    /// 🚀 Emit release/hold recommendation for CI/CD pipelines
+    ///
+    /// Determines if the current state qualifies for release based on:
+    /// - Stability score vs threshold
+    /// - Pass streak (trailing passing commits)
+    /// - Diff-spike guard (prevents releasing during volatile periods)
+    /// - Cooldown (minimum time between releases)
+    ///
+    /// Output formats:
+    ///   text   → Human-readable summary (default)
+    ///   json   → Machine-readable JSON for tooling
+    ///   github → GitHub Actions annotations + set-output
+    ///
+    /// Examples:
+    ///   kaptaind-cli ci-hint                    # Text output
+    ///   kaptaind-cli ci-hint --format json      # JSON for scripting
+    ///   kaptaind-cli ci-hint --format github    # GitHub Actions
+    ///
+    /// Usage in GitHub Actions:
+    ///   - name: Check release qualification
+    ///     id: qualify
+    ///     run: kaptaind-cli ci-hint --format github
+    ///   - name: Release
+    ///     if: steps.qualify.outputs.qualified == 'true'
+    ///     run: ./scripts/release.sh
     CiHint {
-        /// Output format: text, json, or github (GitHub Actions annotations)
+        /// Output format: text (default), json, or github (GitHub Actions format)
         #[arg(short, long, default_value = "text")]
         format: String,
     },
@@ -46,30 +165,102 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum AocCommand {
-    /// Start a new Aim of Change session
+    /// 🎯 Start a new Aim of Change session
+    ///
+    /// Begins a named session to group related commits under a single intent.
+    /// All commits while the session is active will be tagged with this label
+    /// and linked in the manifest.
+    ///
+    /// Session state is stored in .kaptaind/aoc/active.json
+    /// When shipped, it's archived to .kaptaind/aoc/manifests/<id>.json
+    ///
+    /// Examples:
+    ///   kaptaind-cli aoc start "feature: authentication flow"
+    ///   kaptaind-cli aoc start "refactor: database layer"
+    ///   kaptaind-cli aoc start "fix: memory leaks"
     Start {
-        /// User-friendly name for this AoC
+        /// User-friendly name for this session (required)
         label: String,
     },
-    /// End and ship the current AoC session
+
+    /// 🚢 End and ship the current session
+    ///
+    /// Finalizes the active Aim of Change session, creates a manifest with:
+    /// - Session name and ID
+    /// - Start and end timestamps
+    /// - All commits included
+    /// - Version progression (start -> end)
+    /// - Test pass/fail summary
+    ///
+    /// Useful for linking to deploys, release notes, or audit logs.
+    ///
+    /// Usage: kaptaind-cli aoc ship
     Ship,
-    /// Show status of the current AoC session
+
+    /// 📋 Show status of the current session
+    ///
+    /// Displays active session name, number of commits so far, and timeline.
+    /// Returns error if no session is active.
+    ///
+    /// Usage: kaptaind-cli aoc status
     Status,
-    /// Intercept agent operations for contextual tracing
+
+    /// 🔍 Intercept agent operations for contextual tracing
+    ///
+    /// Wraps a command (test, build, script) and captures:
+    /// - Command output
+    /// - Exit code
+    /// - Execution time
+    /// - Optionally: agent model name and intent description
+    ///
+    /// Logs are attached to the current Aim of Change session for full traceability.
+    /// Great for audit trails in regulated environments.
+    ///
+    /// Examples:
+    ///   kaptaind-cli aoc intercept -- npm test
+    ///   kaptaind-cli aoc intercept --model claude-3-5-sonnet -- cargo test
+    ///   kaptaind-cli aoc intercept --intent \"refactor auth\" -- npm test
+    ///
+    /// Usage in scripts:
+    ///   if kaptaind-cli aoc intercept --model my-model -- ./my_test.sh; then
+    ///     echo "Tests passed, changes are safe"
+    ///   fi
     Intercept {
-        /// Agent model used (e.g. "claude-3-5-sonnet")
+        /// 🤖 Agent/LLM model name (e.g., claude-3-5-sonnet, gpt-4, local-llama)
+        ///
+        /// Optional label for which AI model made the change. Useful for tracking
+        /// which agent generated commits.
         #[arg(short, long)]
         model: Option<String>,
-        /// Intent or task description
+
+        /// 💡 Intent or task description
+        ///
+        /// High-level description of what the agent is trying to do. Stored in
+        /// the trace for context and auditing.
         #[arg(short, long)]
         intent: Option<String>,
-        /// Command to wrap and execute
+
+        /// Command to wrap and execute (everything after --)
         command: String,
+
         /// Arguments for the command
         args: Vec<String>,
     },
-    /// View completed AoC sessions
+
+    /// 📚 View completed Aim of Change sessions
+    ///
+    /// Lists shipped AoC sessions with their manifests, showing:
+    /// - Session name and ID
+    /// - Start and end times
+    /// - Version change (e.g., v1.2.0 → v1.3.0)
+    /// - Commit count
+    /// - Test results
+    ///
+    /// Examples:
+    ///   kaptaind-cli aoc log                  # Last 10 sessions (default)
+    ///   kaptaind-cli aoc log --limit 50       # Last 50 sessions
     Log {
+        /// Number of sessions to display (default: 10)
         #[arg(short, long, default_value_t = 10)]
         limit: usize,
     },
