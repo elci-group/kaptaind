@@ -363,4 +363,56 @@ mod tests {
         let config: Config = toml::from_str(toml_str).unwrap();
         assert!(matches!(config.staging.mode, super::StagingMode::All));
     }
+
+    #[test]
+    fn inference_defaults_to_fast_mode() {
+        let config = Config::default();
+        assert!(matches!(
+            config.inference.validation_mode,
+            super::ValidationMode::Fast
+        ));
+        assert_eq!(config.inference.consensus_models, vec!["llama3.2"]);
+        assert!((config.inference.consensus_threshold - 0.6).abs() < f64::EPSILON);
+        assert_eq!(config.inference.consensus_min_agreement, 2);
+    }
+
+    #[test]
+    fn inference_deserializes_consensus_mode() {
+        let toml_str = r#"
+            repo_path = "."
+            [watch]
+            path = "."
+            recursive = true
+            ignore_file = ".kaptainignore"
+            [cluster]
+            window = 5
+            [weights]
+            s = 0.35
+            a = 0.30
+            d = 0.20
+            r = 0.15
+            [push]
+            enabled = false
+            branch = "main"
+            [ratelimit]
+            min_commit_interval = 10
+            [test]
+            command = "cargo test"
+            required = true
+            [inference]
+            enabled = true
+            validation_mode = "consensus"
+            consensus_models = ["llama3.2", "mistral", "codellama"]
+            consensus_threshold = 0.7
+            consensus_min_agreement = 3
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(matches!(
+            config.inference.validation_mode,
+            super::ValidationMode::Consensus
+        ));
+        assert_eq!(config.inference.consensus_models.len(), 3);
+        assert!((config.inference.consensus_threshold - 0.7).abs() < f64::EPSILON);
+        assert_eq!(config.inference.consensus_min_agreement, 3);
+    }
 }
