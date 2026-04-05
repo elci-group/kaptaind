@@ -408,6 +408,37 @@ OLLAMA_BASE_URL=http://localhost:11434
 
 See the **[Multi-Provider Inference Routing Tutorial](./tutorial_inference_routing.md)** for advanced configuration and troubleshooting.
 
+## Commit Validation: Fast vs. Consensus Modes
+
+Kaptaind offers two strategies for AI-generated commit messages, tradingoff latency against hallucination risk:
+
+### Fast Mode (Default)
+
+Single inference call with the best available provider (Anthropic → OpenAI → Ollama). Lowest latency (~500ms–2s), acceptable risk for teams prioritizing speed.
+
+```toml
+[inference]
+enabled = true
+validation_mode = "fast"      # Single provider
+```
+
+### Consensus Mode
+
+Multiple Ollama models polled in parallel; semantic cross-comparison (Jaccard similarity) elects the best candidate. Higher latency (~1–3s), lower hallucination risk for teams prioritizing accuracy.
+
+```toml
+[inference]
+enabled = true
+validation_mode = "consensus"
+consensus_models = ["llama3.2", "mistral", "codellama"]
+consensus_threshold = 0.6     # Min mean similarity to elect
+consensus_min_agreement = 2   # Min responding models
+```
+
+**When models disagree** or quorum isn't reached, kaptaind gracefully falls back to deterministic metadata-only messages. Both modes are fully optional (inference disabled by default).
+
+See the **[Commit Validation Tutorial](./tutorial_commit_validation.md)** for detailed comparison, configuration examples, and decision guidance.
+
 ## Migration Guide: Existing Projects
 
 If your repo already has a version history (even irregular), you can safely adopt kaptaind:
