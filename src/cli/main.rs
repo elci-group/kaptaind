@@ -153,6 +153,8 @@ fn handle_aoc_start(config: &Config, label: &str) -> anyhow::Result<()> {
         label: label.to_string(),
         created_at: Utc::now(),
         initial_version: initial_version.clone(),
+        intent: None,
+        target_stability: None,
     };
 
     // Save session

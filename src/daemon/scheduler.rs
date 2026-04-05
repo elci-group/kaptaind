@@ -412,6 +412,35 @@ async fn process_cluster(
     status.last_error = None;
     write_status(&config.repo_path, status);
 
+    // Spawn post-commit qualification and release pipeline (non-blocking)
+    if config.qualification.enabled {
+        let repo_path = config.repo_path.clone();
+        let config_clone = config.clone();
+        let version_str = next.to_string();
+        let commit_hash = repo
+            .inner
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_commit().ok())
+            .map(|c| c.id().to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let tests_passed = matches!(test_outcome, TestOutcome::Passed);
+        let diff_f64 = weight.score as f64;
+        let runtime_paths = diff.runtime_paths as u32;
+        tokio::spawn(async move {
+            crate::release::orchestrator::post_commit(
+                &repo_path,
+                &config_clone,
+                &version_str,
+                &commit_hash,
+                tests_passed,
+                diff_f64,
+                runtime_paths,
+            )
+            .await;
+        });
+    }
+
     // Run pruning in the background
     let repo_path = config.repo_path.clone();
     tokio::spawn(async move {

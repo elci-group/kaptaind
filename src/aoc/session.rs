@@ -10,6 +10,12 @@ pub struct AocSession {
     pub label: String,                    // User-friendly name (e.g. "refactor-engine")
     pub created_at: DateTime<Utc>,
     pub initial_version: String,
+    /// Optional release intent (directive §8.3): "none" | "preview" | "internal" | "public".
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub intent: Option<String>,
+    /// Minimum stability score required before this session triggers a release on close.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target_stability: Option<f64>,
 }
 
 /// A completed AoC manifest that links all traces from a session.
@@ -110,6 +116,8 @@ mod tests {
             label: "test-feature".to_string(),
             created_at: Utc::now(),
             initial_version: "0.1.0".to_string(),
+            intent: None,
+            target_stability: None,
         };
 
         save_active(repo_path, &session).unwrap();
@@ -129,6 +137,8 @@ mod tests {
             label: "test-feature".to_string(),
             created_at: Utc::now(),
             initial_version: "0.1.0".to_string(),
+            intent: None,
+            target_stability: None,
         };
 
         save_active(repo_path, &session).unwrap();

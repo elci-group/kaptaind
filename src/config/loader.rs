@@ -1,4 +1,5 @@
-use serde::Deserialize;
+use crate::qualification::policy::QualificationConfig;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -18,7 +19,119 @@ pub struct Config {
     pub staging: StagingConfig,
     #[serde(default)]
     pub inference: InferenceConfig,
+    #[serde(default)]
+    pub qualification: QualificationConfig,
+    #[serde(default)]
+    pub build: BuildConfig,
+    #[serde(default)]
+    pub release: ReleaseConfig,
+    #[serde(default)]
+    pub distribution: DistributionConfig,
     pub repo_path: PathBuf,
+}
+
+// ---------------------------------------------------------------------------
+// Build config
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct BuildConfig {
+    /// Shell command to run (e.g. `"cargo build --release"`). No build step
+    /// when absent.
+    pub command: Option<String>,
+    /// Path to the produced artifact, relative to the repo root.
+    #[serde(default = "default_artifact_path")]
+    pub artifact_path: String,
+    /// Maximum seconds to wait for the build before aborting.
+    #[serde(default = "default_build_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_artifact_path() -> String {
+    "target/release/kaptaind".to_string()
+}
+
+fn default_build_timeout_secs() -> u64 {
+    600 // 10 minutes
+}
+
+// ---------------------------------------------------------------------------
+// Release intent + config
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ReleaseIntent {
+    /// No release pipeline (default). Preserves existing behaviour.
+    #[default]
+    None,
+    /// Build only; no packaging or distribution.
+    Preview,
+    /// Build + private/local distribution.
+    Internal,
+    /// Full release pipeline.
+    Public,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ReleaseConfig {
+    #[serde(default)]
+    pub intent: ReleaseIntent,
+}
+
+// ---------------------------------------------------------------------------
+// Distribution config
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct DistributionConfig {
+    #[serde(default)]
+    pub local: Option<LocalDistConfig>,
+    #[serde(default)]
+    pub s3: Option<S3DistConfig>,
+    #[serde(default)]
+    pub registry: Option<RegistryDistConfig>,
+    #[serde(default)]
+    pub security: Option<SecurityDistConfig>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct LocalDistConfig {
+    #[serde(default = "default_local_dist_path")]
+    pub path: String,
+}
+
+fn default_local_dist_path() -> String {
+    ".kaptaind/releases/".to_string()
+}
+
+impl Default for LocalDistConfig {
+    fn default() -> Self {
+        Self {
+            path: default_local_dist_path(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct S3DistConfig {
+    pub bucket: String,
+    pub region: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RegistryDistConfig {
+    #[serde(rename = "type")]
+    pub kind: String,
+    pub image: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SecurityDistConfig {
+    #[serde(default)]
+    pub encrypt: bool,
+    #[serde(default)]
+    pub sign: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -209,6 +322,10 @@ impl Default for Config {
             bundle: BundleConfig::default(),
             staging: StagingConfig::default(),
             inference: InferenceConfig::default(),
+            qualification: QualificationConfig::default(),
+            build: BuildConfig::default(),
+            release: ReleaseConfig::default(),
+            distribution: DistributionConfig::default(),
             repo_path: cwd,
         }
     }
