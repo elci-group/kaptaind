@@ -1,6 +1,6 @@
 use fltk::prelude::*;
 use fltk::{
-    app, button::Button, enums::Color, frame::Frame, text::TextEditor, window::Window, dialog,
+    app, button::{Button, CheckButton}, enums::Color, frame::Frame, text::TextEditor, window::Window, dialog,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -27,6 +27,7 @@ struct InstallerState {
     install_path: PathBuf,
     build_mode: String,
     system_install: bool,
+    enable_autostart: bool,
 }
 
 impl Default for InstallerState {
@@ -35,6 +36,7 @@ impl Default for InstallerState {
             install_path: PathBuf::from(format!("{}/.local/bin", std::env::var("HOME").unwrap_or_else(|_| "/root".to_string()))),
             build_mode: "release".to_string(),
             system_install: false,
+            enable_autostart: false,
         }
     }
 }
@@ -228,16 +230,21 @@ fn screen_options(sender: app::Sender<Message>, state: Arc<Mutex<InstallerState>
     title.set_label_size(28);
 
     let mut info_text = TextEditor::default()
-        .with_size(WINDOW_WIDTH - 2 * PADDING, 180)
+        .with_size(WINDOW_WIDTH - 2 * PADDING, 120)
         .with_pos(PADDING, PADDING + 70);
     info_text.set_buffer(fltk::text::TextBuffer::default());
     info_text.buffer().unwrap().set_text(
         "Installation Path: ~/.local/bin\n\
          (Add to PATH if not already present)\n\n\
          Build Mode: Release (optimized)\n\
-         Configuration: ~/.kaptaind/\n\n\
-         Click Install to begin.",
+         Configuration: ~/.kaptaind/",
     );
+
+    let mut autostart_checkbox = CheckButton::default()
+        .with_size(400, 30)
+        .with_pos(PADDING, PADDING + 200)
+        .with_label("✓ Enable auto-start on login");
+    autostart_checkbox.set_checked(false);
 
     let mut install_btn = Button::default()
         .with_size(BUTTON_WIDTH, BUTTON_HEIGHT)
@@ -256,8 +263,19 @@ fn screen_options(sender: app::Sender<Message>, state: Arc<Mutex<InstallerState>
     wind.end();
     wind.show();
 
+    let state_clone = state.clone();
+    autostart_checkbox.set_callback(move |cb| {
+        if let Ok(mut s) = state_clone.lock() {
+            s.enable_autostart = cb.is_checked();
+        }
+    });
+
     let sender_clone = sender_inner.clone();
+    let state_clone = state.clone();
     install_btn.set_callback(move |_| {
+        if let Ok(mut s) = state_clone.lock() {
+            s.enable_autostart = autostart_checkbox.is_checked();
+        }
         sender_clone.send(Message::StartInstall);
     });
 
@@ -307,7 +325,7 @@ fn screen_progress(sender: app::Sender<Message>) -> app::Receiver<Message> {
     receiver
 }
 
-fn screen_complete(sender: app::Sender<Message>) -> app::Receiver<Message> {
+fn screen_complete(sender: app::Sender<Message>, state: Arc<Mutex<InstallerState>>) -> app::Receiver<Message> {
     let (sender_inner, receiver) = app::channel::<Message>();
 
     let mut wind = Window::default()
@@ -322,11 +340,21 @@ fn screen_complete(sender: app::Sender<Message>) -> app::Receiver<Message> {
     title.set_label_size(28);
     title.set_label_color(Color::from_hex(0x4CAF50));
 
+    let autostart_msg = if let Ok(s) = state.lock() {
+        if s.enable_autostart {
+            "\n✓ Auto-start enabled: kaptaind will start on next login"
+        } else {
+            "\nTo enable auto-start later, run:\n   kaptaind-cli enable-autostart"
+        }
+    } else {
+        ""
+    };
+
     let mut info_text = TextEditor::default()
-        .with_size(WINDOW_WIDTH - 2 * PADDING, 250)
+        .with_size(WINDOW_WIDTH - 2 * PADDING, 280)
         .with_pos(PADDING, PADDING + 70);
     info_text.set_buffer(fltk::text::TextBuffer::default());
-    info_text.buffer().unwrap().set_text(
+    let completion_text = format!(
         "✓ Kaptaind has been successfully installed!\n\n\
          Next Steps:\n\
          1. Update your shell PATH (if needed):\n\
@@ -334,10 +362,10 @@ fn screen_complete(sender: app::Sender<Message>) -> app::Receiver<Message> {
          2. Initialize a project:\n\
             kaptaind-cli init\n\n\
          3. Start the daemon:\n\
-            kaptaind --daemon\n\n\
-         For help:\n\
-            kaptaind --help",
+            kaptaind --daemon\n{}",
+        autostart_msg
     );
+    info_text.buffer().unwrap().set_text(&completion_text);
 
     let mut finish_btn = Button::default()
         .with_size(BUTTON_WIDTH, BUTTON_HEIGHT)
@@ -430,7 +458,7 @@ fn main() {
                 }
             }
             4 => {
-                let rx = screen_complete(tx.clone());
+                let rx = screen_complete(tx.clone(), state.clone());
                 match rx.recv() {
                     Some(Message::Exit) | None => break,
                     _ => continue,

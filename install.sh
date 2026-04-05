@@ -9,6 +9,7 @@
 #   --install-dir DIR       Installation directory (default: ~/.local/bin)
 #   --system                Install system-wide to /usr/local/bin (requires sudo)
 #   --no-init               Skip kaptaind-cli init after installation
+#   --autostart             Enable auto-start on login (systemd/launchd/shell)
 #   --build-only            Build but don't install
 #   --debug                 Build debug binary instead of release
 #   --help                  Show this help message
@@ -28,6 +29,7 @@ SYSTEM_INSTALL=false
 RUN_INIT=true
 BUILD_ONLY=false
 BUILD_MODE="release"
+ENABLE_AUTOSTART=false
 REPO_URL="https://github.com/elci-group/kaptaind.git"
 TEMP_DIR=""
 
@@ -82,6 +84,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --no-init)
             RUN_INIT=false
+            shift
+            ;;
+        --autostart)
+            ENABLE_AUTOSTART=true
             shift
             ;;
         --build-only)
@@ -287,6 +293,120 @@ setup_shell_integration() {
     fi
 }
 
+# Setup auto-start
+setup_autostart() {
+    if [[ "$ENABLE_AUTOSTART" == false ]]; then
+        return
+    fi
+
+    print_header "Setting Up Auto-Start"
+
+    # Check if kaptaind binary exists
+    if [[ ! -f "$INSTALL_DIR/kaptaind" ]]; then
+        print_warning "kaptaind not found at $INSTALL_DIR/kaptaind, skipping auto-start"
+        return
+    fi
+
+    # Detect OS and setup accordingly
+    if [[ "$OSTYPE" == "linux-gnu"* ]]; then
+        setup_autostart_systemd
+    elif [[ "$OSTYPE" == "darwin"* ]]; then
+        setup_autostart_launchd
+    else
+        setup_autostart_shell
+    fi
+}
+
+setup_autostart_systemd() {
+    local systemd_dir="$HOME/.config/systemd/user"
+    mkdir -p "$systemd_dir"
+
+    cat > "$systemd_dir/kaptaind.service" << EOF
+[Unit]
+Description=Kaptaind - Automated Semantic Versioning Daemon
+Documentation=https://github.com/elci-group/kaptaind
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=$INSTALL_DIR/kaptaind
+ExecReload=/bin/kill -HUP \$MAINPID
+KillMode=process
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kaptaind
+Environment="RUST_LOG=info"
+
+[Install]
+WantedBy=default.target
+EOF
+
+    systemctl --user daemon-reload 2>/dev/null || true
+    systemctl --user enable kaptaind.service 2>/dev/null || true
+
+    print_success "Auto-start enabled via systemd user service"
+    echo "  Service file: $systemd_dir/kaptaind.service"
+    echo "  Start now with: systemctl --user start kaptaind"
+}
+
+setup_autostart_launchd() {
+    local launchd_dir="$HOME/.Library/LaunchAgents"
+    mkdir -p "$launchd_dir"
+
+    cat > "$launchd_dir/com.elcigroup.kaptaind.plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.elcigroup.kaptaind</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>$INSTALL_DIR/kaptaind</string>
+  </array>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>$HOME/.kaptaind/daemon.out</string>
+  <key>StandardErrorPath</key>
+  <string>$HOME/.kaptaind/daemon.err</string>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>RUST_LOG</key>
+    <string>info</string>
+  </dict>
+</dict>
+</plist>
+EOF
+
+    launchctl load "$launchd_dir/com.elcigroup.kaptaind.plist" 2>/dev/null || true
+
+    print_success "Auto-start enabled via launchd plist"
+    echo "  Plist file: $launchd_dir/com.elcigroup.kaptaind.plist"
+}
+
+setup_autostart_shell() {
+    local autostart_line="[ -z \"\$(pgrep -f 'kaptaind.*daemon')\" ] && nohup $INSTALL_DIR/kaptaind --daemon > /dev/null 2>&1 &"
+
+    for rc_file in "$HOME/.bashrc" "$HOME/.zshrc"; do
+        [[ ! -f "$rc_file" ]] && continue
+
+        if ! grep -q "Auto-start kaptaind" "$rc_file"; then
+            {
+                echo ""
+                echo "# Auto-start kaptaind"
+                echo "export PATH=\"\$HOME/.local/bin:\$PATH\""
+                echo "$autostart_line"
+            } >> "$rc_file"
+        fi
+    done
+
+    print_success "Auto-start enabled via shell initialization"
+    echo "  Added to ~/.bashrc and ~/.zshrc"
+}
+
 # Create .kaptaind directory
 setup_kaptaind_dir() {
     print_header "Setting Up Configuration Directory"
@@ -328,13 +448,20 @@ main() {
     setup_kaptaind_dir
     verify_installation
     setup_shell_integration
+    setup_autostart
     run_init
 
     print_header "Installation Complete ✓"
     echo "Next steps:"
     echo "  1. Update your PATH (if needed)"
     echo "  2. Run: kaptaind-cli init"
-    echo "  3. Run: kaptaind --daemon"
+    if [[ "$ENABLE_AUTOSTART" == false ]]; then
+        echo "  3. Run: kaptaind --daemon"
+        echo ""
+        echo "To enable auto-start: kaptaind-cli enable-autostart"
+    else
+        echo "  3. kaptaind will start automatically on next login"
+    fi
     echo ""
     echo "For help: kaptaind --help"
     echo ""

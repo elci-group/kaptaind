@@ -1065,7 +1065,7 @@ dependencies = [
 
 [[package]]
 name = "kaptaind"
-version = "0.1.0"
+version = "9.2.588"
 dependencies = [
  "anyhow",
  "chrono",

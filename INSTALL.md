@@ -39,6 +39,9 @@ bash install.sh --install-dir /opt/kaptaind/bin
 # System-wide installation (requires sudo)
 bash install.sh --system
 
+# Enable auto-start on login (systemd/launchd/shell)
+bash install.sh --autostart
+
 # Build debug binary instead of release
 bash install.sh --debug
 
@@ -62,6 +65,30 @@ bash install.sh --help
 6. ✓ Creates `~/.kaptaind` configuration directory
 7. ✓ Verifies the installation
 8. ✓ Provides next steps
+
+### Auto-Start Setup
+
+To enable kaptaind to start automatically on login or boot:
+
+**During Installation:**
+```bash
+bash install.sh --autostart
+```
+
+**After Installation:**
+```bash
+kaptaind-cli enable-autostart
+```
+
+**To Disable Auto-Start:**
+```bash
+kaptaind-cli disable-autostart
+```
+
+**How Auto-Start Works:**
+- **Linux (systemd):** Creates a user systemd service at `~/.config/systemd/user/kaptaind.service`
+- **macOS (launchd):** Creates a plist at `~/.Library/LaunchAgents/com.elcigroup.kaptaind.plist`
+- **Other systems:** Adds startup code to `~/.bashrc` and `~/.zshrc`
 
 ---
 
