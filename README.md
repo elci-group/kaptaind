@@ -36,6 +36,7 @@ It eliminates manual version bumping and subjective commit messages by replacing
 - **Configurable staging:** Choose between staging all files (default), only cluster-touched files, or pattern-matched files. Exclude patterns prevent sensitive files from being committed.
 - **Aim of Change (AoC) sessions:** Group related changes into named sessions with full trace history, agent interception, and shipped manifests.
 - **Multi-Provider Inference Routing:** Intelligently routes commit message generation to the best available inference provider. Automatically detects and prioritizes: **Anthropic Claude** → **OpenAI GPT-4o** → **Local Ollama** fallback. No API keys needed; works offline with Ollama.
+- **Commit Validation Modes:** Choose between **Fast Mode** (single provider, lowest latency) or **Consensus Mode** (multiple local models with semantic cross-comparison, lowest hallucination risk). Developer-selected via config.
 
 ## Getting Started
 
