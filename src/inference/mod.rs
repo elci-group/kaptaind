@@ -1,4 +1,5 @@
 pub mod anthropic;
+pub mod consensus;
 pub mod ollama;
 pub mod openai;
 

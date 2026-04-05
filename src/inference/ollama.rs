@@ -79,12 +79,12 @@ pub(super) fn build_user_prompt(ctx: &CommitContext<'_>) -> String {
     )
 }
 
-/// Calls Ollama /api/chat to generate a commit message subject line.
-/// Returns `None` on any error (timeout, network, malformed response, empty content).
-/// Logs warnings for all failures; never panics.
-pub async fn generate(
+/// Internal: calls Ollama /api/chat with a pre-built prompt string.
+/// This function is `'static`-safe and can be called from tokio::spawn tasks
+/// (unlike `generate`, which takes `CommitContext<'_>` with borrowed references).
+pub async fn generate_with_model_and_prompt(
     config: &InferenceConfig,
-    ctx: &CommitContext<'_>,
+    user_prompt: &str,
     model: &str,
 ) -> Option<String> {
     let client = reqwest::Client::builder()
@@ -93,8 +93,6 @@ pub async fn generate(
         .ok()?;
 
     let system_prompt = "You are a precise software commit message author. Write a single subject line (max 72 characters) describing what changed. Use conventional commit format (feat:, fix:, refactor:, chore:) when it fits. Output ONLY the subject line — no body, no explanation.";
-
-    let user_prompt = build_user_prompt(ctx);
 
     let request = ChatRequest {
         model,
@@ -106,7 +104,7 @@ pub async fn generate(
             },
             Message {
                 role: "user",
-                content: user_prompt,
+                content: user_prompt.to_string(),
             },
         ],
     };
@@ -158,6 +156,29 @@ pub async fn generate(
     }
 
     Some(subject)
+}
+
+/// Calls Ollama /api/chat with a specific model to generate a commit message subject line.
+/// Used by the consensus module to fan out across multiple models in parallel.
+/// Returns `None` on any error (timeout, network, malformed response, empty content).
+pub async fn generate_with_model(
+    config: &InferenceConfig,
+    ctx: &CommitContext<'_>,
+    model: &str,
+) -> Option<String> {
+    let user_prompt = build_user_prompt(ctx);
+    generate_with_model_and_prompt(config, &user_prompt, model).await
+}
+
+/// Calls Ollama /api/chat to generate a commit message subject line.
+/// Returns `None` on any error (timeout, network, malformed response, empty content).
+/// Logs warnings for all failures; never panics.
+pub async fn generate(
+    config: &InferenceConfig,
+    ctx: &CommitContext<'_>,
+    model: &str,
+) -> Option<String> {
+    generate_with_model(config, ctx, model).await
 }
 
 #[cfg(test)]

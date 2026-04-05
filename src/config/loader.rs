@@ -99,6 +99,16 @@ pub struct StagingConfig {
     pub exclude: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ValidationMode {
+    /// Single provider call (Anthropic → OpenAI → Ollama). Lowest latency.
+    #[default]
+    Fast,
+    /// Parallel multi-model Ollama calls with semantic cross-comparison.
+    Consensus,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct InferenceConfig {
     #[serde(default)]
@@ -111,6 +121,14 @@ pub struct InferenceConfig {
     pub timeout_secs: u64,
     #[serde(default = "default_ollama_base_url")]
     pub ollama_base_url: String,
+    #[serde(default)]
+    pub validation_mode: ValidationMode,
+    #[serde(default = "default_consensus_models")]
+    pub consensus_models: Vec<String>,
+    #[serde(default = "default_consensus_threshold")]
+    pub consensus_threshold: f64,
+    #[serde(default = "default_consensus_min_agreement")]
+    pub consensus_min_agreement: usize,
 }
 
 fn default_inference_provider() -> String {
@@ -129,6 +147,18 @@ fn default_ollama_base_url() -> String {
     "http://localhost:11434".to_string()
 }
 
+fn default_consensus_models() -> Vec<String> {
+    vec!["llama3.2".to_string()]
+}
+
+fn default_consensus_threshold() -> f64 {
+    0.6
+}
+
+fn default_consensus_min_agreement() -> usize {
+    2
+}
+
 impl Default for InferenceConfig {
     fn default() -> Self {
         Self {
@@ -137,6 +167,10 @@ impl Default for InferenceConfig {
             model: default_inference_model(),
             timeout_secs: default_inference_timeout_secs(),
             ollama_base_url: default_ollama_base_url(),
+            validation_mode: ValidationMode::default(),
+            consensus_models: default_consensus_models(),
+            consensus_threshold: default_consensus_threshold(),
+            consensus_min_agreement: default_consensus_min_agreement(),
         }
     }
 }
