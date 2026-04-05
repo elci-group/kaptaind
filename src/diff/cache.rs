@@ -71,6 +71,7 @@ impl AstCache {
         Some(AstRepresentation {
             symbols,
             structure_hash: entry.structure_hash,
+            ..Default::default()
         })
     }
 
@@ -141,6 +142,7 @@ mod tests {
                 kind: "function".to_string(),
             }],
             structure_hash: 42,
+            ..Default::default()
         };
         cache.put("src/lib.rs", "abc123", &ast);
 
@@ -158,6 +160,7 @@ mod tests {
         let ast = AstRepresentation {
             symbols: vec![],
             structure_hash: 0,
+            ..Default::default()
         };
         cache.put("src/lib.rs", "abc123", &ast);
         assert!(cache.get("src/lib.rs", "def456").is_none());
@@ -181,6 +184,7 @@ mod tests {
                 kind: "function".to_string(),
             }],
             structure_hash: 99,
+            ..Default::default()
         };
         cache.put("src/lib.rs", "hash1", &ast);
         cache.save(dir.path());

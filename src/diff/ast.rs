@@ -1,7 +1,9 @@
 use crate::cluster::engine::Cluster;
 use crate::diff::cache::{self, AstCache};
-use crate::watcher::FsEventKind;
+use crate::diff::lang::adapter::FileParseMetadata;
 use crate::diff::lang::{normalize, AdapterRegistry};
+use crate::diff::version::{detect_all, VersionCache};
+use crate::watcher::FsEventKind;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -14,6 +16,8 @@ pub struct ApiAnalysis {
     pub added: bool,
     /// Number of files served from cache (skipped re-parsing).
     pub cache_hits: usize,
+    /// Per-file LV-SCL parse metadata.
+    pub parse_metadata: Vec<FileParseMetadata>,
 }
 
 pub fn api_score(cluster: &Cluster, repo_root: &Path) -> ApiAnalysis {
@@ -23,15 +27,26 @@ pub fn api_score(cluster: &Cluster, repo_root: &Path) -> ApiAnalysis {
     result
 }
 
+fn load_versions(repo_root: &Path) -> std::collections::HashMap<crate::diff::lang::adapter::Language, crate::diff::version::detector::LanguageVersion> {
+    let mut version_cache = VersionCache::load(repo_root);
+    let versions = detect_all(&mut version_cache, repo_root);
+    version_cache.save(repo_root);
+    versions
+}
+
 pub fn api_score_with_cache(cluster: &Cluster, repo_root: &Path, ast_cache: &mut AstCache) -> ApiAnalysis {
     let mut touches = 0_usize;
     let mut exported_signatures = HashSet::new();
     let mut api_breaking = false;
     let mut api_added = false;
     let mut cache_hits = 0_usize;
+    let mut parse_metadata: Vec<FileParseMetadata> = Vec::new();
 
     let registry = AdapterRegistry::default_registry();
     let mut max_score = 0.0_f32;
+
+    // Detect language versions once per analysis run
+    let lang_versions = load_versions(repo_root);
 
     for event in &cluster.events {
         for path in &event.paths {
@@ -44,18 +59,38 @@ pub fn api_score_with_cache(cluster: &Cluster, repo_root: &Path, ast_cache: &mut
                 let relative_str = relative.to_string_lossy().to_string();
                 let file_hash = cache::hash_file(&resolved);
 
+                // Resolve version string for this language
+                let version_str = lang_versions
+                    .get(&adapter.language())
+                    .map(|lv| lv.version.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+
                 let ast = if let Some(ref h) = file_hash {
                     if let Some(cached) = ast_cache.get(&relative_str, h) {
                         cache_hits += 1;
                         cached
                     } else {
-                        let parsed = adapter.parse_ast(&resolved).unwrap_or_default();
+                        let parsed = adapter
+                            .parse_ast_versioned(&resolved, &version_str)
+                            .unwrap_or_default();
                         ast_cache.put(&relative_str, h, &parsed);
                         parsed
                     }
                 } else {
-                    adapter.parse_ast(&resolved).unwrap_or_default()
+                    adapter
+                        .parse_ast_versioned(&resolved, &version_str)
+                        .unwrap_or_default()
                 };
+
+                // Record LV-SCL metadata for this file
+                parse_metadata.push(FileParseMetadata {
+                    file: relative_str.clone(),
+                    lang: adapter.name().to_string(),
+                    version: version_str,
+                    parser_used: format!("{:?}", ast.parser_kind),
+                    fallback_used: ast.fallback_used,
+                });
 
                 let api_surface = adapter.extract_api(&ast);
                 let signatures: HashSet<String> = api_surface.public_symbols.into_iter().map(|s| s.name).collect();
@@ -99,6 +134,16 @@ pub fn api_score_with_cache(cluster: &Cluster, repo_root: &Path, ast_cache: &mut
                     continue;
                 }
 
+                // Record fallback metadata
+                let relative = path.strip_prefix(repo_root).unwrap_or(path);
+                parse_metadata.push(FileParseMetadata {
+                    file: relative.to_string_lossy().to_string(),
+                    lang: "unknown".to_string(),
+                    version: "unknown".to_string(),
+                    parser_used: "FallbackLineScanner".to_string(),
+                    fallback_used: true,
+                });
+
                 touches += 1;
                 exported_signatures.extend(signatures.clone());
                 match event.kind {
@@ -110,7 +155,7 @@ pub fn api_score_with_cache(cluster: &Cluster, repo_root: &Path, ast_cache: &mut
                     }
                     FsEventKind::Modify | FsEventKind::Other => {}
                 }
-                
+
                 let local_touch_score = 0.25_f32;
                 let local_sig_score = (signatures.len() as f32 / 8.0).clamp(0.0, 1.0);
                 let local_score: f32 = (0.55 * local_touch_score + 0.45 * local_sig_score).clamp(0.0, 1.0);
@@ -139,6 +184,7 @@ pub fn api_score_with_cache(cluster: &Cluster, repo_root: &Path, ast_cache: &mut
         breaking: api_breaking,
         added: api_added,
         cache_hits,
+        parse_metadata,
     }
 }
 

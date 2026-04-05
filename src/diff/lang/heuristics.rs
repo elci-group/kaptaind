@@ -1,9 +1,10 @@
-use super::adapter::{ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, Symbol};
+use super::adapter::{ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, ParserKind, Symbol};
+use crate::diff::version::detector::{parse_go_semver, parse_python_semver, parse_ts_semver};
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
-use std::path::{Path, PathBuf};
 use std::fs::File;
+use std::hash::{Hash, Hasher};
 use std::io::{BufRead, BufReader};
+use std::path::{Path, PathBuf};
 
 const MAX_PARSE_SIZE_BYTES: u64 = 5 * 1024 * 1024; // 5MB
 
@@ -257,7 +258,7 @@ impl LanguageAdapter for RustAdapter {
         syn::visit::Visit::visit_file(&mut visitor, &syntax);
 
         let hash = calculate_hash(&visitor.symbols);
-        Ok(AstRepresentation { symbols: visitor.symbols, structure_hash: hash })
+        Ok(AstRepresentation { symbols: visitor.symbols, structure_hash: hash, ..Default::default() })
     }
     fn extract_api(&self, ast: &AstRepresentation) -> ApiSurface {
         ApiSurface { public_symbols: ast.symbols.clone(), hash: ast.structure_hash }
@@ -287,34 +288,13 @@ impl LanguageAdapter for TypeScriptAdapter {
         }).cloned().collect()
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
-        let mut symbols = Vec::new();
-        if let Ok(lines) = read_lines_safe(file) {
-            for line in lines {
-                let trimmed = line.trim();
-                // Exports (functions, classes, types, interfaces, consts)
-                if let Some(rest) = trimmed.strip_prefix("export ") {
-                    let kind = classify_ts_export(rest);
-                    symbols.push(Symbol { name: rest.to_string(), kind });
-                }
-                // React hooks
-                if (trimmed.starts_with("export function use") || trimmed.starts_with("export const use"))
-                    && !trimmed.contains("// ") {
-                    symbols.push(Symbol { name: trimmed.to_string(), kind: "hook".to_string() });
-                }
-                // Next.js route exports: generateMetadata, generateStaticParams, etc.
-                for marker in ["generateMetadata", "generateStaticParams", "getServerSideProps", "getStaticProps", "getStaticPaths"] {
-                    if trimmed.contains(marker) && trimmed.contains("export") {
-                        symbols.push(Symbol { name: marker.to_string(), kind: "route_export".to_string() });
-                    }
-                }
-                // Middleware export
-                if trimmed.starts_with("export function middleware") || trimmed.starts_with("export const middleware") {
-                    symbols.push(Symbol { name: "middleware".to_string(), kind: "middleware".to_string() });
-                }
-            }
-        }
-        let hash = calculate_hash(&symbols);
-        Ok(AstRepresentation { symbols, structure_hash: hash })
+        ts_parse(file, (4, 0))
+    }
+    fn parse_ast_versioned(&self, file: &Path, version: &str) -> anyhow::Result<AstRepresentation> {
+        let ver = parse_ts_semver(version);
+        let mut ast = ts_parse(file, ver)?;
+        ast.version_tag = Some(version.to_string());
+        Ok(ast)
     }
     fn extract_api(&self, ast: &AstRepresentation) -> ApiSurface {
         ApiSurface { public_symbols: ast.symbols.clone(), hash: ast.structure_hash }
@@ -325,6 +305,49 @@ impl LanguageAdapter for TypeScriptAdapter {
     fn detect_breaking_changes(&self, diff: &AstDiff) -> bool {
         !diff.removed.is_empty()
     }
+}
+
+fn ts_parse(file: &Path, ver: (u32, u32)) -> anyhow::Result<AstRepresentation> {
+    let mut symbols = Vec::new();
+    if let Ok(lines) = read_lines_safe(file) {
+        for line in lines {
+            let trimmed = line.trim();
+            // TS 3.8+: `import type` / `export type` — separate type-only re-exports
+            if ver >= (3, 8) {
+                if let Some(rest) = trimmed.strip_prefix("export type ") {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "type_export".to_string() });
+                }
+            }
+            if let Some(rest) = trimmed.strip_prefix("export ") {
+                let kind = classify_ts_export(rest);
+                symbols.push(Symbol { name: rest.to_string(), kind });
+            }
+            // React hooks
+            if (trimmed.starts_with("export function use") || trimmed.starts_with("export const use"))
+                && !trimmed.contains("// ")
+            {
+                symbols.push(Symbol { name: trimmed.to_string(), kind: "hook".to_string() });
+            }
+            // Next.js route exports
+            for marker in ["generateMetadata", "generateStaticParams", "getServerSideProps", "getStaticProps", "getStaticPaths"] {
+                if trimmed.contains(marker) && trimmed.contains("export") {
+                    symbols.push(Symbol { name: marker.to_string(), kind: "route_export".to_string() });
+                }
+            }
+            // Middleware
+            if trimmed.starts_with("export function middleware") || trimmed.starts_with("export const middleware") {
+                symbols.push(Symbol { name: "middleware".to_string(), kind: "middleware".to_string() });
+            }
+            // TS 5.0+: const type parameters on type aliases
+            if ver >= (5, 0) && trimmed.starts_with("type ") && trimmed.contains("=") {
+                if let Some(rest) = trimmed.strip_prefix("type ") {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "type_alias".to_string() });
+                }
+            }
+        }
+    }
+    let hash = calculate_hash(&symbols);
+    Ok(AstRepresentation { symbols, structure_hash: hash, ..Default::default() })
 }
 
 pub struct JavaScriptAdapter;
@@ -357,7 +380,7 @@ impl LanguageAdapter for JavaScriptAdapter {
             }
         }
         let hash = calculate_hash(&symbols);
-        Ok(AstRepresentation { symbols, structure_hash: hash })
+        Ok(AstRepresentation { symbols, structure_hash: hash, ..Default::default() })
     }
     fn extract_api(&self, ast: &AstRepresentation) -> ApiSurface {
         ApiSurface { public_symbols: ast.symbols.clone(), hash: ast.structure_hash }
@@ -379,19 +402,13 @@ impl LanguageAdapter for PythonAdapter {
         paths.iter().filter(|p| p.extension().map_or(false, |e| e == "py")).cloned().collect()
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
-        let mut symbols = Vec::new();
-        if let Ok(lines) = read_lines_safe(file) {
-            for line in lines {
-                let line = line.trim();
-                if let Some(rest) = line.strip_prefix("def ") {
-                    symbols.push(Symbol { name: rest.to_string(), kind: "function".to_string() });
-                } else if let Some(rest) = line.strip_prefix("class ") {
-                    symbols.push(Symbol { name: rest.to_string(), kind: "class".to_string() });
-                }
-            }
-        }
-        let hash = calculate_hash(&symbols);
-        Ok(AstRepresentation { symbols, structure_hash: hash })
+        python_parse(file, (3, 0))
+    }
+    fn parse_ast_versioned(&self, file: &Path, version: &str) -> anyhow::Result<AstRepresentation> {
+        let ver = parse_python_semver(version);
+        let mut ast = python_parse(file, ver)?;
+        ast.version_tag = Some(version.to_string());
+        Ok(ast)
     }
     fn extract_api(&self, ast: &AstRepresentation) -> ApiSurface {
         ApiSurface { public_symbols: ast.symbols.clone(), hash: ast.structure_hash }
@@ -404,6 +421,36 @@ impl LanguageAdapter for PythonAdapter {
     }
 }
 
+fn python_parse(file: &Path, ver: (u32, u32)) -> anyhow::Result<AstRepresentation> {
+    let mut symbols = Vec::new();
+    if let Ok(lines) = read_lines_safe(file) {
+        for line in lines {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("def ") {
+                symbols.push(Symbol { name: rest.to_string(), kind: "function".to_string() });
+            } else if let Some(rest) = line.strip_prefix("class ") {
+                symbols.push(Symbol { name: rest.to_string(), kind: "class".to_string() });
+            } else if let Some(rest) = line.strip_prefix("async def ") {
+                symbols.push(Symbol { name: rest.to_string(), kind: "async_function".to_string() });
+            }
+            // Python 3.10+: match/case structural pattern matching
+            if ver >= (3, 10) {
+                if let Some(rest) = line.strip_prefix("match ") {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "match_statement".to_string() });
+                }
+            }
+            // Python 3.12+: soft type aliases  (type X = ...)
+            if ver >= (3, 12) {
+                if let Some(rest) = line.strip_prefix("type ") {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "type_alias".to_string() });
+                }
+            }
+        }
+    }
+    let hash = calculate_hash(&symbols);
+    Ok(AstRepresentation { symbols, structure_hash: hash, ..Default::default() })
+}
+
 pub struct GoAdapter;
 
 impl LanguageAdapter for GoAdapter {
@@ -413,24 +460,13 @@ impl LanguageAdapter for GoAdapter {
         paths.iter().filter(|p| p.extension().map_or(false, |e| e == "go")).cloned().collect()
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
-        let mut symbols = Vec::new();
-        if let Ok(lines) = read_lines_safe(file) {
-            for line in lines {
-                let line = line.trim();
-                if let Some(rest) = line.strip_prefix("func ") {
-                    // simple heur: if first letter is uppercase, it's exported
-                    if rest.chars().next().unwrap_or('a').is_uppercase() {
-                        symbols.push(Symbol { name: rest.to_string(), kind: "function".to_string() });
-                    }
-                } else if let Some(rest) = line.strip_prefix("type ") {
-                    if rest.chars().next().unwrap_or('a').is_uppercase() {
-                        symbols.push(Symbol { name: rest.to_string(), kind: "type".to_string() });
-                    }
-                }
-            }
-        }
-        let hash = calculate_hash(&symbols);
-        Ok(AstRepresentation { symbols, structure_hash: hash })
+        go_parse(file, (1, 0))
+    }
+    fn parse_ast_versioned(&self, file: &Path, version: &str) -> anyhow::Result<AstRepresentation> {
+        let ver = parse_go_semver(version);
+        let mut ast = go_parse(file, ver)?;
+        ast.version_tag = Some(version.to_string());
+        Ok(ast)
     }
     fn extract_api(&self, ast: &AstRepresentation) -> ApiSurface {
         ApiSurface { public_symbols: ast.symbols.clone(), hash: ast.structure_hash }
@@ -441,6 +477,43 @@ impl LanguageAdapter for GoAdapter {
     fn detect_breaking_changes(&self, diff: &AstDiff) -> bool {
         !diff.removed.is_empty()
     }
+}
+
+fn go_parse(file: &Path, ver: (u32, u32)) -> anyhow::Result<AstRepresentation> {
+    let mut symbols = Vec::new();
+    if let Ok(lines) = read_lines_safe(file) {
+        for line in lines {
+            let line = line.trim();
+            if let Some(rest) = line.strip_prefix("func ") {
+                // Exported if first letter is uppercase
+                let name_start = rest.chars().next().unwrap_or('a');
+                if name_start.is_uppercase() {
+                    symbols.push(Symbol { name: rest.to_string(), kind: "function".to_string() });
+                }
+                // Go 1.18+: generic functions look like `func Map[K comparable, V any](`
+                if ver >= (1, 18) && rest.contains('[') {
+                    let name = rest.split('[').next().unwrap_or("").trim();
+                    if name.chars().next().unwrap_or('a').is_uppercase() {
+                        symbols.push(Symbol {
+                            name: format!("{name}[...]"),
+                            kind: "generic_function".to_string(),
+                        });
+                    }
+                }
+            } else if let Some(rest) = line.strip_prefix("type ") {
+                if rest.chars().next().unwrap_or('a').is_uppercase() {
+                    let kind = if ver >= (1, 18) && rest.contains('[') {
+                        "generic_type"
+                    } else {
+                        "type"
+                    };
+                    symbols.push(Symbol { name: rest.to_string(), kind: kind.to_string() });
+                }
+            }
+        }
+    }
+    let hash = calculate_hash(&symbols);
+    Ok(AstRepresentation { symbols, structure_hash: hash, ..Default::default() })
 }
 
 pub struct SwiftAdapter;
@@ -484,7 +557,7 @@ impl LanguageAdapter for SwiftAdapter {
             }
         }
         let hash = calculate_hash(&symbols);
-        Ok(AstRepresentation { symbols, structure_hash: hash })
+        Ok(AstRepresentation { symbols, structure_hash: hash, ..Default::default() })
     }
     fn extract_api(&self, ast: &AstRepresentation) -> ApiSurface {
         ApiSurface { public_symbols: ast.symbols.clone(), hash: ast.structure_hash }
@@ -553,7 +626,7 @@ impl LanguageAdapter for KotlinAdapter {
             }
         }
         let hash = calculate_hash(&symbols);
-        Ok(AstRepresentation { symbols, structure_hash: hash })
+        Ok(AstRepresentation { symbols, structure_hash: hash, ..Default::default() })
     }
     fn extract_api(&self, ast: &AstRepresentation) -> ApiSurface {
         ApiSurface { public_symbols: ast.symbols.clone(), hash: ast.structure_hash }
@@ -602,7 +675,7 @@ impl LanguageAdapter for VueAdapter {
             }
         }
         let hash = calculate_hash(&symbols);
-        Ok(AstRepresentation { symbols, structure_hash: hash })
+        Ok(AstRepresentation { symbols, structure_hash: hash, ..Default::default() })
     }
     fn extract_api(&self, ast: &AstRepresentation) -> ApiSurface {
         ApiSurface { public_symbols: ast.symbols.clone(), hash: ast.structure_hash }
@@ -625,36 +698,19 @@ impl LanguageAdapter for SvelteAdapter {
         paths.iter().filter(|p| p.extension().map_or(false, |e| e == "svelte")).cloned().collect()
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
-        let mut symbols = Vec::new();
-        if let Ok(lines) = read_lines_safe(file) {
-            let mut in_script = false;
-            for line in lines {
-                let trimmed = line.trim();
-                if trimmed.starts_with("<script") {
-                    in_script = true;
-                    continue;
-                }
-                if trimmed.starts_with("</script") {
-                    in_script = false;
-                    continue;
-                }
-                if !in_script { continue; }
-                // Svelte props: `export let name`
-                if let Some(rest) = trimmed.strip_prefix("export let ") {
-                    symbols.push(Symbol { name: rest.to_string(), kind: "prop".to_string() });
-                } else if let Some(rest) = trimmed.strip_prefix("export const ") {
-                    symbols.push(Symbol { name: rest.to_string(), kind: "export".to_string() });
-                } else if let Some(rest) = trimmed.strip_prefix("export function ") {
-                    symbols.push(Symbol { name: rest.to_string(), kind: "export".to_string() });
-                }
-                // Svelte 5 runes: $props(), $state(), $derived()
-                if trimmed.contains("$props(") {
-                    symbols.push(Symbol { name: trimmed.to_string(), kind: "rune_props".to_string() });
-                }
-            }
-        }
-        let hash = calculate_hash(&symbols);
-        Ok(AstRepresentation { symbols, structure_hash: hash })
+        svelte_parse(file, false)
+    }
+    fn parse_ast_versioned(&self, file: &Path, version: &str) -> anyhow::Result<AstRepresentation> {
+        // Svelte 5+ uses rune syntax; earlier versions use the options API
+        let is_svelte5 = version
+            .split('.')
+            .next()
+            .and_then(|v| v.parse::<u32>().ok())
+            .map(|major| major >= 5)
+            .unwrap_or(false);
+        let mut ast = svelte_parse(file, is_svelte5)?;
+        ast.version_tag = Some(version.to_string());
+        Ok(ast)
     }
     fn extract_api(&self, ast: &AstRepresentation) -> ApiSurface {
         ApiSurface { public_symbols: ast.symbols.clone(), hash: ast.structure_hash }
@@ -665,6 +721,48 @@ impl LanguageAdapter for SvelteAdapter {
     fn detect_breaking_changes(&self, diff: &AstDiff) -> bool {
         diff.removed.iter().any(|s| s.kind == "prop" || s.kind == "rune_props")
     }
+}
+
+fn svelte_parse(file: &Path, is_svelte5: bool) -> anyhow::Result<AstRepresentation> {
+    let mut symbols = Vec::new();
+    if let Ok(lines) = read_lines_safe(file) {
+        let mut in_script = false;
+        for line in lines {
+            let trimmed = line.trim();
+            if trimmed.starts_with("<script") {
+                in_script = true;
+                continue;
+            }
+            if trimmed.starts_with("</script") {
+                in_script = false;
+                continue;
+            }
+            if !in_script {
+                continue;
+            }
+            if let Some(rest) = trimmed.strip_prefix("export let ") {
+                symbols.push(Symbol { name: rest.to_string(), kind: "prop".to_string() });
+            } else if let Some(rest) = trimmed.strip_prefix("export const ") {
+                symbols.push(Symbol { name: rest.to_string(), kind: "export".to_string() });
+            } else if let Some(rest) = trimmed.strip_prefix("export function ") {
+                symbols.push(Symbol { name: rest.to_string(), kind: "export".to_string() });
+            }
+            // Svelte 5 rune API ($props, $state, $derived, $effect)
+            if is_svelte5 || trimmed.contains("$props(") {
+                if trimmed.contains("$props(") {
+                    symbols.push(Symbol { name: trimmed.to_string(), kind: "rune_props".to_string() });
+                }
+                if trimmed.contains("$state(") {
+                    symbols.push(Symbol { name: trimmed.to_string(), kind: "rune_state".to_string() });
+                }
+                if trimmed.contains("$derived(") {
+                    symbols.push(Symbol { name: trimmed.to_string(), kind: "rune_derived".to_string() });
+                }
+            }
+        }
+    }
+    let hash = calculate_hash(&symbols);
+    Ok(AstRepresentation { symbols, structure_hash: hash, ..Default::default() })
 }
 
 pub struct AstroAdapter;
@@ -697,7 +795,7 @@ impl LanguageAdapter for AstroAdapter {
             }
         }
         let hash = calculate_hash(&symbols);
-        Ok(AstRepresentation { symbols, structure_hash: hash })
+        Ok(AstRepresentation { symbols, structure_hash: hash, ..Default::default() })
     }
     fn extract_api(&self, ast: &AstRepresentation) -> ApiSurface {
         ApiSurface { public_symbols: ast.symbols.clone(), hash: ast.structure_hash }
@@ -749,7 +847,7 @@ impl LanguageAdapter for ScssAdapter {
             }
         }
         let hash = calculate_hash(&symbols);
-        Ok(AstRepresentation { symbols, structure_hash: hash })
+        Ok(AstRepresentation { symbols, structure_hash: hash, ..Default::default() })
     }
     fn extract_api(&self, ast: &AstRepresentation) -> ApiSurface {
         ApiSurface { public_symbols: ast.symbols.clone(), hash: ast.structure_hash }
@@ -787,7 +885,7 @@ impl LanguageAdapter for HtmlCssAdapter {
             }
         }
         let hash = calculate_hash(&symbols);
-        Ok(AstRepresentation { symbols, structure_hash: hash })
+        Ok(AstRepresentation { symbols, structure_hash: hash, ..Default::default() })
     }
     fn extract_api(&self, ast: &AstRepresentation) -> ApiSurface {
         ApiSurface { public_symbols: ast.symbols.clone(), hash: ast.structure_hash }

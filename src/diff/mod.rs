@@ -4,8 +4,10 @@ pub mod bundle;
 pub mod cache;
 pub mod lang;
 pub mod text;
+pub mod version;
 
 use crate::cluster::engine::Cluster;
+use crate::diff::lang::adapter::FileParseMetadata;
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::Path;
@@ -27,6 +29,9 @@ pub struct DiffAnalysis {
     pub runtime_paths: usize,
     #[serde(default)]
     pub bundle: f32,
+    /// Per-file parse metadata emitted by the LV-SCL layer.
+    #[serde(default)]
+    pub parse_metadata: Vec<FileParseMetadata>,
 }
 
 pub fn analyze(cluster: &Cluster, repo_root: &Path) -> DiffAnalysis {
@@ -50,6 +55,7 @@ pub fn analyze(cluster: &Cluster, repo_root: &Path) -> DiffAnalysis {
         dependency_edges: deps.edges,
         runtime_paths: runtime.paths,
         bundle: 0.0, // Bundle score is calculated after diff analysis
+        parse_metadata: api.parse_metadata,
     }
 }
 
