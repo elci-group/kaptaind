@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { resolveRepoPath } from "@/lib/kaptaind/reader";
 import { getAnalysisArtifact } from "@/lib/kaptaind/analysis";
 import { listAocManifests } from "@/lib/kaptaind/aoc";
-import { ollamaChat } from "@/lib/ollama";
+import { inferenceChat } from "@/lib/inference";
 import type { AnalysisArtifact, AocManifest } from "@/types/kaptaind";
 
 export async function POST(req: Request) {

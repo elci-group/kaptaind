@@ -3,7 +3,7 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 import { resolveRepoPath } from "@/lib/kaptaind/reader";
 import { getAnalysisArtifact } from "@/lib/kaptaind/analysis";
-import { ollamaChat } from "@/lib/ollama";
+import { inferenceChat } from "@/lib/inference";
 import type { AnalysisArtifact } from "@/types/kaptaind";
 
 export async function POST(req: Request) {
@@ -54,7 +54,7 @@ Be concrete and brief, referencing the metrics.`;
 
   const systemPrompt = `You are a semantic versioning advisor. Explain concisely why a change received a specific version bump level.`;
 
-  const response = await ollamaChat([
+  const response = await inferenceChat([
     { role: "system", content: systemPrompt },
     { role: "user", content: userPrompt },
   ]);
