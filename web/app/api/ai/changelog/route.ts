@@ -6,7 +6,6 @@ import { getAnalysisArtifact } from "@/lib/kaptaind/analysis";
 import { listAocManifests } from "@/lib/kaptaind/aoc";
 import { inferenceChat } from "@/lib/inference";
 import type { AnalysisArtifact, AocManifest } from "@/types/kaptaind";
-import type { AnalysisArtifact, AocManifest } from "@/types/kaptaind";
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
