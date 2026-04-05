@@ -6,6 +6,7 @@ import { getAnalysisArtifact } from "@/lib/kaptaind/analysis";
 import { listAocManifests } from "@/lib/kaptaind/aoc";
 import { inferenceChat } from "@/lib/inference";
 import type { AnalysisArtifact, AocManifest } from "@/types/kaptaind";
+import type { AnalysisArtifact, AocManifest } from "@/types/kaptaind";
 
 export async function POST(req: Request) {
   const session = await getServerSession(authOptions);
@@ -73,7 +74,7 @@ Write a "## What's Changed" section with bullet points grouped by bump type. Kee
 
   const systemPrompt = `You are a release notes author. Summarize software commits into a clean markdown changelog entry.`;
 
-  const response = await ollamaChat([
+  const response = await inferenceChat([
     { role: "system", content: systemPrompt },
     { role: "user", content: userPrompt },
   ]);
