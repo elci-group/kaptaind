@@ -342,6 +342,71 @@ kaptaind-cli aoc intercept --model claude-3-5-sonnet --intent "refactor auth" --
 
 This runs `npm test`, captures the output, and stores it alongside the AoC trace. Useful for audit trails in regulated environments.
 
+## Multi-Provider Inference Routing
+
+Kaptaind and its web dashboard intelligently route inference requests to the best available LLM provider. No manual configuration needed—the system auto-detects from environment variables.
+
+### Quick Setup
+
+Set environment variables for any provider you have API access to:
+
+```bash
+# Anthropic (recommended for best performance)
+export ANTHROPIC_API_KEY="sk-ant-..."
+
+# Or OpenAI
+export OPENAI_API_KEY="sk-..."
+
+# Or run Ollama locally (default fallback, always available)
+ollama run llama3.2
+```
+
+### Provider Priority
+
+1. **Anthropic** (if `ANTHROPIC_API_KEY` set) → Claude Haiku
+2. **OpenAI** (if `OPENAI_API_KEY` set) → GPT-4o mini
+3. **Ollama** (local fallback) → Llama 3.2
+
+### Configuration
+
+In `kaptaind.toml`:
+
+```toml
+[inference]
+enabled = true              # Disable to skip AI-generated commits
+provider = "auto"           # Auto-detect from env vars
+model = "auto"              # Auto-select best model for provider
+timeout_secs = 15           # HTTP timeout
+ollama_base_url = "http://localhost:11434"  # When using Ollama
+```
+
+### Examples
+
+**Scenario 1: Both Anthropic & OpenAI keys set**
+→ Anthropic wins (best quality). Set `provider = "openai"` in config to override.
+
+**Scenario 2: Only OpenAI key set**
+→ Uses GPT-4o mini automatically.
+
+**Scenario 3: No cloud keys, Ollama running locally**
+→ Falls back to Ollama silently (zero latency).
+
+**Scenario 4: No keys, no Ollama, inference enabled**
+→ Falls back to deterministic commit messages (no AI).
+
+### Web Dashboard Inference
+
+The web dashboard (`/dashboard/ai-commits`, `/dashboard/bump-reasoning`, `/dashboard/changelog`) uses the same multi-provider routing:
+
+```typescript
+// web/.env.local (optional — auto-detected)
+ANTHROPIC_API_KEY=sk-ant-...
+OPENAI_API_KEY=sk-...
+OLLAMA_BASE_URL=http://localhost:11434
+```
+
+See the **[Multi-Provider Inference Routing Tutorial](./tutorial_inference_routing.md)** for advanced configuration and troubleshooting.
+
 ## Migration Guide: Existing Projects
 
 If your repo already has a version history (even irregular), you can safely adopt kaptaind:
