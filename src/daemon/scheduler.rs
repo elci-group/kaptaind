@@ -143,8 +143,8 @@ fn write_trace_if_active(
                 agent_event,
             };
 
-            if let Err(err) = tracer::write_trace(repo_path, &trace) {
-                tracing::warn!(error = %err, "failed to write AoC trace");
+            if let Err(err) = crate::aoc::db::save_trace(repo_path, &trace) {
+                tracing::warn!(error = %err, "failed to write AoC trace to database");
             }
         }
         Ok(None) => {

@@ -191,6 +191,34 @@ enum Commands {
     /// Reads ~/.kaptaind/projects.txt and launches a kaptaind daemon for each initialized project.
     /// Used internally by the auto-start system.
     Autostart,
+
+    /// 🔍 View and manage traces
+    #[command(subcommand)]
+    Trace(TraceCommand),
+}
+
+#[derive(Subcommand)]
+enum TraceCommand {
+    /// 📜 List traces for the current or specified AoC session
+    Log {
+        /// Optional AoC ID to filter by (defaults to active session)
+        #[arg(short, long)]
+        aoc_id: Option<String>,
+        /// Number of traces to display (default: 10)
+        #[arg(short, long, default_value_t = 10)]
+        limit: usize,
+    },
+    /// 📊 Show detailed breakdown of a specific trace
+    Show {
+        /// Cluster/Trace ID to display
+        cluster_id: String,
+    },
+    /// 🧹 Prune traces older than N days
+    Prune {
+        /// Retention period in days (default: 30)
+        #[arg(short, long, default_value_t = 30)]
+        days: i64,
+    },
 }
 
 #[derive(Subcommand)]
@@ -350,6 +378,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Autostart => {
             handle_autostart()?;
+        }
+        Commands::Trace(trace_cmd) => {
+            handle_trace(&config, trace_cmd)?;
         }
     }
 
@@ -1519,5 +1550,130 @@ fn handle_autostart() -> anyhow::Result<()> {
         }
     }
     
+    Ok(())
+}
+
+fn handle_trace(config: &Config, cmd: &TraceCommand) -> anyhow::Result<()> {
+    match cmd {
+        TraceCommand::Log { aoc_id, limit } => {
+            handle_trace_log(config, aoc_id.as_deref(), *limit)?;
+        }
+        TraceCommand::Show { cluster_id } => {
+            handle_trace_show(config, cluster_id)?;
+        }
+        TraceCommand::Prune { days } => {
+            handle_trace_prune(config, *days)?;
+        }
+    }
+    Ok(())
+}
+
+fn handle_trace_log(config: &Config, aoc_id: Option<&str>, limit: usize) -> anyhow::Result<()> {
+    let target_aoc_id = match aoc_id {
+        Some(id) => id.to_string(),
+        None => {
+            let session = kaptaind::aoc::session::load_active(&config.repo_path)?
+                .ok_or_else(|| anyhow::anyhow!("No active AoC session found. Provide --aoc-id or start a session."))?;
+            session.id
+        }
+    };
+
+    let traces = kaptaind::aoc::db::get_traces_for_aoc(&config.repo_path, &target_aoc_id)?;
+    
+    println!("{} {} {}", "📜".cyan(), "Traces for AoC:".bold(), target_aoc_id.magenta());
+    println!("{}", "-".repeat(80).cyan());
+    
+    #[derive(Tabled)]
+    struct TraceRow {
+        #[tabled(rename = "ID")]
+        id: String,
+        #[tabled(rename = "Time")]
+        time: String,
+        #[tabled(rename = "Duration")]
+        duration: String,
+        #[tabled(rename = "Result")]
+        result: String,
+    }
+
+    let rows: Vec<TraceRow> = traces.iter().rev().take(limit).map(|t| {
+        let result = match &t.result {
+            kaptaind::aoc::TraceResult::Committed { bump, version } => format!("✅ {} ({})", bump, version).green().to_string(),
+            kaptaind::aoc::TraceResult::Skipped { reason } => format!("⏭️  Skipped ({})", reason).yellow().to_string(),
+        };
+
+        TraceRow {
+            id: t.cluster_id[..8].to_string(),
+            time: t.started_at.format("%H:%M:%S").to_string(),
+            duration: format!("{}ms", t.duration_ms),
+            result,
+        }
+    }).collect();
+
+    if rows.is_empty() {
+        println!("No traces found for this session.");
+    } else {
+        let mut table = Table::new(rows);
+        table.with(Style::modern());
+        println!("{}", table);
+    }
+
+    Ok(())
+}
+
+fn handle_trace_show(config: &Config, cluster_id: &str) -> anyhow::Result<()> {
+    let db_path = config.repo_path.join(".kaptaind").join("traces.db");
+    let conn = rusqlite::Connection::open(db_path)?;
+    let mut stmt = conn.prepare("SELECT data FROM traces WHERE cluster_id = ?1 OR cluster_id LIKE ?2")?;
+    
+    let pattern = format!("{}%", cluster_id);
+    let mut rows = stmt.query([cluster_id, &pattern])?;
+    
+    if let Some(row) = rows.next()? {
+        let data: String = row.get(0)?;
+        let trace: kaptaind::aoc::TraceRecord = serde_json::from_str(&data)?;
+        
+        println!("{} {} {}", "🔬".cyan(), "Trace:".bold(), trace.cluster_id.magenta());
+        println!("{} {}", "AoC ID:".bold(), trace.aoc_id);
+        println!("{} {}", "Started:".bold(), trace.started_at);
+        println!("{} {}ms", "Duration:".bold(), trace.duration_ms);
+        println!("{} {}", "Test:".bold(), trace.test.outcome);
+        
+        match &trace.result {
+            kaptaind::aoc::TraceResult::Committed { bump, version } => {
+                println!("{} {} ({})", "Result:".bold(), bump.green(), version.blue());
+            }
+            kaptaind::aoc::TraceResult::Skipped { reason } => {
+                println!("{} {}", "Result:".bold(), format!("Skipped ({})", reason).yellow());
+            }
+        }
+
+        println!("\n{}", "📂 Touched Paths:".bold());
+        for event in &trace.events {
+            for path in &event.paths {
+                println!("  {} {}", match event.kind.as_str() {
+                    "create" => "+".green(),
+                    "modify" => "M".yellow(),
+                    "remove" => "-".red(),
+                    _ => "?".blue(),
+                }, path);
+            }
+        }
+
+        if let Some(agent) = &trace.agent_event {
+            println!("\n{}", "🤖 Agent Event:".bold());
+            println!("  Model:   {}", agent.model.as_deref().unwrap_or("unknown"));
+            println!("  Latency: {}ms", agent.latency_ms);
+            println!("  Tools:   {}", agent.tools.join(", "));
+        }
+    } else {
+        anyhow::bail!("Trace not found: {}", cluster_id);
+    }
+
+    Ok(())
+}
+
+fn handle_trace_prune(config: &Config, days: i64) -> anyhow::Result<()> {
+    let deleted = kaptaind::aoc::db::prune_old_traces(&config.repo_path, days)?;
+    println!("{} {} traces older than {} days.", "🧹".green(), deleted, days);
     Ok(())
 }

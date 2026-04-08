@@ -4,6 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 pub async fn start(config: Config) -> anyhow::Result<()> {
+    // Initialize trace database
+    crate::aoc::db::init_db(&config.repo_path)?;
+
     let (tx, rx) = tokio::sync::mpsc::channel(1000);
     let shutdown = Arc::new(AtomicBool::new(false));
 

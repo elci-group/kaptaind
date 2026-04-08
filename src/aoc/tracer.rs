@@ -74,29 +74,7 @@ pub fn write_trace(repo_path: &Path, record: &TraceRecord) -> anyhow::Result<()>
 
 /// Read all trace records for a specific AoC.
 pub fn read_traces_for_aoc(repo_path: &Path, aoc_id: &str) -> anyhow::Result<Vec<TraceRecord>> {
-    let traces_dir = repo_path.join(".kaptaind").join("traces");
-    if !traces_dir.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut traces = Vec::new();
-    for entry in fs::read_dir(&traces_dir)? {
-        let entry = entry?;
-        let path = entry.path();
-        if path.extension().map(|ext| ext == "json").unwrap_or(false) {
-            if let Ok(content) = fs::read_to_string(&path) {
-                if let Ok(record) = serde_json::from_str::<TraceRecord>(&content) {
-                    if record.aoc_id == aoc_id {
-                        traces.push(record);
-                    }
-                }
-            }
-        }
-    }
-
-    // Sort by started_at ascending (chronological order)
-    traces.sort_by(|a, b| a.started_at.cmp(&b.started_at));
-    Ok(traces)
+    crate::aoc::db::get_traces_for_aoc(repo_path, aoc_id)
 }
 
 #[cfg(test)]
