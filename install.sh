@@ -328,12 +328,9 @@ Documentation=https://github.com/elci-group/kaptaind
 After=network.target
 
 [Service]
-Type=simple
-ExecStart=$INSTALL_DIR/kaptaind
-ExecReload=/bin/kill -HUP \$MAINPID
-KillMode=process
-Restart=on-failure
-RestartSec=10
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=$INSTALL_DIR/kaptaind-cli autostart
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=kaptaind
@@ -364,7 +361,8 @@ setup_autostart_launchd() {
   <string>com.elcigroup.kaptaind</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$INSTALL_DIR/kaptaind</string>
+    <string>$INSTALL_DIR/kaptaind-cli</string>
+    <string>autostart</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -388,7 +386,7 @@ EOF
 }
 
 setup_autostart_shell() {
-    local autostart_line="[ -z \"\$(pgrep -f 'kaptaind.*daemon')\" ] && nohup $INSTALL_DIR/kaptaind --daemon > /dev/null 2>&1 &"
+    local autostart_line="$INSTALL_DIR/kaptaind-cli autostart > /dev/null 2>&1"
 
     for rc_file in "$HOME/.bashrc" "$HOME/.zshrc"; do
         [[ ! -f "$rc_file" ]] && continue

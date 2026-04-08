@@ -16,6 +16,15 @@ pub struct TokenMetrics {
     /// Total failed release attempts.
     #[serde(default)]
     pub failed_releases: u64,
+    /// Cumulative AST cache hits across analyses.
+    #[serde(default)]
+    pub ast_cache_hits: u64,
+    /// Cumulative AST cache misses across analyses.
+    #[serde(default)]
+    pub ast_cache_misses: u64,
+    /// Latest observed entry count in the AST cache.
+    #[serde(default)]
+    pub ast_cache_entries: u64,
 }
 
 pub fn track_cost(repo_path: &Path, input_tokens: usize, output_tokens: usize) -> TokenMetrics {
@@ -35,6 +44,9 @@ pub fn track_cost(repo_path: &Path, input_tokens: usize, output_tokens: usize) -
         stability: existing.stability,
         releases: existing.releases,
         failed_releases: existing.failed_releases,
+        ast_cache_hits: existing.ast_cache_hits,
+        ast_cache_misses: existing.ast_cache_misses,
+        ast_cache_entries: existing.ast_cache_entries,
     };
 
     if let Ok(content) = serde_json::to_string_pretty(&metrics) {
@@ -57,6 +69,21 @@ pub fn update_release_metrics(repo_path: &Path, stability: f64, release_succeede
         metrics.releases += 1;
     } else {
         metrics.failed_releases += 1;
+    }
+    if let Ok(content) = serde_json::to_string_pretty(&metrics) {
+        let _ = std::fs::write(&telemetry_file, content);
+    }
+}
+
+/// Update cumulative AST cache metrics from an analysis run.
+pub fn update_cache_metrics(repo_path: &Path, hits: usize, misses: usize, entries: usize) {
+    let telemetry_file = repo_path.join(".kaptaind").join("telemetry.json");
+    let mut metrics = load(repo_path);
+    metrics.ast_cache_hits = metrics.ast_cache_hits.saturating_add(hits as u64);
+    metrics.ast_cache_misses = metrics.ast_cache_misses.saturating_add(misses as u64);
+    metrics.ast_cache_entries = entries as u64;
+    if let Some(parent) = telemetry_file.parent() {
+        let _ = std::fs::create_dir_all(parent);
     }
     if let Ok(content) = serde_json::to_string_pretty(&metrics) {
         let _ = std::fs::write(&telemetry_file, content);

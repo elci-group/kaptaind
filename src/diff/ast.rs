@@ -16,6 +16,8 @@ pub struct ApiAnalysis {
     pub added: bool,
     /// Number of files served from cache (skipped re-parsing).
     pub cache_hits: usize,
+    /// Number of files that missed cache and were parsed fresh.
+    pub cache_misses: usize,
     /// Per-file LV-SCL parse metadata.
     pub parse_metadata: Vec<FileParseMetadata>,
 }
@@ -63,6 +65,7 @@ fn api_score_inner(
     let mut api_breaking = false;
     let mut api_added = false;
     let mut cache_hits = 0_usize;
+    let mut cache_misses = 0_usize;
     let mut parse_metadata: Vec<FileParseMetadata> = Vec::new();
     let mut max_score = 0.0_f32;
 
@@ -90,6 +93,7 @@ fn api_score_inner(
                         cache_hits += 1;
                         cached
                     } else {
+                        cache_misses += 1;
                         let parsed = adapter
                             .parse_ast_versioned(&resolved, &version_str)
                             .unwrap_or_default();
@@ -97,6 +101,7 @@ fn api_score_inner(
                         parsed
                     }
                 } else {
+                    cache_misses += 1;
                     adapter
                         .parse_ast_versioned(&resolved, &version_str)
                         .unwrap_or_default()
@@ -227,6 +232,7 @@ fn api_score_inner(
         breaking: api_breaking,
         added: api_added,
         cache_hits,
+        cache_misses,
         parse_metadata,
     }
 }

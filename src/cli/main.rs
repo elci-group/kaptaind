@@ -185,6 +185,12 @@ enum Commands {
     ///
     /// Usage: kaptaind-cli disable-autostart
     DisableAutostart,
+
+    /// 🚀 Start all registered kaptaind daemons
+    ///
+    /// Reads ~/.kaptaind/projects.txt and launches a kaptaind daemon for each initialized project.
+    /// Used internally by the auto-start system.
+    Autostart,
 }
 
 #[derive(Subcommand)]
@@ -341,6 +347,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::DisableAutostart => {
             handle_disable_autostart()?;
+        }
+        Commands::Autostart => {
+            handle_autostart()?;
         }
     }
 
@@ -636,6 +645,31 @@ fn handle_init(config: &Config) -> anyhow::Result<()> {
         "Detected project type:".cyan(),
         format!("{:?}", project).bold().magenta()
     );
+
+    // Register project for autostart
+    if let Ok(home) = std::env::var("HOME") {
+        let kaptaind_dir = std::path::Path::new(&home).join(".kaptaind");
+        let _ = fs::create_dir_all(&kaptaind_dir);
+        let projects_file = kaptaind_dir.join("projects.txt");
+        
+        let path_str = root.display().to_string();
+        let mut add = true;
+        
+        if projects_file.exists() {
+            if let Ok(content) = fs::read_to_string(&projects_file) {
+                if content.lines().any(|l| l.trim() == path_str) {
+                    add = false;
+                }
+            }
+        }
+        
+        if add {
+            if let Ok(mut file) = std::fs::OpenOptions::new().create(true).append(true).open(&projects_file) {
+                use std::io::Write;
+                let _ = writeln!(file, "{}", path_str);
+            }
+        }
+    }
 
     Ok(())
 }
@@ -1282,12 +1316,9 @@ Documentation=https://github.com/elci-group/kaptaind
 After=network.target
 
 [Service]
-Type=simple
-ExecStart={}
-ExecReload=/bin/kill -HUP $MAINPID
-KillMode=process
-Restart=on-failure
-RestartSec=10
+Type=oneshot
+RemainAfterExit=yes
+ExecStart={}-cli autostart
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=kaptaind
@@ -1332,7 +1363,8 @@ WantedBy=default.target
   <string>com.elcigroup.kaptaind</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{}</string>
+    <string>{}-cli</string>
+    <string>autostart</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -1415,7 +1447,7 @@ fn handle_disable_autostart() -> anyhow::Result<()> {
 }
 
 fn setup_shell_autostart(home: &str, kaptaind_path: &str) -> anyhow::Result<()> {
-    let autostart_line = format!("# Auto-start kaptaind\nexport PATH=\"$HOME/.local/bin:$PATH\"\n[ -z \"$(pgrep -f 'kaptaind.*daemon')\" ] && nohup {} --daemon > /dev/null 2>&1 &\n", kaptaind_path);
+    let autostart_line = format!("# Auto-start kaptaind\nexport PATH=\"$HOME/.local/bin:$PATH\"\n{}-cli autostart > /dev/null 2>&1\n", kaptaind_path);
 
     for rc_file in &[".bashrc", ".zshrc"] {
         let rc_path = format!("{}/{}", home, rc_file);
@@ -1460,5 +1492,32 @@ fn remove_shell_autostart(home: &str) -> anyhow::Result<()> {
 
     println!("{} {}", "✓".green(), "Auto-start disabled (shell initialization removed)".green());
 
+    Ok(())
+}
+
+fn handle_autostart() -> anyhow::Result<()> {
+    let home = std::env::var("HOME")?;
+    let projects_file = format!("{}/.kaptaind/projects.txt", home);
+    
+    if !std::path::Path::new(&projects_file).exists() {
+        return Ok(());
+    }
+
+    let contents = std::fs::read_to_string(&projects_file)?;
+    for line in contents.lines() {
+        let path = line.trim();
+        if path.is_empty() { continue; }
+        
+        let repo_path = std::path::PathBuf::from(path);
+        if repo_path.join("kaptaind.toml").exists() {
+            println!("Starting kaptaind for {}", path);
+            std::process::Command::new("kaptaind")
+                .arg("--daemon")
+                .current_dir(repo_path)
+                .spawn()
+                .ok();
+        }
+    }
+    
     Ok(())
 }

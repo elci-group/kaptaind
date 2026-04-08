@@ -251,6 +251,12 @@ async fn process_cluster(
     if config.bundle.command.is_some() {
         diff.bundle = crate::diff::bundle::bundle_score(&config.bundle, &config.repo_path).score;
     }
+    crate::daemon::telemetry::update_cache_metrics(
+        &config.repo_path,
+        diff.ast_cache_hits,
+        diff.ast_cache_misses,
+        diff.ast_cache_entries,
+    );
     tracing::trace!(?diff, "diff analysis complete");
     apply_test_outcome(&mut diff, &test_outcome);
     let weight = crate::weight::compute(&diff, &config.weights);

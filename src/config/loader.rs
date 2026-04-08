@@ -31,6 +31,7 @@ pub struct Config {
     pub version_thresholds: VersionThresholdConfig,
     #[serde(default)]
     pub plugins: PluginsConfig,
+    #[serde(default)]
     pub repo_path: PathBuf,
 }
 

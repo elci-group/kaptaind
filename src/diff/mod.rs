@@ -32,6 +32,15 @@ pub struct DiffAnalysis {
     /// Per-file parse metadata emitted by the LV-SCL layer.
     #[serde(default)]
     pub parse_metadata: Vec<FileParseMetadata>,
+    /// AST cache hits this analysis (files served from cache).
+    #[serde(default)]
+    pub ast_cache_hits: usize,
+    /// AST cache misses this analysis (files parsed fresh).
+    #[serde(default)]
+    pub ast_cache_misses: usize,
+    /// Total entries in the AST cache after this analysis.
+    #[serde(default)]
+    pub ast_cache_entries: usize,
 }
 
 pub fn analyze_with_plugins(
@@ -41,6 +50,7 @@ pub fn analyze_with_plugins(
 ) -> DiffAnalysis {
     let mut ast_cache = crate::diff::cache::AstCache::load(repo_root);
     let api = ast::api_score_with_plugins(cluster, repo_root, &mut ast_cache, plugins);
+    let cache_entries = ast_cache.len();
     ast_cache.save(repo_root);
     let deps = api::dependency_score(cluster, repo_root);
     let runtime = api::runtime_score(cluster);
@@ -61,12 +71,18 @@ pub fn analyze_with_plugins(
         runtime_paths: runtime.paths,
         bundle: 0.0,
         parse_metadata: api.parse_metadata,
+        ast_cache_hits: api.cache_hits,
+        ast_cache_misses: api.cache_misses,
+        ast_cache_entries: cache_entries,
     }
 }
 
 pub fn analyze(cluster: &Cluster, repo_root: &Path) -> DiffAnalysis {
     let structural = text::structural_score(cluster);
-    let api = ast::api_score(cluster, repo_root);
+    let mut ast_cache = crate::diff::cache::AstCache::load(repo_root);
+    let api = ast::api_score_with_cache(cluster, repo_root, &mut ast_cache);
+    let cache_entries = ast_cache.len();
+    ast_cache.save(repo_root);
     let deps = api::dependency_score(cluster, repo_root);
     let runtime = api::runtime_score(cluster);
 
@@ -86,6 +102,9 @@ pub fn analyze(cluster: &Cluster, repo_root: &Path) -> DiffAnalysis {
         runtime_paths: runtime.paths,
         bundle: 0.0, // Bundle score is calculated after diff analysis
         parse_metadata: api.parse_metadata,
+        ast_cache_hits: api.cache_hits,
+        ast_cache_misses: api.cache_misses,
+        ast_cache_entries: cache_entries,
     }
 }
 
