@@ -1,6 +1,6 @@
 [package]
 name = "kaptaind"
-version = "9.2.593"
+version = "9.2.594"
 edition = "2021"
 default-run = "kaptaind"
 
@@ -31,6 +31,10 @@ petgraph = "0.6"
 thiserror = "1"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-opentelemetry = "0.22"
+opentelemetry = { version = "0.21", features = ["rt-tokio"] }
+opentelemetry_sdk = { version = "0.21", features = ["rt-tokio"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
 semver = "1"
 globset = "0.4"
 clap = { version = "4", features = ["derive"] }
