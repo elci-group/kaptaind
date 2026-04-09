@@ -64,12 +64,8 @@ pub struct TraceRecord {
 
 /// Write a trace record to disk.
 pub fn write_trace(repo_path: &Path, record: &TraceRecord) -> anyhow::Result<()> {
-    let traces_dir = repo_path.join(".kaptaind").join("traces");
-    fs::create_dir_all(&traces_dir)?;
-    let trace_path = traces_dir.join(format!("{}.json", record.cluster_id));
-    let content = serde_json::to_string_pretty(record)?;
-    fs::write(&trace_path, content)?;
-    Ok(())
+    crate::aoc::db::init_db(repo_path)?;
+    crate::aoc::db::save_trace(repo_path, record)
 }
 
 /// Read all trace records for a specific AoC.

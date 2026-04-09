@@ -32,6 +32,8 @@ pub struct Config {
     #[serde(default)]
     pub plugins: PluginsConfig,
     #[serde(default)]
+    pub vacs: VacsConfig,
+    #[serde(default)]
     pub repo_path: PathBuf,
 }
 
@@ -315,6 +317,40 @@ impl Default for InferenceConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// VACS config
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct VacsConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_vacs_mode")]
+    pub mode: String,
+    #[serde(default = "default_vacs_allowed_assets")]
+    pub allowed_assets: Vec<String>,
+    #[serde(default)]
+    pub video_enabled: bool,
+    #[serde(default = "default_vacs_max_jobs_per_hour")]
+    pub max_jobs_per_hour: u32,
+}
+
+fn default_vacs_mode() -> String { "balanced".to_string() }
+fn default_vacs_allowed_assets() -> Vec<String> { vec!["diagram".to_string(), "chart".to_string()] }
+fn default_vacs_max_jobs_per_hour() -> u32 { 5 }
+
+impl Default for VacsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            mode: default_vacs_mode(),
+            allowed_assets: default_vacs_allowed_assets(),
+            video_enabled: false,
+            max_jobs_per_hour: default_vacs_max_jobs_per_hour(),
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -359,6 +395,7 @@ impl Default for Config {
             distribution: DistributionConfig::default(),
             version_thresholds: VersionThresholdConfig::default(),
             plugins: PluginsConfig::default(),
+            vacs: VacsConfig::default(),
             repo_path: cwd,
         }
     }

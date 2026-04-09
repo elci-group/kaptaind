@@ -4,7 +4,9 @@ use crate::aoc::tracer::TraceRecord;
 use chrono::{DateTime, Utc};
 
 pub fn init_db(repo_path: &Path) -> anyhow::Result<()> {
-    let db_path = repo_path.join(".kaptaind").join("traces.db");
+    let kaptaind_dir = repo_path.join(".kaptaind");
+    std::fs::create_dir_all(&kaptaind_dir).unwrap_or_default();
+    let db_path = kaptaind_dir.join("traces.db");
     let conn = Connection::open(db_path)?;
     
     conn.execute(

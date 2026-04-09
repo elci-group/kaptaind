@@ -17,6 +17,12 @@ use tokio::process::Command;
 use tokio::sync::mpsc::Receiver;
 
 pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
+    let (vacs_engine, vacs_rx) = crate::vacs::VacsEngine::new(&config.repo_path, &config.vacs);
+    let vacs_engine_clone = vacs_engine.clone();
+    tokio::spawn(async move {
+        vacs_engine_clone.process_queue(vacs_rx).await;
+    });
+
     let mut cluster_engine = ClusterEngine::new_from_config(&config.cluster);
     let mut repo = match Repo::open(&config.repo_path) {
         Ok(repo) => repo,
@@ -57,13 +63,13 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
                         tracing::trace!(?event.paths, "ingesting event");
                         if let Some(cluster) = cluster_engine.ingest(event) {
                             tracing::info!(cluster_id = %cluster.id, "cluster window expired by new event");
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine).await;
                         }
                     }
                     None => {
                         tracing::trace!("event channel closed");
                         if let Some(cluster) = cluster_engine.flush() {
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine).await;
                         }
                         break;
                     }
@@ -72,7 +78,7 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
             _ = tokio::time::sleep(config.cluster.window) => {
                 if let Some(cluster) = cluster_engine.flush() {
                     tracing::info!(cluster_id = %cluster.id, "cluster window expired by timeout");
-                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status).await;
+                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine).await;
                 }
             }
         }
@@ -162,6 +168,7 @@ async fn process_cluster(
     last_commit_at: &mut Option<DateTime<Utc>>,
     cluster: Cluster,
     status: &mut StatusReport,
+    vacs_engine: &crate::vacs::VacsEngine,
 ) {
     let now = Utc::now();
     let mut test_outcome = TestOutcome::Skipped; // Default; will be overwritten if we get to testing
@@ -419,6 +426,20 @@ async fn process_cluster(
     status.last_action_time = now;
     status.last_error = None;
     write_status(&config.repo_path, status);
+
+    // Fire VACS event
+    let vacs_event = crate::vacs::VacsEvent {
+        event_type: "commit.created".to_string(),
+        timestamp: now,
+        project_id: config.repo_path.display().to_string(),
+        payload: crate::vacs::VacsPayload {
+            files_changed: cluster_paths.iter().filter_map(|p| p.to_str().map(|s| s.to_string())).collect(),
+            diff_summary: msg.clone(),
+            aoc_id: None, // TODO: Extract from session if active
+            complexity_score: weight.score as f64,
+        },
+    };
+    let _ = vacs_engine.ingest(vacs_event).await;
 
     // Spawn post-commit qualification and release pipeline (non-blocking)
     if config.qualification.enabled {
