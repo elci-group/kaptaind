@@ -157,7 +157,7 @@ pub async fn post_commit(
                 "release packaged"
             );
 
-            if let Err(err) = crate::release::distributor::distribute(&pkg, &config.distribution, repo_path) {
+            if let Err(err) = crate::release::distributor::distribute(&pkg, &config.distribution, repo_path).await {
                 tracing::warn!(error = %err, "distribution step failed");
                 crate::daemon::telemetry::update_release_metrics(repo_path, stability.score, false);
                 // Penalise stability for failed release
