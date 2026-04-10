@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod consensus;
+pub mod kimi;
 pub mod ollama;
 pub mod openai;
 
@@ -26,6 +27,10 @@ pub struct CommitContext<'a> {
 fn resolve_provider(config: &InferenceConfig) -> &str {
     if config.provider != "auto" {
         return &config.provider;
+    }
+    // Check for Kimi API keys first (prioritize newer providers)
+    if kimi::is_available() {
+        return "kimi";
     }
     if std::env::var("ANTHROPIC_API_KEY").is_ok() {
         return "anthropic";
@@ -68,6 +73,7 @@ pub async fn generate_commit_message(
             match provider {
                 "anthropic" => anthropic::generate(config, ctx, model).await,
                 "openai" => openai::generate(config, ctx, model).await,
+                "kimi" => kimi::generate(config, ctx, model).await,
                 _ => ollama::generate(config, ctx, model).await,
             }
         }

@@ -247,7 +247,7 @@ async fn process_cluster(
             status.last_error = Some(stderr.clone());
         }
         write_status(&config.repo_path, status);
-        notify_error(config, "Tests failed");
+        crate::daemon::notification::notify_error(&config.notify, "Tests failed", Some("Test hook"));
         return;
     }
 
@@ -304,7 +304,7 @@ async fn process_cluster(
         status.status = State::Failed;
         status.last_error = Some(err.to_string());
         write_status(&config.repo_path, status);
-        notify_error(config, &err.to_string());
+        crate::daemon::notification::notify_error(&config.notify, &err.to_string(), None);
         return;
     }
 
@@ -382,7 +382,7 @@ async fn process_cluster(
         status.status = State::Failed;
         status.last_error = Some(err.to_string());
         write_status(&config.repo_path, status);
-        notify_error(config, &err.to_string());
+        crate::daemon::notification::notify_error(&config.notify, &err.to_string(), None);
         return;
     }
 
@@ -401,12 +401,13 @@ async fn process_cluster(
             status.status = State::Failed;
             status.last_error = Some(format!("push failed: {err}"));
             write_status(&config.repo_path, status);
-            notify_error(config, &err.to_string());
+            crate::daemon::notification::notify_error(&config.notify, &err.to_string(), None);
             return;
         }
     }
 
-    notify_commit(config, &next.to_string(), weight.score, &msg);
+    let files_changed = cluster_paths.len();
+crate::daemon::notification::notify_commit(&config.notify, &next.to_string(), weight.score, &msg, files_changed);
 
     // Write trace record for successful commit
     write_trace_if_active(
@@ -829,67 +830,6 @@ fn write_status(repo_path: &Path, report: &StatusReport) {
     }
     if let Ok(content) = serde_json::to_string_pretty(report) {
         let _ = std::fs::write(dir.join("status.json"), content);
-    }
-}
-
-fn notify_commit(config: &Config, version: &str, score: f32, msg: &str) {
-    if let Some(cmd) = &config.notify.on_commit {
-        let _ = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .env("KAPTAIND_VERSION", version)
-            .env("KAPTAIND_SCORE", score.to_string())
-            .env("KAPTAIND_MSG", msg)
-            .spawn();
-    }
-
-    if let Some(webhook_url) = &config.notify.webhook_url {
-        let url = webhook_url.clone();
-        let content = format!(
-            "🚀 **Kaptaind** shipped `v{}`\n**Score:** {:.3}\n**Message:**\n```\n{}\n```",
-            version, score, msg
-        );
-        
-        tokio::spawn(async move {
-            let payload = if url.contains("discord.com") {
-                serde_json::json!({ "content": content })
-            } else {
-                serde_json::json!({ "text": content }) // Slack compatible
-            };
-
-            let client = reqwest::Client::new();
-            if let Err(err) = client.post(&url).json(&payload).send().await {
-                tracing::warn!(error = %err, "failed to send commit webhook");
-            }
-        });
-    }
-}
-
-fn notify_error(config: &Config, error: &str) {
-    if let Some(cmd) = &config.notify.on_error {
-        let _ = std::process::Command::new("sh")
-            .arg("-c")
-            .arg(cmd)
-            .env("KAPTAIND_ERROR", error)
-            .spawn();
-    }
-
-    if let Some(webhook_url) = &config.notify.webhook_url {
-        let url = webhook_url.clone();
-        let content = format!("🚨 **Kaptaind Error**\n```\n{}\n```", error);
-        
-        tokio::spawn(async move {
-            let payload = if url.contains("discord.com") {
-                serde_json::json!({ "content": content })
-            } else {
-                serde_json::json!({ "text": content })
-            };
-
-            let client = reqwest::Client::new();
-            if let Err(err) = client.post(&url).json(&payload).send().await {
-                tracing::warn!(error = %err, "failed to send error webhook");
-            }
-        });
     }
 }
 

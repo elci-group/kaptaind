@@ -174,6 +174,144 @@ fn default_burst_threshold() -> usize { 10 }
 pub struct PushConfig {
     pub enabled: bool,
     pub branch: String,
+    #[serde(default = "default_remote")]
+    pub remote: String,
+    #[serde(default)]
+    pub dry_run: bool,
+    #[serde(default)]
+    pub retry: RetryConfig,
+    #[serde(default)]
+    pub conflict: ConflictConfig,
+    #[serde(default)]
+    pub pre_push: PrePushConfig,
+    #[serde(default)]
+    pub safety: SafetyConfig,
+    #[serde(default)]
+    pub batch: BatchConfig,
+}
+
+fn default_remote() -> String {
+    "origin".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RetryConfig {
+    #[serde(default = "default_retry_max_attempts")]
+    pub max_attempts: u32,
+    #[serde(default = "default_retry_initial_delay_ms")]
+    pub initial_delay_ms: u64,
+    #[serde(default = "default_retry_backoff_multiplier")]
+    pub backoff_multiplier: f64,
+    #[serde(default = "default_retry_max_delay_ms")]
+    pub max_delay_ms: u64,
+}
+
+fn default_retry_max_attempts() -> u32 { 3 }
+fn default_retry_initial_delay_ms() -> u64 { 1000 }
+fn default_retry_backoff_multiplier() -> f64 { 2.0 }
+fn default_retry_max_delay_ms() -> u64 { 30000 }
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_attempts: default_retry_max_attempts(),
+            initial_delay_ms: default_retry_initial_delay_ms(),
+            backoff_multiplier: default_retry_backoff_multiplier(),
+            max_delay_ms: default_retry_max_delay_ms(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ConflictConfig {
+    #[serde(default)]
+    pub auto_rebase: bool,
+    #[serde(default = "default_auto_abort_on_conflict")]
+    pub auto_abort_on_conflict: bool,
+}
+
+fn default_auto_abort_on_conflict() -> bool { true }
+
+impl Default for ConflictConfig {
+    fn default() -> Self {
+        Self {
+            auto_rebase: false,
+            auto_abort_on_conflict: default_auto_abort_on_conflict(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PrePushConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    pub command: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(default = "default_pre_push_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_pre_push_timeout_secs() -> u64 { 300 }
+
+impl Default for PrePushConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            command: None,
+            required: true,
+            timeout_secs: default_pre_push_timeout_secs(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SafetyConfig {
+    #[serde(default)]
+    pub allow_force: bool,
+    #[serde(default = "default_require_upstream_exist")]
+    pub require_upstream_exist: bool,
+    #[serde(default)]
+    pub protect_branches: Vec<String>,
+}
+
+fn default_require_upstream_exist() -> bool { true }
+
+impl Default for SafetyConfig {
+    fn default() -> Self {
+        Self {
+            allow_force: false,
+            require_upstream_exist: default_require_upstream_exist(),
+            protect_branches: vec!["main".to_string(), "master".to_string()],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct BatchConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_batch_min_commits")]
+    pub min_commits: usize,
+    #[serde(default = "default_batch_max_wait_secs")]
+    pub max_wait_secs: u64,
+    #[serde(default = "default_push_on_quit")]
+    pub push_on_quit: bool,
+}
+
+fn default_batch_min_commits() -> usize { 3 }
+fn default_batch_max_wait_secs() -> u64 { 300 }
+fn default_push_on_quit() -> bool { true }
+
+impl Default for BatchConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            min_commits: default_batch_min_commits(),
+            max_wait_secs: default_batch_max_wait_secs(),
+            push_on_quit: default_push_on_quit(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -270,6 +408,24 @@ pub struct InferenceConfig {
     /// Default 0.0 (always invoke when inference.enabled = true).
     #[serde(default)]
     pub min_score_for_inference: f64,
+    // -----------------------------------------------------------------------
+    // Kimi-specific configuration
+    // -----------------------------------------------------------------------
+    /// Kimi endpoint selection: "global", "china", "coding", or None for auto
+    #[serde(default)]
+    pub kimi_endpoint: Option<String>,
+    /// Override base URL for Kimi API (advanced use)
+    #[serde(default)]
+    pub kimi_base_url: Option<String>,
+    /// Kimi model to use (e.g., "kimi-k2.5", "kimi-for-coding", "kimi-k2-thinking")
+    #[serde(default)]
+    pub kimi_model: String,
+    /// Enable thinking mode for reasoning models (adds reasoning_content to responses)
+    #[serde(default)]
+    pub kimi_thinking: bool,
+    /// Enable extended context mode for K2.5 (up to 2M tokens)
+    #[serde(default)]
+    pub kimi_extended_context: bool,
 }
 
 fn default_inference_provider() -> String {
@@ -313,6 +469,11 @@ impl Default for InferenceConfig {
             consensus_threshold: default_consensus_threshold(),
             consensus_min_agreement: default_consensus_min_agreement(),
             min_score_for_inference: 0.0,
+            kimi_endpoint: None,
+            kimi_base_url: None,
+            kimi_model: String::new(),
+            kimi_thinking: false,
+            kimi_extended_context: false,
         }
     }
 }
@@ -377,6 +538,13 @@ impl Default for Config {
             push: PushConfig {
                 enabled: false,
                 branch: "main".to_string(),
+                remote: "origin".to_string(),
+                dry_run: false,
+                retry: RetryConfig::default(),
+                conflict: ConflictConfig::default(),
+                pre_push: PrePushConfig::default(),
+                safety: SafetyConfig::default(),
+                batch: BatchConfig::default(),
             },
             ratelimit: RateLimitConfig {
                 min_commit_interval: Duration::from_secs(10),

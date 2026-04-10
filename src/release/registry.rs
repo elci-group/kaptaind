@@ -184,7 +184,7 @@ CMD ["cat", "/artifacts/{}-manifest.json"]
             tarball_name,
             pkg.manifest.version,
             pkg.manifest.version,
-            pkg.manifest.commit_hash,
+            pkg.manifest.commit,
             pkg.manifest.version,
             chrono::Utc::now().to_rfc3339(),
             pkg.manifest.version

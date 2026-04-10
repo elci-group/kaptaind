@@ -29,3 +29,15 @@ required = true
 # mode = "all"        # "all" (default), "cluster" (only changed files), or "pattern"
 # include = ["src/**"] # only used in "pattern" mode
 # exclude = ["*.log", ".env*"]
+
+# [inference]
+# enabled = true
+# provider = "kimi"     # "auto", "kimi", "anthropic", "openai", or "ollama"
+# model = "kimi-k2.5"
+# timeout_secs = 30
+
+# [inference.kimi]
+# endpoint = "coding"   # "global", "china", or "coding"
+# model = "kimi-for-coding"
+# thinking = false
+# extended_context = false
