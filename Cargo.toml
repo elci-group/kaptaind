@@ -1,6 +1,6 @@
 [package]
 name = "kaptaind"
-version = "9.2.597"
+version = "9.2.598"
 edition = "2021"
 default-run = "kaptaind"
 
@@ -51,9 +51,11 @@ hex = "0.4"
 tar = "0.4"
 flate2 = "1"
 fltk = { version = "1.4", optional = true }
+notify-rust = { version = "4", optional = true }
 
 [features]
 gui = ["fltk"]
+notifications = ["notify-rust"]
 
 [dev-dependencies]
 tempfile = "3"
