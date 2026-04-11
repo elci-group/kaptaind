@@ -120,6 +120,52 @@ enum Commands {
     /// Usage: kaptaind-cli init
     Init,
 
+    /// 🎣 Trawl for and auto-initialize all codebases in a directory tree
+    ///
+    /// Recursively scans directories to discover codebases, automatically
+    /// initializes kaptaind for each found project, and registers them
+    /// for monitoring. Removes the need to manually run `kaptaind-cli init`
+    /// for each project.
+    ///
+    /// Detects: Rust, Node.js, Python, Go, Swift, Kotlin, Java, Ruby,
+    ///          Elixir, PHP, .NET, and C++ projects.
+    ///
+    /// Examples:
+    ///   kaptaind-cli trawl                       # Trawl current directory
+    ///   kaptaind-cli trawl --path ~/projects     # Trawl specific directory
+    ///   kaptaind-cli trawl --max-depth 3         # Limit recursion depth
+    ///   kaptaind-cli trawl --include-existing    # Re-init existing projects
+    ///   kaptaind-cli trawl --type rust,go        # Only Rust and Go projects
+    ///   kaptaind-cli trawl --require-git         # Only git repositories
+    ///
+    /// By default, projects with existing kaptaind.toml are skipped.
+    Trawl {
+        /// Root directory to start trawling from (default: current directory)
+        #[arg(short, long)]
+        path: Option<PathBuf>,
+        /// Maximum recursion depth (default: unlimited)
+        #[arg(short, long)]
+        max_depth: Option<usize>,
+        /// Include projects that are already initialized
+        #[arg(short, long)]
+        include_existing: bool,
+        /// Only process git repositories
+        #[arg(short, long)]
+        require_git: bool,
+        /// Do not auto-register discovered projects
+        #[arg(long)]
+        no_register: bool,
+        /// Filter by project types (comma-separated: rust,node,python,go,swift,kotlin,java,ruby,elixir,php,dotnet,cpp)
+        #[arg(short, long, value_delimiter = ',')]
+        r#type: Vec<String>,
+        /// Output format: text (default) or json
+        #[arg(short, long, default_value = "text")]
+        format: String,
+        /// Dry run - discover but don't initialize
+        #[arg(long)]
+        dry_run: bool,
+    },
+
     /// 📊 Live terminal dashboard
     ///
     /// Real-time view of kaptaind's state: version, daemon status, stability score,
@@ -346,18 +392,34 @@ enum AocCommand {
 async fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
 
-    // Init command works without a valid config
-    if matches!(&cli.command, Commands::Init) {
-        let repo_path = cli
-            .repo
-            .map(|p| p.canonicalize().unwrap_or(p))
-            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
-        let config = Config {
-            repo_path,
-            ..Config::default()
-        };
-        handle_init(&config)?;
-        return Ok(());
+    // Init and Trawl commands work without a valid config
+    match &cli.command {
+        Commands::Init => {
+            let repo_path = cli
+                .repo
+                .map(|p| p.canonicalize().unwrap_or(p))
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            let config = Config {
+                repo_path,
+                ..Config::default()
+            };
+            handle_init(&config)?;
+            return Ok(());
+        }
+        Commands::Trawl { path, max_depth, include_existing, require_git, no_register, r#type, format, dry_run } => {
+            let options = kaptaind::trawler::TrawlOptions {
+                root: path.clone().unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))),
+                max_depth: *max_depth,
+                skip_initialized: !include_existing,
+                require_git: *require_git,
+                auto_register: !no_register && !dry_run,
+                filter_types: parse_project_types(r#type),
+                min_confidence: 0.55, // Medium confidence minimum
+            };
+            handle_trawl(&options, format, *dry_run)?;
+            return Ok(());
+        }
+        _ => {}
     }
 
     let mut config = loader::load()?;
@@ -402,6 +464,164 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Vacs(vacs_cmd) => {
             handle_vacs(&config, vacs_cmd)?;
+        }
+        Commands::Trawl { .. } => {
+            // Already handled above - this should not be reached
+        }
+    }
+
+    Ok(())
+}
+
+fn parse_project_types(type_strings: &[String]) -> Vec<kaptaind::trawler::ProjectType> {
+    type_strings
+        .iter()
+        .filter_map(|s| match s.to_lowercase().as_str() {
+            "rust" => Some(kaptaind::trawler::ProjectType::Rust),
+            "node" | "nodejs" | "node.js" | "js" | "ts" => Some(kaptaind::trawler::ProjectType::Node),
+            "python" | "py" => Some(kaptaind::trawler::ProjectType::Python),
+            "go" | "golang" => Some(kaptaind::trawler::ProjectType::Go),
+            "swift" => Some(kaptaind::trawler::ProjectType::Swift),
+            "kotlin" | "kt" => Some(kaptaind::trawler::ProjectType::Kotlin),
+            "java" => Some(kaptaind::trawler::ProjectType::Java),
+            "ruby" | "rb" => Some(kaptaind::trawler::ProjectType::Ruby),
+            "elixir" | "ex" | "exs" => Some(kaptaind::trawler::ProjectType::Elixir),
+            "php" => Some(kaptaind::trawler::ProjectType::Php),
+            "dotnet" | "csharp" | "cs" | "fsharp" | "fs" => Some(kaptaind::trawler::ProjectType::Dotnet),
+            "cpp" | "c++" | "cxx" | "cc" => Some(kaptaind::trawler::ProjectType::Cpp),
+            "lua" => Some(kaptaind::trawler::ProjectType::Lua),
+            "scala" => Some(kaptaind::trawler::ProjectType::Scala),
+            "clojure" | "clj" => Some(kaptaind::trawler::ProjectType::Clojure),
+            "haskell" | "hs" => Some(kaptaind::trawler::ProjectType::Haskell),
+            "julia" | "jl" => Some(kaptaind::trawler::ProjectType::Julia),
+            "r" | "r-project" => Some(kaptaind::trawler::ProjectType::R),
+            "perl" | "pl" => Some(kaptaind::trawler::ProjectType::Perl),
+            _ => None,
+        })
+        .collect()
+}
+
+fn handle_trawl(options: &kaptaind::trawler::TrawlOptions, format: &str, dry_run: bool) -> anyhow::Result<()> {
+    use colored::*;
+    
+    println!("{} {}", "🎣".cyan(), "Trawling for codebases...".bold().cyan());
+    println!("   Root: {}", options.root.display().to_string().blue());
+    if let Some(depth) = options.max_depth {
+        println!("   Max depth: {}", depth.to_string().yellow());
+    }
+    if !options.filter_types.is_empty() {
+        let types: Vec<String> = options.filter_types.iter().map(|t| t.to_string()).collect();
+        println!("   Filter: {}", types.join(", ").yellow());
+    }
+    if dry_run {
+        println!("   Mode: {}", "dry-run (no changes)".magenta());
+    }
+    println!();
+
+    let start_time = std::time::Instant::now();
+    let result = kaptaind::trawler::trawl(options)?;
+    let elapsed = start_time.elapsed();
+
+    if format == "json" {
+        let json_output = serde_json::json!({
+            "projects": result.projects.iter().map(|p| serde_json::json!({
+                "path": p.path.display().to_string(),
+                "type": p.project_type.to_string(),
+                "is_git": p.is_git_repo,
+                "is_initialized": p.is_initialized,
+            })).collect::<Vec<_>>(),
+            "summary": {
+                "discovered": result.projects.len(),
+                "initialized": result.initialized_count,
+                "registered": result.registered_count,
+                "skipped": result.skipped_count,
+                "errors": result.errors.len(),
+            },
+            "elapsed_ms": elapsed.as_millis(),
+        });
+        println!("{}", serde_json::to_string_pretty(&json_output)?);
+    } else {
+        // Text format
+        println!("{}", "━".repeat(60).bright_black());
+        
+        if result.projects.is_empty() {
+            println!("{} {}", "ℹ️".blue(), "No projects found.".blue());
+        } else {
+            println!("{} {}", "📁".cyan(), format!("Discovered {} project(s):", result.projects.len()).bold());
+            println!();
+            
+            for project in &result.projects {
+                let icon = match project.project_type {
+                    kaptaind::trawler::ProjectType::Rust => "🦀",
+                    kaptaind::trawler::ProjectType::Node => "📦",
+                    kaptaind::trawler::ProjectType::Python => "🐍",
+                    kaptaind::trawler::ProjectType::Go => "🐹",
+                    kaptaind::trawler::ProjectType::Swift => "🦉",
+                    kaptaind::trawler::ProjectType::Kotlin => "🅺",
+                    kaptaind::trawler::ProjectType::Java => "☕",
+                    kaptaind::trawler::ProjectType::Ruby => "💎",
+                    kaptaind::trawler::ProjectType::Elixir => "💧",
+                    kaptaind::trawler::ProjectType::Php => "🐘",
+                    kaptaind::trawler::ProjectType::Dotnet => "🔷",
+                    kaptaind::trawler::ProjectType::Cpp => "⚙️ ",
+                    kaptaind::trawler::ProjectType::Lua => "🌙",
+                    kaptaind::trawler::ProjectType::Scala => "🎯",
+                    kaptaind::trawler::ProjectType::Clojure => "🍃",
+                    kaptaind::trawler::ProjectType::Haskell => "λ",
+                    kaptaind::trawler::ProjectType::Julia => "🎨",
+                    kaptaind::trawler::ProjectType::R => "📊",
+                    kaptaind::trawler::ProjectType::Perl => "🐪",
+                    kaptaind::trawler::ProjectType::Unknown => "❓",
+                };
+                
+                let status = if project.is_initialized {
+                    "✅ initialized".dimmed()
+                } else {
+                    "🆕 new".green()
+                };
+                
+                let git_indicator = if project.is_git_repo { "🌿" } else { "  " };
+                
+                println!(
+                    "  {} {} {} {} {} {}",
+                    icon,
+                    project.project_type.to_string().cyan(),
+                    project.path.display().to_string().blue(),
+                    git_indicator,
+                    status,
+                    if dry_run && !project.is_initialized { "[would init]".yellow() } else { "".normal() }
+                );
+            }
+            
+            println!();
+        }
+        
+        println!("{}", "━".repeat(60).bright_black());
+        println!("{} {}", "📊".cyan(), "Summary:".bold());
+        println!("   Discovered: {}", result.projects.len().to_string().yellow());
+        
+        if !dry_run {
+            println!("   Initialized: {}", result.initialized_count.to_string().green());
+            println!("   Registered: {}", result.registered_count.to_string().green());
+            println!("   Skipped: {}", result.skipped_count.to_string().dimmed());
+        } else {
+            let would_init = result.projects.iter().filter(|p| !p.is_initialized).count();
+            println!("   Would initialize: {}", would_init.to_string().green());
+        }
+        
+        if !result.errors.is_empty() {
+            println!("   Errors: {}", result.errors.len().to_string().red());
+        }
+        
+        println!("   Time: {:.2}s", elapsed.as_secs_f64());
+        println!("{}", "━".repeat(60).bright_black());
+        
+        if !result.errors.is_empty() {
+            println!();
+            println!("{} {}", "⚠️".yellow(), "Errors:".yellow().bold());
+            for error in &result.errors {
+                println!("   - {}", error.red());
+            }
         }
     }
 
