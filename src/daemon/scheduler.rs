@@ -414,7 +414,7 @@ async fn process_cluster(
     }
 
     if config.push.enabled {
-        if let Err(err) = crate::push::push(&repo.inner, &config.push.branch) {
+        if let Err(err) = crate::push::push(&repo.inner, &config.push.branch).await {
             tracing::warn!(error = %err, "push failed");
             write_trace_if_active(
                 &config.repo_path,

@@ -5,6 +5,13 @@ use crate::stability::model::StabilityEntry;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+fn write_atomic(path: &Path, content: &str) -> anyhow::Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, content)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
 /// Index entry for a completed release.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReleaseIndexEntry {
@@ -129,7 +136,7 @@ pub async fn post_commit(
 
     // Write RELEASE_VERSION
     let release_version_path = repo_path.join(".kaptaind").join("release_version");
-    if let Err(err) = std::fs::write(&release_version_path, version) {
+    if let Err(err) = write_atomic(&release_version_path, version) {
         tracing::warn!(error = %err, "failed to write release_version");
     }
 
@@ -224,6 +231,6 @@ fn append_index(
     let releases_dir = repo_path.join(".kaptaind").join("releases");
     let _ = std::fs::create_dir_all(&releases_dir);
     if let Ok(content) = serde_json::to_string_pretty(&index) {
-        let _ = std::fs::write(releases_dir.join("index.json"), content);
+        let _ = write_atomic(&releases_dir.join("index.json"), &content);
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "kaptaind"
-version = "9.3.5"
+version = "9.3.6"
 edition = "2021"
 default-run = "kaptaind"
 
