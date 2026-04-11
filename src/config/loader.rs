@@ -34,6 +34,8 @@ pub struct Config {
     #[serde(default)]
     pub vacs: VacsConfig,
     #[serde(default)]
+    pub trawl: TrawlConfig,
+    #[serde(default)]
     pub repo_path: PathBuf,
 }
 
@@ -512,6 +514,59 @@ impl Default for VacsConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Trawling config
+// ---------------------------------------------------------------------------
+
+/// `[trawl]` block in `kaptaind.toml`.
+/// Configures automatic codebase discovery and initialization.
+#[derive(Debug, Clone, Deserialize)]
+pub struct TrawlConfig {
+    /// Enable automatic trawling on daemon startup
+    #[serde(default)]
+    pub auto_trawl: bool,
+    /// Root directory to trawl from (default: parent of repo_path)
+    #[serde(default)]
+    pub root: Option<PathBuf>,
+    /// Maximum depth to search (default: 3)
+    #[serde(default = "default_trawl_depth")]
+    pub max_depth: usize,
+    /// Skip already initialized projects
+    #[serde(default = "default_trawl_skip_initialized")]
+    pub skip_initialized: bool,
+    /// Only process git repositories
+    #[serde(default)]
+    pub require_git: bool,
+    /// Auto-register discovered projects for monitoring
+    #[serde(default = "default_trawl_auto_register")]
+    pub auto_register: bool,
+    /// Project types to look for (empty = all)
+    #[serde(default)]
+    pub project_types: Vec<String>,
+    /// Interval between auto-trawls in seconds (0 = only on startup)
+    #[serde(default)]
+    pub interval_secs: u64,
+}
+
+fn default_trawl_depth() -> usize { 3 }
+fn default_trawl_skip_initialized() -> bool { true }
+fn default_trawl_auto_register() -> bool { true }
+
+impl Default for TrawlConfig {
+    fn default() -> Self {
+        Self {
+            auto_trawl: false,
+            root: None,
+            max_depth: default_trawl_depth(),
+            skip_initialized: default_trawl_skip_initialized(),
+            require_git: false,
+            auto_register: default_trawl_auto_register(),
+            project_types: Vec::new(),
+            interval_secs: 0,
+        }
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -564,6 +619,7 @@ impl Default for Config {
             version_thresholds: VersionThresholdConfig::default(),
             plugins: PluginsConfig::default(),
             vacs: VacsConfig::default(),
+            trawl: TrawlConfig::default(),
             repo_path: cwd,
         }
     }

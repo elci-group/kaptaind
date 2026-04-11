@@ -15,11 +15,14 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::mpsc::Receiver;
+use tokio::task::JoinSet;
 
 pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
     let (vacs_engine, vacs_rx) = crate::vacs::VacsEngine::new(&config.repo_path, &config.vacs);
     let vacs_engine_clone = vacs_engine.clone();
-    tokio::spawn(async move {
+
+    let mut tasks: JoinSet<()> = JoinSet::new();
+    tasks.spawn(async move {
         vacs_engine_clone.process_queue(vacs_rx).await;
     });
 
@@ -63,13 +66,13 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
                         tracing::trace!(?event.paths, "ingesting event");
                         if let Some(cluster) = cluster_engine.ingest(event) {
                             tracing::info!(cluster_id = %cluster.id, "cluster window expired by new event");
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks).await;
                         }
                     }
                     None => {
                         tracing::trace!("event channel closed");
                         if let Some(cluster) = cluster_engine.flush() {
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks).await;
                         }
                         break;
                     }
@@ -78,8 +81,11 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
             _ = tokio::time::sleep(config.cluster.window) => {
                 if let Some(cluster) = cluster_engine.flush() {
                     tracing::info!(cluster_id = %cluster.id, "cluster window expired by timeout");
-                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine).await;
+                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks).await;
                 }
+            }
+            _ = tasks.join_next(), if !tasks.is_empty() => {
+                // Task completed; reap it without blocking
             }
         }
     }
@@ -813,6 +819,8 @@ pub enum State {
     Testing,
     Committing,
     Failed,
+    Stopping,
+    Stopped,
 }
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize)]
@@ -828,8 +836,12 @@ fn write_status(repo_path: &Path, report: &StatusReport) {
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
+    let status_file = dir.join("status.json");
     if let Ok(content) = serde_json::to_string_pretty(report) {
-        let _ = std::fs::write(dir.join("status.json"), content);
+        let tmp = status_file.with_extension("tmp");
+        if std::fs::write(&tmp, content).is_ok() {
+            let _ = std::fs::rename(&tmp, &status_file);
+        }
     }
 }
 

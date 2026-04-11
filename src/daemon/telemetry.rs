@@ -1,6 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+fn write_atomic(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, content)?;
+    std::fs::rename(&tmp, path)
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TokenMetrics {
     pub input_tokens: usize,
@@ -50,7 +56,7 @@ pub fn track_cost(repo_path: &Path, input_tokens: usize, output_tokens: usize) -
     };
 
     if let Ok(content) = serde_json::to_string_pretty(&metrics) {
-        let _ = std::fs::write(&telemetry_file, content);
+        let _ = write_atomic(&telemetry_file, content.as_bytes());
     }
 
     metrics
@@ -71,7 +77,7 @@ pub fn update_release_metrics(repo_path: &Path, stability: f64, release_succeede
         metrics.failed_releases += 1;
     }
     if let Ok(content) = serde_json::to_string_pretty(&metrics) {
-        let _ = std::fs::write(&telemetry_file, content);
+        let _ = write_atomic(&telemetry_file, content.as_bytes());
     }
 }
 
@@ -86,7 +92,7 @@ pub fn update_cache_metrics(repo_path: &Path, hits: usize, misses: usize, entrie
         let _ = std::fs::create_dir_all(parent);
     }
     if let Ok(content) = serde_json::to_string_pretty(&metrics) {
-        let _ = std::fs::write(&telemetry_file, content);
+        let _ = write_atomic(&telemetry_file, content.as_bytes());
     }
 }
 

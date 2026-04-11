@@ -1401,7 +1401,7 @@ dependencies = [
 
 [[package]]
 name = "kaptaind"
-version = "9.3.2"
+version = "9.3.3"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1412,6 +1412,7 @@ dependencies = [
  "fltk",
  "fs2",
  "git2",
+ "glob",
  "globset",
  "hex",
  "hmac",
