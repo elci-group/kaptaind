@@ -66,13 +66,13 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config, mut shutdown: crate:
                         tracing::trace!(?event.paths, "ingesting event");
                         if let Some(cluster) = cluster_engine.ingest(event) {
                             tracing::info!(cluster_id = %cluster.id, "cluster window expired by new event");
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token()).await;
                         }
                     }
                     None => {
                         tracing::trace!("event channel closed");
                         if let Some(cluster) = cluster_engine.flush() {
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token()).await;
                         }
                         break;
                     }
@@ -81,7 +81,7 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config, mut shutdown: crate:
             _ = tokio::time::sleep(config.cluster.window) => {
                 if let Some(cluster) = cluster_engine.flush() {
                     tracing::info!(cluster_id = %cluster.id, "cluster window expired by timeout");
-                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks).await;
+                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token()).await;
                 }
             }
             _ = tasks.join_next(), if !tasks.is_empty() => {
@@ -196,6 +196,7 @@ async fn process_cluster(
     status: &mut StatusReport,
     vacs_engine: &crate::vacs::VacsEngine,
     tasks: &mut JoinSet<()>,
+    shutdown: crate::daemon::shutdown::ShutdownToken,
 ) {
     let now = Utc::now();
     let mut test_outcome = TestOutcome::Skipped; // Default; will be overwritten if we get to testing
@@ -414,7 +415,7 @@ async fn process_cluster(
     }
 
     if config.push.enabled {
-        if let Err(err) = crate::push::push(&repo.inner, &config.push.branch).await {
+        if let Err(err) = crate::push::push(&config.repo_path, &config.push.branch).await {
             tracing::warn!(error = %err, "push failed");
             write_trace_if_active(
                 &config.repo_path,
@@ -490,6 +491,7 @@ crate::daemon::notification::notify_commit(&config.notify, &next.to_string(), we
         } else {
             diff.parse_metadata.iter().map(|m| m.confidence).sum::<f64>() / diff.parse_metadata.len() as f64
         };
+        let shutdown_clone = shutdown.clone_token();
         tasks.spawn(async move {
             crate::release::orchestrator::post_commit(
                 &repo_path,
@@ -500,6 +502,7 @@ crate::daemon::notification::notify_commit(&config.notify, &next.to_string(), we
                 diff_f64,
                 runtime_paths,
                 parse_confidence,
+                Some(shutdown_clone),
             )
             .await;
         });

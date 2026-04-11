@@ -44,6 +44,7 @@ pub async fn post_commit(
     diff_score: f64,
     runtime_paths: u32,
     parse_confidence: f64,
+    mut shutdown: Option<crate::daemon::shutdown::ShutdownToken>,
 ) {
     if !config.qualification.enabled {
         return;
@@ -164,7 +165,23 @@ pub async fn post_commit(
                 "release packaged"
             );
 
-            if let Err(err) = crate::release::distributor::distribute(&pkg, &config.distribution, repo_path).await {
+            let distribute_result = tokio::select! {
+                result = crate::release::distributor::distribute(&pkg, &config.distribution, repo_path) => {
+                    Some(result)
+                }
+                _ = async {
+                    if let Some(ref mut token) = shutdown {
+                        token.wait().await;
+                    } else {
+                        std::future::pending::<()>().await;
+                    }
+                } => {
+                    tracing::info!("shutdown signal received during distribution, bailing out");
+                    None
+                }
+            };
+
+            if let Some(Err(err)) = distribute_result {
                 tracing::warn!(error = %err, "distribution step failed");
                 crate::daemon::telemetry::update_release_metrics(repo_path, stability.score, false);
                 // Penalise stability for failed release
@@ -172,6 +189,9 @@ pub async fn post_commit(
                     s.score = (s.score - 0.1).max(0.0);
                     let _ = crate::stability::engine::save(repo_path, &s);
                 }
+                return;
+            } else if distribute_result.is_none() {
+                // Shutdown signal received during distribution
                 return;
             }
 

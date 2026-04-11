@@ -1,19 +1,14 @@
-use git2::Repository;
+use std::path::Path;
 use tokio::process::Command;
 
-pub async fn push(repo: &Repository, branch: &str) -> anyhow::Result<()> {
-    let workdir = repo
-        .workdir()
-        .ok_or_else(|| anyhow::anyhow!("Repository has no working directory"))?
-        .to_path_buf();
-
+pub async fn push(repo_path: &Path, branch: &str) -> anyhow::Result<()> {
     // Attempting to push using the system git binary.
     // This dramatically reduces friction with third-party tools (SSH agents, 2FA,
     // credential helpers, corporate proxies) because it inherits the user's existing environment.
     let refspec = format!("refs/heads/{branch}:refs/heads/{branch}");
 
     let mut child = Command::new("git")
-        .current_dir(&workdir)
+        .current_dir(repo_path)
         .arg("push")
         .arg("origin")
         .arg(&refspec)
