@@ -1225,6 +1225,8 @@ fn handle_status(config: &Config) -> anyhow::Result<()> {
                     kaptaind::daemon::scheduler::State::Testing => "[🧪 Testing]".yellow().to_string(),
                     kaptaind::daemon::scheduler::State::Committing => "[🚢 Committing]".magenta().to_string(),
                     kaptaind::daemon::scheduler::State::Failed => "[🛑 Failed]".red().to_string(),
+                    kaptaind::daemon::scheduler::State::Stopping => "[⏹️  Stopping]".yellow().to_string(),
+                    kaptaind::daemon::scheduler::State::Stopped => "[⏹️  Stopped]".bright_black().to_string(),
                 };
             }
         }
@@ -1404,6 +1406,8 @@ fn handle_dashboard(config: &Config) -> anyhow::Result<()> {
             kaptaind::daemon::scheduler::State::Testing => "Testing".yellow().to_string(),
             kaptaind::daemon::scheduler::State::Committing => "Committing".magenta().to_string(),
             kaptaind::daemon::scheduler::State::Failed => "Failed".red().bold().to_string(),
+            kaptaind::daemon::scheduler::State::Stopping => "Stopping".yellow().to_string(),
+            kaptaind::daemon::scheduler::State::Stopped => "Stopped".bright_black().to_string(),
         };
         println!("  {}  {}", "Daemon: ".bold(), state_str);
         if let Some(ref err) = st.last_error {

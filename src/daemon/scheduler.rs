@@ -17,7 +17,7 @@ use tokio::process::Command;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinSet;
 
-pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
+pub async fn run(mut rx: Receiver<FsEvent>, config: Config, mut shutdown: crate::daemon::shutdown::ShutdownToken) {
     let (vacs_engine, vacs_rx) = crate::vacs::VacsEngine::new(&config.repo_path, &config.vacs);
     let vacs_engine_clone = vacs_engine.clone();
 
@@ -87,8 +87,28 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config) {
             _ = tasks.join_next(), if !tasks.is_empty() => {
                 // Task completed; reap it without blocking
             }
+            _ = shutdown.wait() => {
+                tracing::info!("shutdown signal received, draining tasks");
+                status.status = State::Stopping;
+                write_status(&config.repo_path, &status);
+                break;
+            }
         }
     }
+
+    // Drain all remaining tasks with a timeout
+    let drain = async {
+        while tasks.join_next().await.is_some() {}
+    };
+    let drain_timeout = Duration::from_secs(25);
+    if tokio::time::timeout(drain_timeout, drain).await.is_err() {
+        tracing::warn!("task drain timeout (25s), aborting remaining tasks");
+        tasks.abort_all();
+    }
+
+    status.status = State::Stopped;
+    write_status(&config.repo_path, &status);
+    tracing::info!("scheduler shutdown complete");
 }
 
 /// Build and write a trace record for a cluster.
@@ -175,6 +195,7 @@ async fn process_cluster(
     cluster: Cluster,
     status: &mut StatusReport,
     vacs_engine: &crate::vacs::VacsEngine,
+    tasks: &mut JoinSet<()>,
 ) {
     let now = Utc::now();
     let mut test_outcome = TestOutcome::Skipped; // Default; will be overwritten if we get to testing
@@ -469,7 +490,7 @@ crate::daemon::notification::notify_commit(&config.notify, &next.to_string(), we
         } else {
             diff.parse_metadata.iter().map(|m| m.confidence).sum::<f64>() / diff.parse_metadata.len() as f64
         };
-        tokio::spawn(async move {
+        tasks.spawn(async move {
             crate::release::orchestrator::post_commit(
                 &repo_path,
                 &config_clone,
@@ -486,7 +507,7 @@ crate::daemon::notification::notify_commit(&config.notify, &next.to_string(), we
 
     // Run pruning in the background
     let repo_path = config.repo_path.clone();
-    tokio::spawn(async move {
+    tasks.spawn(async move {
         auto_prune(&repo_path).await;
     });
 }
