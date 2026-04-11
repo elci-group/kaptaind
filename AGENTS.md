@@ -31,6 +31,13 @@
 - `src/push/` — git push orchestration.
 - `src/git/` — thin repository wrapper.
 - `src/aoc/` — Aim of Change sessions, traces, agent interception, manifests.
+- `src/angler/` — 🎣 Hook and selective capture system with four capabilities:
+  - `config.rs` — Angler configuration (git hooks, webhooks, selective capture, bait plugins).
+  - `git_hooks.rs` — Client-side git hook management (pre-commit, post-commit, pre-push, etc.).
+  - `webhooks.rs` — Enhanced webhook system with HMAC signatures, retry logic, rate limiting.
+  - `selective.rs` — Pattern-based change filtering with actions (Pass, Block, Quarantine, Tag, Webhook, Execute).
+  - `bait.rs` — External plugin system for lifecycle event hooks.
+  - `mod.rs` — Main AnglerSystem that coordinates all four capabilities.
 - `tests/cli_integration.rs` — integration tests for CLI commands.
 - `web/` — Kaptaind Pro SaaS website (Next.js + Tailwind + NextAuth + Prisma).
 
@@ -38,7 +45,7 @@
 1. `config::loader::load()` reads `kaptaind.toml` from the current working directory, or falls back to defaults. Includes `StagingConfig`, `BundleConfig`, `NotifyConfig`.
 2. `daemon::runtime::start()` creates a Tokio MPSC channel, starts the watcher thread, and spawns the scheduler task.
 3. `watcher::fs::start()` converts `notify` events into `FsEvent` values and sends them across the channel.
-4. `daemon::scheduler::run()` batches events with `ClusterEngine`, filters ignored paths, rate-limits commits, runs the configured test hook, analyzes the diff (structural + API + deps + runtime + optional bundle), computes weight + bump, writes `VERSION` (+ updates `Cargo.toml`), stores an analysis artifact, commits with configurable staging, optionally pushes, sends notifications, writes AoC traces if a session is active, and auto-prunes old artifacts.
+4. `daemon::scheduler::run()` batches events with `ClusterEngine`, filters ignored paths, rate-limits commits, runs the configured test hook, analyzes the diff (structural + API + deps + runtime + optional bundle), computes weight + bump, writes `VERSION` (+ updates `Cargo.toml`), stores an analysis artifact, commits with configurable staging, optionally pushes, sends notifications, writes AoC traces if a session is active, auto-prunes old artifacts, and invokes Angler hooks (pre-commit, post-commit, webhooks, selective capture checks, and bait plugins) at appropriate lifecycle points.
 
 ## Configuration and on-disk files
 - Main config file: `kaptaind.toml` in the current working directory.

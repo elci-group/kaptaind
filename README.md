@@ -37,6 +37,11 @@ It eliminates manual version bumping and subjective commit messages by replacing
 - **Visual Asset Channel Saturation (VACS):** A capacity-aware background generation system that converts surplus inference capacity into high-value visual/documentation assets (like diagrams and architecture maps) linked directly to code changes. VACS operates opportunistically and surfaces assets in the CLI.
 - **Multi-Provider Inference Routing:** Intelligently routes commit message generation to the best available inference provider. Automatically detects and prioritizes: **Anthropic Claude** → **OpenAI GPT-4o** → **Local Ollama** fallback. No API keys needed; works offline with Ollama.
 - **Commit Validation Modes:** Choose between **Fast Mode** (single provider, lowest latency) or **Consensus Mode** (multiple local models with semantic cross-comparison, lowest hallucination risk). Developer-selected via config.
+- **🎣 Angler Hook & Selective Capture System:** A comprehensive four-part system for advanced automation:
+  - *Git Hooks Integration:* Manage client-side git hooks (pre-commit, post-commit, pre-push, etc.) with configurable commands, timeouts, and file pattern matching.
+  - *Enhanced Webhooks:* Send HTTP webhooks with HMAC signature verification, exponential backoff retries, rate limiting, and event filtering.
+  - *Selective Change Capture:* Pattern-based filtering and capture of file changes with actions (Pass, Block, Quarantine, Tag, Webhook, Execute). Includes security-sensitive file detection and predefined templates.
+  - *Bait Plugin System:* External plugin system allowing custom scripts and webhooks to respond to kaptaind lifecycle events. Auto-discovers plugins from `.kaptaind/baits/`.
 
 ## Getting Started
 
@@ -410,6 +415,96 @@ kaptaind: Minor -> v0.2.0 [api-stable; paths=3; api_touches=0; deps=0; runtime=0
 - **Build fails**: If `command` fails, bundle scoring is skipped (score `0.0`). Check `.kaptaind/status.json` for error details.
 - **No output directory**: If `output_dir` doesn't exist after build, bundle score is `0.0`.
 - **Stale size**: Delete `.kaptaind/bundle.json` to force a full re-baseline on the next analysis.
+
+## 🎣 Angler Hook & Selective Capture System
+
+Angler provides a comprehensive four-part system for advanced automation and selective change handling.
+
+### Git Hooks Integration
+
+Manage client-side git hooks with configurable commands:
+
+```toml
+[angler.git_hooks]
+enabled = true
+
+[angler.git_hooks.pre_commit]
+command = "cargo fmt --check"
+required = true
+timeout_secs = 30
+file_patterns = ["**/*.rs"]  # Only run on Rust files
+
+[angler.git_hooks.pre_push]
+command = "cargo test"
+required = true
+timeout_secs = 300
+```
+
+### Enhanced Webhooks
+
+Send HTTP webhooks with signature verification and retry logic:
+
+```toml
+[angler.webhooks]
+enabled = true
+
+[[angler.webhooks.endpoints]]
+id = "slack"
+url = "https://hooks.slack.com/services/..."
+events = ["commit", "error"]
+verify_signature = true
+secret = "your_webhook_secret"
+rate_limit_per_min = 60
+
+[angler.webhooks.endpoints.retry]
+max_attempts = 3
+initial_delay_ms = 1000
+```
+
+### Selective Change Capture
+
+Pattern-based filtering with actions (Pass, Block, Quarantine, Tag, Webhook, Execute):
+
+```toml
+[angler.selective]
+enabled = true
+
+[[angler.selective.rules]]
+id = "security"
+name = "Security Sensitive Files"
+patterns = ["**/.env*", "**/secrets*", "**/id_rsa*"]
+action = "block"  # Block commits containing these files
+priority = 100
+
+[[angler.selective.rules]]
+id = "docs"
+name = "Documentation"
+patterns = ["**/*.md", "**/README*"]
+action = { tag = { tags = ["documentation"] } }
+```
+
+Pre-defined templates available:
+- `security_sensitive_rule()` - Blocks secrets and sensitive files
+- `documentation_rule()` - Tags documentation files
+- `test_files_rule()` - Tags test files
+- `config_files_rule()` - Tags configuration files
+
+### Bait Plugin System
+
+External plugins that respond to lifecycle events:
+
+```toml
+[angler.bait]
+enabled = true
+auto_discover = true  # Auto-discover from .kaptaind/baits/
+
+[[angler.bait.baits]]
+id = "notify"
+name = "Notification"
+type = "webhook"
+command = "https://example.com/webhook"
+events = ["post_commit"]
+```
 
 ## Aim of Change (AoC) Sessions
 
