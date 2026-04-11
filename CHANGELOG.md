@@ -5,6 +5,11 @@ All notable changes to kaptaind are documented here.
 ## [Unreleased]
 
 ### Added
+- **🎣 Angler Hook & Selective Capture System:** A comprehensive four-part automation system:
+  - *Git Hooks Integration:* Manage client-side git hooks (pre-commit, post-commit, pre-push, etc.) with configurable commands, timeouts, and file pattern matching.
+  - *Enhanced Webhooks:* HTTP webhooks with HMAC signature verification, exponential backoff retries, rate limiting, and event filtering.
+  - *Selective Change Capture:* Pattern-based filtering with actions (Pass, Block, Quarantine, Tag, Webhook, Execute). Includes security-sensitive file detection and predefined templates.
+  - *Bait Plugin System:* External plugins responding to lifecycle events. Auto-discovers from `.kaptaind/baits/`.
 - **Adaptive Clustering:** `ClusterEngine` linearly interpolates the merge window from `window` toward `max_window_secs` as the current cluster grows toward `burst_threshold`; opt-in via `[cluster] adaptive = true`
 - **LV-SCL (Language Version Syntax Contextualization Layer):** All 12 language adapters are now version-aware. Language versions are detected from project manifests (`Cargo.toml` edition, `go.mod`, `.python-version`, `tsconfig.json` target, `package.json` engines, etc.) and cached at `.kaptaind/version_cache.json` with a 1-hour TTL. Version-specific syntax recognized: Python 3.10+ `match`/`case` + 3.12 `type_alias`; Go 1.18+ generics; TypeScript 3.8+ `export type` / 5.0+ `type_alias`; Svelte 5 `$state`/`$derived` runes. Per-file parse metadata (language, version, parser kind, fallback flag) is emitted into every analysis artifact.
 - **Parser Confidence Scoring:** Every parse produces a confidence metric (0–1) adjustable by parser type (AST → 0.95, fallback → 0.65) and version source certainty (Runtime > Manifest > Inferred > Unknown). Confidence scores are tracked in `FileParseMetadata` for audit trail. Mean confidence per commit is threaded through to stability scoring.
