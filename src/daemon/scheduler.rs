@@ -1,4 +1,5 @@
 use crate::aoc::tracer;
+use crate::angler::{AnglerSystem, BaitContext, BaitEvent, WebhookEvent};
 use crate::cluster::engine::{Cluster, ClusterEngine};
 use crate::config::loader::TestConfig;
 use crate::config::Config;
@@ -18,6 +19,20 @@ use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinSet;
 
 pub async fn run(mut rx: Receiver<FsEvent>, config: Config, mut shutdown: crate::daemon::shutdown::ShutdownToken) {
+    // Initialize Angler system
+    let angler = match AnglerSystem::new(&config.angler, &config.repo_path) {
+        Ok(system) => {
+            if system.is_active() {
+                tracing::info!("Angler system initialized");
+            }
+            Some(system)
+        }
+        Err(err) => {
+            tracing::error!(error = %err, "failed to initialize angler system");
+            None
+        }
+    };
+
     let (vacs_engine, vacs_rx) = crate::vacs::VacsEngine::new(&config.repo_path, &config.vacs);
     let vacs_engine_clone = vacs_engine.clone();
 
@@ -66,13 +81,13 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config, mut shutdown: crate:
                         tracing::trace!(?event.paths, "ingesting event");
                         if let Some(cluster) = cluster_engine.ingest(event) {
                             tracing::info!(cluster_id = %cluster.id, "cluster window expired by new event");
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token()).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref()).await;
                         }
                     }
                     None => {
                         tracing::trace!("event channel closed");
                         if let Some(cluster) = cluster_engine.flush() {
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token()).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref()).await;
                         }
                         break;
                     }
@@ -81,7 +96,7 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config, mut shutdown: crate:
             _ = tokio::time::sleep(config.cluster.window) => {
                 if let Some(cluster) = cluster_engine.flush() {
                     tracing::info!(cluster_id = %cluster.id, "cluster window expired by timeout");
-                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token()).await;
+                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref()).await;
                 }
             }
             _ = tasks.join_next(), if !tasks.is_empty() => {
@@ -197,6 +212,7 @@ async fn process_cluster(
     vacs_engine: &crate::vacs::VacsEngine,
     tasks: &mut JoinSet<()>,
     shutdown: crate::daemon::shutdown::ShutdownToken,
+    angler: Option<&AnglerSystem>,
 ) {
     let now = Utc::now();
     let mut test_outcome = TestOutcome::Skipped; // Default; will be overwritten if we get to testing
@@ -347,6 +363,69 @@ async fn process_cluster(
         .flat_map(|e| e.paths.iter().cloned())
         .collect();
 
+    // Check selective capture rules
+    if let Some(angler) = angler {
+        let selective_changes: Vec<crate::angler::FileChange> = cluster_paths
+            .iter()
+            .map(|p| {
+                let mut change = crate::angler::FileChange::new(p, crate::angler::ChangeType::Modified);
+                let _ = change.with_metadata(&config.repo_path);
+                change
+            })
+            .collect();
+
+        // Check for blocked changes
+        let blocked = angler.would_block_changes(&selective_changes);
+        if !blocked.is_empty() {
+            for (change, reason) in &blocked {
+                tracing::warn!(path = %change.path.display(), reason = %reason, "change blocked by selective rule");
+            }
+            crate::daemon::notification::notify_error(
+                &config.notify,
+                &format!("{} change(s) blocked by selective rules", blocked.len()),
+                Some("Angler selective capture"),
+            );
+            status.status = State::Failed;
+            status.last_error = Some(format!("{} change(s) blocked by selective rules", blocked.len()));
+            write_status(&config.repo_path, status);
+            return;
+        }
+
+        // Trigger pre-commit bait
+        let bait_context = BaitContext {
+            event: BaitEvent::PreCommit,
+            files: cluster_paths.iter().map(|p| crate::angler::FileChangeInfo {
+                path: p.clone(),
+                change_type: "modified".to_string(),
+                size: 0,
+            }).collect(),
+            repo_path: config.repo_path.clone(),
+            cluster_id: Some(cluster.id.to_string()),
+            version: Some(next.to_string()),
+            score: Some(weight.score),
+            metadata: std::collections::HashMap::new(),
+        };
+        let _ = angler.trigger_baits(BaitEvent::PreCommit, &bait_context).await;
+
+        // Run pre-commit hooks
+        if let Some(hook_result) = angler.run_pre_commit(&cluster_paths).await {
+            if !hook_result.success {
+                tracing::warn!(stderr = %hook_result.stderr, "pre-commit hook failed");
+                if config.angler.git_hooks.pre_commit.as_ref().map(|c| c.required).unwrap_or(false) {
+                    status.status = State::Failed;
+                    status.last_error = Some(format!("Pre-commit hook failed: {}", hook_result.stderr));
+                    write_status(&config.repo_path, status);
+                    crate::daemon::notification::notify_error(
+                        &config.notify,
+                        &format!("Pre-commit hook failed: {}", hook_result.stderr),
+                        None,
+                    );
+                    return;
+                }
+            }
+        }
+    }
+
     let metadata_line = format_commit(&cluster, &diff, &weight, bump, &next, &agent_event);
 
     let msg = if config.inference.enabled
@@ -414,7 +493,70 @@ async fn process_cluster(
         return;
     }
 
+    // Run post-commit hooks and send webhook events
+    if let Some(angler) = angler {
+        // Run post-commit hooks
+        let _ = angler.run_post_commit().await;
+
+        // Send webhook events
+        let webhook_event = WebhookEvent::Commit {
+            version: next.to_string(),
+            score: weight.score,
+            message: msg.clone(),
+            files_changed: cluster_paths.len(),
+            cluster_id: cluster.id.to_string(),
+        };
+        let webhook_results = angler.broadcast_webhook_event(&webhook_event, &cluster_paths).await;
+        for (endpoint_id, result) in webhook_results {
+            if !result.success {
+                tracing::warn!(endpoint = %endpoint_id, error = ?result.error, "webhook delivery failed");
+            }
+        }
+
+        // Trigger post-commit bait
+        let bait_context = BaitContext {
+            event: BaitEvent::PostCommit,
+            files: cluster_paths.iter().map(|p| crate::angler::FileChangeInfo {
+                path: p.clone(),
+                change_type: "modified".to_string(),
+                size: 0,
+            }).collect(),
+            repo_path: config.repo_path.clone(),
+            cluster_id: Some(cluster.id.to_string()),
+            version: Some(next.to_string()),
+            score: Some(weight.score),
+            metadata: std::collections::HashMap::new(),
+        };
+        let _ = angler.trigger_baits(BaitEvent::PostCommit, &bait_context).await;
+    }
+
     if config.push.enabled {
+        // Run pre-push hooks if configured
+        if let Some(angler) = angler {
+            let refs = vec![(
+                format!("refs/heads/{}", config.push.branch),
+                "HEAD".to_string(),
+                format!("refs/heads/{}", config.push.branch),
+                "origin/HEAD".to_string(),
+            )];
+            if let Some(hook_result) = angler.run_pre_push(&config.push.remote, "origin", &refs).await {
+                if !hook_result.success {
+                    tracing::warn!(stderr = %hook_result.stderr, "pre-push hook failed");
+                    if config.angler.git_hooks.pre_push.as_ref().map(|c| c.required).unwrap_or(false) {
+                        status.status = State::Failed;
+                        status.last_error = Some(format!("Pre-push hook failed: {}", hook_result.stderr));
+                        write_status(&config.repo_path, status);
+                        crate::daemon::notification::notify_error(
+                            &config.notify,
+                            &format!("Pre-push hook failed: {}", hook_result.stderr),
+                            None,
+                        );
+                        return;
+                    }
+                }
+            }
+        }
+
         if let Err(err) = crate::push::push(&config.repo_path, &config.push.branch).await {
             tracing::warn!(error = %err, "push failed");
             write_trace_if_active(
@@ -431,6 +573,32 @@ async fn process_cluster(
             write_status(&config.repo_path, status);
             crate::daemon::notification::notify_error(&config.notify, &err.to_string(), None);
             return;
+        }
+
+        // Send push webhook event
+        if let Some(angler) = angler {
+            let webhook_event = WebhookEvent::Push {
+                branch: config.push.branch.clone(),
+                commits: 1,
+                remote: config.push.remote.clone(),
+            };
+            let _ = angler.broadcast_webhook_event(&webhook_event, &cluster_paths).await;
+
+            // Trigger post-push bait
+            let bait_context = BaitContext {
+                event: BaitEvent::PostPush,
+                files: cluster_paths.iter().map(|p| crate::angler::FileChangeInfo {
+                    path: p.clone(),
+                    change_type: "modified".to_string(),
+                    size: 0,
+                }).collect(),
+                repo_path: config.repo_path.clone(),
+                cluster_id: Some(cluster.id.to_string()),
+                version: Some(next.to_string()),
+                score: Some(weight.score),
+                metadata: std::collections::HashMap::new(),
+            };
+            let _ = angler.trigger_baits(BaitEvent::PostPush, &bait_context).await;
         }
     }
 

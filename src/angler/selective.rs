@@ -6,7 +6,7 @@
 //! captures changes based on configurable rules.
 
 use crate::angler::config::{CaptureAction, CaptureRule, ChangeType, SelectiveConfig};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use regex::Regex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -79,14 +79,14 @@ impl FileChange {
     }
 
     /// Load file metadata.
-    pub fn with_metadata(mut self, repo_root: &Path) -> Result<Self> {
+    pub fn with_metadata(&mut self, repo_root: &Path) -> Result<()> {
         self.absolute_path = repo_root.join(&self.path);
 
         if let Ok(metadata) = std::fs::metadata(&self.absolute_path) {
             self.size = metadata.len();
         }
 
-        Ok(self)
+        Ok(())
     }
 
     /// Load content (respecting max size).
@@ -455,7 +455,7 @@ pub mod templates {
                 "**/*.pfx".to_string(),
             ],
             content_patterns: vec![
-                r"(?i)(password|secret|api[_-]?key|token)\s*=\s*['\"][^'\"]+['\"]".to_string(),
+                r#"(?i)(password|secret|api[_-]?key|token)\s*=\s*['"][^'"]+['"]"#.to_string(),
             ],
             change_types: vec![
                 ChangeType::Added,

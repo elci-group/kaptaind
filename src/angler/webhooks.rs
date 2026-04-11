@@ -9,7 +9,7 @@
 //! - Custom headers
 
 use crate::angler::config::{RetryConfig, SignatureAlgorithm, WebhookEndpoint, WebhooksConfig};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use hmac::{Hmac, Mac};
 use serde::Serialize;
 use sha2::{Sha256, Sha512};
@@ -18,7 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 use tokio::sync::RwLock;
 use tokio::time::sleep;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, warn};
 
 type HmacSha256 = Hmac<Sha256>;
 type HmacSha512 = Hmac<Sha512>;
@@ -388,7 +388,7 @@ impl WebhookManager {
         &self,
         endpoint: &WebhookEndpoint,
         payload: &serde_json::Value,
-    ) -> Result<reqwest::StatusCode, reqwest::Error> {
+    ) -> Result<(reqwest::StatusCode, String), reqwest::Error> {
         let body = serde_json::to_string(payload).unwrap_or_default();
 
         let mut request = self
@@ -431,7 +431,7 @@ impl WebhookManager {
             endpoint.id, status, body_text
         );
 
-        Ok(status)
+        Ok((status, body_text))
     }
 
     fn sign_payload(&self, payload: &str, secret: &str) -> String {

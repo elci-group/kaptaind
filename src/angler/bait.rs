@@ -5,14 +5,13 @@
 //! to various events in the kaptaind lifecycle.
 
 use crate::angler::config::{BaitConfig, BaitDefinition, BaitEvent, BaitType};
-use anyhow::{anyhow, Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Result of executing a bait.
 #[derive(Debug, Clone)]
@@ -616,7 +615,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&context).unwrap();
-        assert!(json.contains("PostCommit"));
+        assert!(json.contains("post_commit"));  // snake_case serialization
         assert!(json.contains("test.rs"));
     }
 

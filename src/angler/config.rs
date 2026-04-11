@@ -345,7 +345,7 @@ pub struct CaptureRule {
 }
 
 /// Types of changes that can be captured.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum ChangeType {
     Added,
@@ -356,10 +356,11 @@ pub enum ChangeType {
 }
 
 /// Action to take when a capture rule matches.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum CaptureAction {
     /// Pass the change through normally
+    #[default]
     Pass,
     /// Block the change (fails the commit)
     Block,
@@ -463,7 +464,7 @@ pub enum BaitType {
 }
 
 /// Events that can trigger a bait.
-#[derive(Debug, Clone, Copy, Deserialize, Serialize)]
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum BaitEvent {
     PreCommit,

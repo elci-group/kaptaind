@@ -64,18 +64,19 @@ pub mod selective;
 pub mod webhooks;
 
 // Re-export main types
-pub use bait::{BaitContext, BaitManager, BaitResult};
+pub use bait::{BaitContext, BaitManager, BaitResult, FileChangeInfo};
+pub use config::ChangeType;
 pub use config::{
     AnglerConfig, BaitConfig, BaitDefinition, BaitEvent, BaitType, CaptureAction, CaptureRule,
-    ChangeType, GitHooksConfig, HookConfig, RetryConfig, SelectiveConfig, SignatureAlgorithm,
+    GitHooksConfig, HookConfig, RetryConfig, SelectiveConfig, SignatureAlgorithm,
     WebhookEndpoint, WebhooksConfig,
 };
 pub use git_hooks::{GitHookManager, HookResult};
 pub use selective::{CaptureResult, FileChange, SelectiveEngine};
 pub use webhooks::{DeliveryResult, WebhookEvent, WebhookManager};
 
-use anyhow::{Context, Result};
-use std::path::Path;
+use anyhow::Result;
+use std::path::{Path, PathBuf};
 use tracing::{error, info};
 
 /// Main Angler system that coordinates all four capabilities.
@@ -178,11 +179,9 @@ impl AnglerSystem {
     }
 
     /// Run pre-commit hooks.
-    pub async fn run_pre_commit(&self, staged_files: &[Path]) -> Option<HookResult> {
+    pub async fn run_pre_commit(&self, staged_files: &[std::path::PathBuf]) -> Option<HookResult> {
         if let Some(ref manager) = self.git_hooks {
-            match manager.run_pre_commit(
-                &staged_files.iter().map(|p| p.to_path_buf()).collect::<Vec<_>>(),
-            ).await {
+            match manager.run_pre_commit(staged_files).await {
                 Ok(result) => return Some(result),
                 Err(e) => {
                     error!("Pre-commit hook error: {}", e);
@@ -228,14 +227,11 @@ impl AnglerSystem {
     pub async fn broadcast_webhook_event(
         &self,
         event: &WebhookEvent,
-        file_changes: &[Path],
+        file_changes: &[std::path::PathBuf],
     ) -> Vec<(String, DeliveryResult)> {
         if let Some(ref manager) = self.webhooks {
             manager
-                .broadcast_event(
-                    event,
-                    &file_changes.iter().map(|p| p.to_path_buf()).collect::<Vec<_>>(),
-                )
+                .broadcast_event(event, file_changes)
                 .await
         } else {
             Vec::new()
@@ -371,7 +367,10 @@ pub fn security_config() -> AnglerConfig {
 /// Create a CI/CD focused angler configuration.
 pub fn cicd_config(webhook_url: &str) -> AnglerConfig {
     AnglerConfig {
-        git_hooks: GitHooksConfig::default(),
+        git_hooks: GitHooksConfig {
+            enabled: false,
+            ..Default::default()
+        },
         webhooks: WebhooksConfig {
             enabled: true,
             endpoints: vec![WebhookEndpoint {
@@ -409,6 +408,7 @@ pub fn cicd_config(webhook_url: &str) -> AnglerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
     use tempfile::TempDir;
 
     #[test]

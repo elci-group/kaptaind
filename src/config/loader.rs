@@ -1,4 +1,5 @@
 use crate::qualification::policy::QualificationConfig;
+use crate::angler::config::AnglerConfig;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -35,6 +36,8 @@ pub struct Config {
     pub vacs: VacsConfig,
     #[serde(default)]
     pub trawl: TrawlConfig,
+    #[serde(default)]
+    pub angler: AnglerConfig,
     #[serde(default)]
     pub repo_path: PathBuf,
 }
@@ -620,6 +623,7 @@ impl Default for Config {
             plugins: PluginsConfig::default(),
             vacs: VacsConfig::default(),
             trawl: TrawlConfig::default(),
+            angler: AnglerConfig::default(),
             repo_path: cwd,
         }
     }
