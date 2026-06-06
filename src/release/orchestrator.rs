@@ -143,8 +143,18 @@ pub async fn post_commit(
 
     // Preview intent: build only, no packaging
     if *intent == ReleaseIntent::Preview {
-        tracing::info!(version = version, "preview release: build complete, packaging skipped");
-        append_index(repo_path, version, commit_hash, stability.score, "preview", None);
+        tracing::info!(
+            version = version,
+            "preview release: build complete, packaging skipped"
+        );
+        append_index(
+            repo_path,
+            version,
+            commit_hash,
+            stability.score,
+            "preview",
+            None,
+        );
         crate::daemon::telemetry::update_release_metrics(repo_path, stability.score, true);
         return;
     }
@@ -221,7 +231,10 @@ pub async fn post_commit(
 // --- Index helpers ---
 
 fn load_index(repo_path: &Path) -> ReleaseIndex {
-    let path = repo_path.join(".kaptaind").join("releases").join("index.json");
+    let path = repo_path
+        .join(".kaptaind")
+        .join("releases")
+        .join("index.json");
     if !path.exists() {
         return ReleaseIndex::default();
     }

@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "postgresql"
   url      = env("DATABASE_URL")
 }
 
@@ -22,8 +22,14 @@ model User {
   subscription   Subscription?
   memberships    TeamMembership[]
   ownedProjects  Project[]
+
+  // New Organization & Billing associations
+  orgMemberships OrganizationMembership[]
+  teamMembers    TeamMember[]
+  billingCustomer BillingCustomer?
 }
 
+// NextAuth Account model (matches OAuth)
 model Account {
   id                String  @id @default(cuid())
   userId            String
@@ -57,6 +63,7 @@ model VerificationToken {
   @@unique([identifier, token])
 }
 
+// Keeping original Subscription for backward compatibility, but adding relations to new primitives if helpful
 model Subscription {
   id                   String    @id @default(cuid())
   userId               String    @unique
@@ -84,6 +91,12 @@ model Project {
   owner       User             @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   memberships TeamMembership[]
   aiCache     AiCache[]
+  auditLogs   AuditLog[]
+
+  // New Organization and Policy relationships
+  orgId       String?
+  organization Organization?   @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  policy      Policy?
 }
 
 model TeamMembership {
@@ -113,4 +126,173 @@ model AiCache {
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   @@unique([projectId, clusterId, featureKey])
+}
+
+// --- NEW MONETIZATION & ENTERPRISE MODELS ---
+
+model Organization {
+  id                   String        @id @default(cuid())
+  name                 String
+  createdAt            DateTime      @default(now())
+  updatedAt            DateTime      @updatedAt
+  
+  projects             Project[]
+  teams                Team[]
+  memberships          OrganizationMembership[]
+  billingCustomer      BillingCustomer?
+}
+
+model OrganizationMembership {
+  id             String       @id @default(cuid())
+  orgId          String
+  userId         String
+  role           String       @default("MEMBER") // "OWNER", "ADMIN", "MEMBER"
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([orgId, userId])
+}
+
+model Team {
+  id             String       @id @default(cuid())
+  orgId          String
+  name           String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  organization   Organization @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  members        TeamMember[]
+}
+
+model TeamMember {
+  id             String   @id @default(cuid())
+  teamId         String
+  userId         String
+  role           String   @default("MEMBER") // "LEAD", "MEMBER"
+  createdAt      DateTime @default(now())
+
+  team           Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([teamId, userId])
+}
+
+model Plan {
+  id              String        @id @default(cuid())
+  name            String        // "Free", "Pro", "Team", "Enterprise"
+  code            String        @unique // "free", "pro", "team", "enterprise"
+  stripeProductId String?       @unique
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  entitlements    Entitlement[]
+  subscriptions   BillingSubscription[]
+}
+
+model Entitlement {
+  id           String   @id @default(cuid())
+  planId       String
+  featureKey   String   // "canUseAi", "maxRepos", "maxUsers", "retentionDays", "canUseSso", "canUsePolicyPacks", "canExportAuditLogs"
+  featureValue String   // e.g. "true", "5", "30", "true"
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  plan         Plan     @relation(fields: [planId], references: [id], onDelete: Cascade)
+
+  @@unique([planId, featureKey])
+}
+
+model BillingCustomer {
+  id                 String        @id @default(cuid())
+  stripeCustomerId   String        @unique
+  userId             String?       @unique
+  orgId              String?       @unique
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  user               User?         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization       Organization? @relation(fields: [orgId], references: [id], onDelete: Cascade)
+  subscriptions      BillingSubscription[]
+  usageEvents        MeteredUsageEvent[]
+}
+
+model BillingSubscription {
+  id                   String              @id @default(cuid())
+  customerId           String
+  planId               String
+  stripeSubscriptionId String?             @unique
+  status               String              @default("ACTIVE") // "ACTIVE", "PAST_DUE", "CANCELED", "TRIALING"
+  currentPeriodStart   DateTime            @default(now())
+  currentPeriodEnd     DateTime?
+  createdAt            DateTime            @default(now())
+  updatedAt            DateTime            @updatedAt
+
+  customer             BillingCustomer     @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  plan                 Plan                @relation(fields: [planId], references: [id])
+  states               SubscriptionState[]
+
+  @@index([status])
+  @@index([stripeSubscriptionId])
+}
+
+model SubscriptionState {
+  id             String              @id @default(cuid())
+  subscriptionId String
+  status         String
+  changedAt      DateTime            @default(now())
+  metadata       String?             // JSON string for extra info
+
+  subscription   BillingSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+}
+
+model MeteredUsageEvent {
+  id             String          @id @default(cuid())
+  customerId     String
+  userId         String?
+  meterName      String          // "analysis_events", "automated_commits", "release_decisions", "AI_tokens", "trace_retention_gb_month", "active_repositories"
+  quantity       Float
+  timestamp      DateTime        @default(now())
+  stripeEventId  String?         @unique
+
+  customer       BillingCustomer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([timestamp])
+}
+
+model AuditLog {
+  id          String   @id @default(cuid())
+  actor       String   // e.g. "user@example.com", "daemon:123"
+  action      String   // e.g. "release.decision", "policy.update", "org.create"
+  resource    String   // e.g. "project:default"
+  beforeHash  String?
+  afterHash   String?
+  timestamp   DateTime @default(now())
+  requestId   String?
+  source      String   // "daemon" | "web" | "desktop" | "api"
+  orgId       String?  // Optional scope
+  projectId   String?  // Optional project scope
+  project     Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  details     String?  // JSON string of the hashed payload
+
+  @@index([timestamp])
+  @@index([orgId])
+  @@index([projectId])
+}
+
+model Policy {
+  id                             String   @id @default(cuid())
+  projectId                      String   @unique
+  versionBumpRules               String?  // JSON string
+  branchProtections              String?  // JSON string
+  minimumTests                   String?  // JSON string
+  disallowedFilePatterns         String?  // JSON string
+  releaseQualificationThresholds String?  // JSON string
+  createdAt                      DateTime @default(now())
+  updatedAt                      DateTime @updatedAt
+
+  project                        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }

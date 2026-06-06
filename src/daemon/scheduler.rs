@@ -1,24 +1,50 @@
-use crate::aoc::tracer;
 use crate::angler::{AnglerSystem, BaitContext, BaitEvent, WebhookEvent};
+use crate::aoc::tracer;
 use crate::cluster::engine::{Cluster, ClusterEngine};
 use crate::config::loader::TestConfig;
 use crate::config::Config;
+use crate::daemon::health::{DaemonEvent, Metrics};
+use crate::daemon::policy::{self, Policy};
+use crate::daemon::prune::prune_analysis_artifacts;
+use crate::daemon::status::write_status;
+use crate::daemon::trace::write_trace_if_active;
 use crate::diff::DiffAnalysis;
 use crate::git::repo::Repo;
 use crate::version::Bump;
-use crate::watcher::{FsEvent, FsEventKind};
+use crate::watcher::FsEvent;
 use chrono::{DateTime, Utc};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use semver::Version;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinSet;
 
-pub async fn run(mut rx: Receiver<FsEvent>, config: Config, mut shutdown: crate::daemon::shutdown::ShutdownToken) {
+pub use crate::daemon::status::{State, StatusReport};
+
+fn broadcast_event(
+    tx: &tokio::sync::broadcast::Sender<DaemonEvent>,
+    event_type: &str,
+    payload: serde_json::Value,
+) {
+    let _ = tx.send(DaemonEvent {
+        event_type: event_type.to_string(),
+        payload,
+    });
+}
+
+pub async fn run(
+    mut rx: Receiver<FsEvent>,
+    config: Config,
+    mut shutdown: crate::daemon::shutdown::ShutdownToken,
+    metrics: Arc<Metrics>,
+    event_tx: tokio::sync::broadcast::Sender<DaemonEvent>,
+) {
     // Initialize Angler system
     let angler = match AnglerSystem::new(&config.angler, &config.repo_path) {
         Ok(system) => {
@@ -40,6 +66,12 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config, mut shutdown: crate:
     tasks.spawn(async move {
         vacs_engine_clone.process_queue(vacs_rx).await;
     });
+
+    let mut prune_interval = tokio::time::interval(
+        Duration::from_secs(config.prune_interval_minutes * 60)
+    );
+    // Skip the immediate first tick so we don't prune right on startup
+    prune_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     let mut cluster_engine = ClusterEngine::new_from_config(&config.cluster);
     let mut repo = match Repo::open(&config.repo_path) {
@@ -81,13 +113,13 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config, mut shutdown: crate:
                         tracing::trace!(?event.paths, "ingesting event");
                         if let Some(cluster) = cluster_engine.ingest(event) {
                             tracing::info!(cluster_id = %cluster.id, "cluster window expired by new event");
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref()).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
                         }
                     }
                     None => {
                         tracing::trace!("event channel closed");
                         if let Some(cluster) = cluster_engine.flush() {
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref()).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
                         }
                         break;
                     }
@@ -96,11 +128,23 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config, mut shutdown: crate:
             _ = tokio::time::sleep(config.cluster.window) => {
                 if let Some(cluster) = cluster_engine.flush() {
                     tracing::info!(cluster_id = %cluster.id, "cluster window expired by timeout");
-                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref()).await;
+                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
                 }
             }
             _ = tasks.join_next(), if !tasks.is_empty() => {
                 // Task completed; reap it without blocking
+            }
+            _ = prune_interval.tick() => {
+                let repo_path = config.repo_path.clone();
+                let retention = config.retention_days;
+                let metrics = metrics.clone();
+                tasks.spawn(async move {
+                    let result = prune_analysis_artifacts(&repo_path, retention).await;
+                    metrics.artifacts_pruned.fetch_add(result.deleted, Ordering::Relaxed);
+                    if result.deleted > 0 || result.errors > 0 {
+                        tracing::info!(deleted = result.deleted, errors = result.errors, "pruned old analysis artifacts");
+                    }
+                });
             }
             _ = shutdown.wait() => {
                 tracing::info!("shutdown signal received, draining tasks");
@@ -112,9 +156,7 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config, mut shutdown: crate:
     }
 
     // Drain all remaining tasks with a timeout
-    let drain = async {
-        while tasks.join_next().await.is_some() {}
-    };
+    let drain = async { while tasks.join_next().await.is_some() {} };
     let drain_timeout = Duration::from_secs(25);
     if tokio::time::timeout(drain_timeout, drain).await.is_err() {
         tracing::warn!("task drain timeout (25s), aborting remaining tasks");
@@ -124,83 +166,6 @@ pub async fn run(mut rx: Receiver<FsEvent>, config: Config, mut shutdown: crate:
     status.status = State::Stopped;
     write_status(&config.repo_path, &status);
     tracing::info!("scheduler shutdown complete");
-}
-
-/// Build and write a trace record for a cluster.
-fn write_trace_if_active(
-    repo_path: &Path,
-    cluster: &Cluster,
-    result: tracer::TraceResult,
-    test_outcome: &TestOutcome,
-    agent_event: Option<crate::aoc::AgentEvent>,
-) {
-    // Check if an active AoC exists
-    match crate::aoc::session::load_active(repo_path) {
-        Ok(Some(session)) => {
-            // Convert FsEvents to TraceEvents
-            let events = cluster
-                .events
-                .iter()
-                .map(|evt| tracer::TraceEvent {
-                    paths: evt
-                        .paths
-                        .iter()
-                        .filter_map(|p| p.to_str().map(|s| s.to_string()))
-                        .collect(),
-                    kind: match evt.kind {
-                        FsEventKind::Create => "create".to_string(),
-                        FsEventKind::Modify => "modify".to_string(),
-                        FsEventKind::Remove => "remove".to_string(),
-                        FsEventKind::Other => "other".to_string(),
-                    },
-                    t: evt.timestamp,
-                })
-                .collect();
-
-            // Extract test outcome
-            let test = match test_outcome {
-                TestOutcome::Passed => tracer::TraceTest {
-                    outcome: "passed".to_string(),
-                    stderr: None,
-                },
-                TestOutcome::Failed { stderr, .. } => tracer::TraceTest {
-                    outcome: "failed".to_string(),
-                    stderr: Some(stderr.clone()),
-                },
-                TestOutcome::Skipped => tracer::TraceTest {
-                    outcome: "skipped".to_string(),
-                    stderr: None,
-                },
-            };
-
-            let duration_ms = (cluster.ended_at - cluster.started_at)
-                .num_milliseconds()
-                .max(0) as u64;
-
-            let trace = tracer::TraceRecord {
-                cluster_id: cluster.id.to_string(),
-                aoc_id: session.id.clone(),
-                started_at: cluster.started_at,
-                ended_at: cluster.ended_at,
-                duration_ms,
-                events,
-                test,
-                result,
-                analysis_ref: Some(format!(".kaptaind/analysis/{}.json", cluster.id)),
-                agent_event,
-            };
-
-            if let Err(err) = crate::aoc::db::save_trace(repo_path, &trace) {
-                tracing::warn!(error = %err, "failed to write AoC trace to database");
-            }
-        }
-        Ok(None) => {
-            // No active AoC, skip trace
-        }
-        Err(err) => {
-            tracing::debug!(error = %err, "failed to load active AoC");
-        }
-    }
 }
 
 async fn process_cluster(
@@ -213,17 +178,56 @@ async fn process_cluster(
     tasks: &mut JoinSet<()>,
     shutdown: crate::daemon::shutdown::ShutdownToken,
     angler: Option<&AnglerSystem>,
+    metrics: Arc<Metrics>,
+    event_tx: tokio::sync::broadcast::Sender<DaemonEvent>,
 ) {
     let now = Utc::now();
     let mut test_outcome = TestOutcome::Skipped; // Default; will be overwritten if we get to testing
+
+    metrics.clusters_processed.fetch_add(1, Ordering::Relaxed);
+
+    // Load policy if configured
+    let policy: Option<Policy> = config
+        .policy_id
+        .as_ref()
+        .and_then(|id| Policy::load_or_default(&config.repo_path, id).ok());
+
+    // Collect cluster paths early for policy checks
+    let cluster_paths: Vec<PathBuf> = cluster
+        .events
+        .iter()
+        .flat_map(|e| e.paths.iter().cloned())
+        .collect();
+
+    // Enforce file_pattern_allowlist
+    if let Some(ref p) = policy {
+        if !p.file_pattern_allowlist.is_empty()
+            && !policy::cluster_matches_allowlist(&cluster_paths, &p.file_pattern_allowlist)
+        {
+            tracing::debug!("cluster blocked by file_pattern_allowlist");
+            write_trace_if_active(
+                &config.repo_path,
+                &cluster,
+                tracer::TraceResult::Skipped {
+                    reason: "allowlist".to_string(),
+                },
+                test_outcome.trace_test(),
+                None,
+            );
+            status.status = State::Idle;
+            write_status(&config.repo_path, status);
+            return;
+        }
+    }
 
     // Attempt to link interceptor agent events matching this cluster
     let agent_events = crate::aoc::interceptor::consume_events_in_window(
         &config.repo_path,
         cluster.started_at - chrono::Duration::seconds(5),
         cluster.ended_at + chrono::Duration::seconds(5),
-    ).unwrap_or_default();
-            
+    )
+    .unwrap_or_default();
+
     // Just take the latest relevant event if any
     let agent_event = agent_events.into_iter().last();
 
@@ -235,7 +239,7 @@ async fn process_cluster(
             tracer::TraceResult::Skipped {
                 reason: "rate_limited".to_string(),
             },
-            &test_outcome,
+            test_outcome.trace_test(),
             agent_event.clone(),
         );
         status.status = State::Idle;
@@ -262,7 +266,7 @@ async fn process_cluster(
             tracer::TraceResult::Skipped {
                 reason: "clean_tree".to_string(),
             },
-            &test_outcome,
+            test_outcome.trace_test(),
             agent_event.clone(),
         );
         status.status = State::Idle;
@@ -274,16 +278,47 @@ async fn process_cluster(
     write_status(&config.repo_path, status);
     tracing::trace!("running test hook");
 
+    // Branch protection: force test required on protected branches
+    let branch_protection_forces_tests = policy
+        .as_ref()
+        .map(|p| policy::is_branch_protected(&config.repo_path, &p.branch_protection))
+        .unwrap_or(false);
+
     test_outcome = run_test_hook(config).await;
-    if should_block_commit(&config.test, &test_outcome) {
+
+    if matches!(test_outcome, TestOutcome::Failed { .. }) {
+        metrics.test_hook_failures.fetch_add(1, Ordering::Relaxed);
+    }
+
+    let tests_required = config.test.required
+        || branch_protection_forces_tests
+        || policy.as_ref().map(|p| p.min_test_coverage).unwrap_or(false);
+
+    if tests_required && matches!(test_outcome, TestOutcome::Failed { .. }) {
         log_test_failure(&test_outcome);
+
+        if policy.as_ref().map(|p| p.min_test_coverage).unwrap_or(false) {
+            let _ = policy::append_audit_log(
+                &config.repo_path,
+                &policy::AuditEntry {
+                    timestamp: Utc::now(),
+                    action: "commit_blocked".to_string(),
+                    resource: "test_failure".to_string(),
+                    details: serde_json::json!({
+                        "reason": "min_test_coverage",
+                        "cluster_id": cluster.id.to_string(),
+                    }),
+                },
+            );
+        }
+
         write_trace_if_active(
             &config.repo_path,
             &cluster,
             tracer::TraceResult::Skipped {
                 reason: "test_failed".to_string(),
             },
-            &test_outcome,
+            test_outcome.trace_test(),
             agent_event.clone(),
         );
         status.status = State::Failed;
@@ -291,7 +326,12 @@ async fn process_cluster(
             status.last_error = Some(stderr.clone());
         }
         write_status(&config.repo_path, status);
-        crate::daemon::notification::notify_error(&config.notify, "Tests failed", Some("Test hook"));
+        crate::daemon::notification::notify_error(
+            &config.notify,
+            "Tests failed",
+            Some("Test hook"),
+            config.capabilities.network_webhooks,
+        );
         return;
     }
 
@@ -299,7 +339,7 @@ async fn process_cluster(
     write_status(&config.repo_path, status);
 
     let mut diff = crate::diff::analyze_with_plugins(&cluster, &config.repo_path, &config.plugins);
-    if config.bundle.command.is_some() {
+    if config.bundle.command.is_some() && config.capabilities.bundle_scoring {
         diff.bundle = crate::diff::bundle::bundle_score(&config.bundle, &config.repo_path).score;
     }
     crate::daemon::telemetry::update_cache_metrics(
@@ -322,7 +362,7 @@ async fn process_cluster(
             tracer::TraceResult::Skipped {
                 reason: "no_bump".to_string(),
             },
-            &test_outcome,
+            test_outcome.trace_test(),
             agent_event.clone(),
         );
         status.status = State::Idle;
@@ -330,31 +370,9 @@ async fn process_cluster(
         return;
     }
 
-    let version_path = config.repo_path.join("VERSION");
-    let previous = load_version(&version_path).unwrap_or_else(|| Version::new(0, 1, 0));
+    let previous =
+        load_version(&config.repo_path.join("VERSION")).unwrap_or_else(|| Version::new(0, 1, 0));
     let next = crate::version::apply(previous.clone(), bump);
-    if let Err(err) = save_version(&version_path, &next) {
-        tracing::error!(error = %err, path = ?version_path, "failed writing VERSION file");
-        // Still write trace for visibility
-        write_trace_if_active(
-            &config.repo_path,
-            &cluster,
-            tracer::TraceResult::Skipped {
-                reason: "version_write_failed".to_string(),
-            },
-            &test_outcome,
-            agent_event.clone(),
-        );
-        status.status = State::Failed;
-        status.last_error = Some(err.to_string());
-        write_status(&config.repo_path, status);
-        crate::daemon::notification::notify_error(&config.notify, &err.to_string(), None);
-        return;
-    }
-
-    if let Err(err) = persist_analysis_artifact(config, &cluster, &diff, &weight, bump, &next) {
-        tracing::warn!(error = %err, "failed to persist analysis artifact");
-    }
 
     // Collect cluster paths early for staging and inference
     let cluster_paths: Vec<PathBuf> = cluster
@@ -368,7 +386,8 @@ async fn process_cluster(
         let selective_changes: Vec<crate::angler::FileChange> = cluster_paths
             .iter()
             .map(|p| {
-                let mut change = crate::angler::FileChange::new(p, crate::angler::ChangeType::Modified);
+                let mut change =
+                    crate::angler::FileChange::new(p, crate::angler::ChangeType::Modified);
                 let _ = change.with_metadata(&config.repo_path);
                 change
             })
@@ -384,9 +403,13 @@ async fn process_cluster(
                 &config.notify,
                 &format!("{} change(s) blocked by selective rules", blocked.len()),
                 Some("Angler selective capture"),
+                config.capabilities.network_webhooks,
             );
             status.status = State::Failed;
-            status.last_error = Some(format!("{} change(s) blocked by selective rules", blocked.len()));
+            status.last_error = Some(format!(
+                "{} change(s) blocked by selective rules",
+                blocked.len()
+            ));
             write_status(&config.repo_path, status);
             return;
         }
@@ -394,36 +417,74 @@ async fn process_cluster(
         // Trigger pre-commit bait
         let bait_context = BaitContext {
             event: BaitEvent::PreCommit,
-            files: cluster_paths.iter().map(|p| crate::angler::FileChangeInfo {
-                path: p.clone(),
-                change_type: "modified".to_string(),
-                size: 0,
-            }).collect(),
+            files: cluster_paths
+                .iter()
+                .map(|p| crate::angler::FileChangeInfo {
+                    path: p.clone(),
+                    change_type: "modified".to_string(),
+                    size: 0,
+                })
+                .collect(),
             repo_path: config.repo_path.clone(),
             cluster_id: Some(cluster.id.to_string()),
             version: Some(next.to_string()),
             score: Some(weight.score),
             metadata: std::collections::HashMap::new(),
         };
-        let _ = angler.trigger_baits(BaitEvent::PreCommit, &bait_context).await;
+        let _ = angler
+            .trigger_baits(BaitEvent::PreCommit, &bait_context)
+            .await;
 
         // Run pre-commit hooks
         if let Some(hook_result) = angler.run_pre_commit(&cluster_paths).await {
             if !hook_result.success {
                 tracing::warn!(stderr = %hook_result.stderr, "pre-commit hook failed");
-                if config.angler.git_hooks.pre_commit.as_ref().map(|c| c.required).unwrap_or(false) {
+                if config
+                    .angler
+                    .git_hooks
+                    .pre_commit
+                    .as_ref()
+                    .map(|c| c.required)
+                    .unwrap_or(false)
+                {
                     status.status = State::Failed;
-                    status.last_error = Some(format!("Pre-commit hook failed: {}", hook_result.stderr));
+                    status.last_error =
+                        Some(format!("Pre-commit hook failed: {}", hook_result.stderr));
                     write_status(&config.repo_path, status);
                     crate::daemon::notification::notify_error(
                         &config.notify,
                         &format!("Pre-commit hook failed: {}", hook_result.stderr),
                         None,
+                        config.capabilities.network_webhooks,
                     );
                     return;
                 }
             }
         }
+    }
+
+    let version_path = config.repo_path.join("VERSION");
+    if let Err(err) = save_version(&version_path, &next) {
+        tracing::error!(error = %err, path = ?version_path, "failed writing VERSION file");
+        // Still write trace for visibility
+        write_trace_if_active(
+            &config.repo_path,
+            &cluster,
+            tracer::TraceResult::Skipped {
+                reason: "version_write_failed".to_string(),
+            },
+            test_outcome.trace_test(),
+            agent_event.clone(),
+        );
+        status.status = State::Failed;
+        status.last_error = Some(err.to_string());
+        write_status(&config.repo_path, status);
+        crate::daemon::notification::notify_error(&config.notify, &err.to_string(), None, config.capabilities.network_webhooks);
+        return;
+    }
+
+    if let Err(err) = persist_analysis_artifact(config, &cluster, &diff, &weight, bump, &next, config.air_gapped) {
+        tracing::warn!(error = %err, "failed to persist analysis artifact");
     }
 
     let metadata_line = format_commit(&cluster, &diff, &weight, bump, &next, &agent_event);
@@ -451,6 +512,13 @@ async fn process_cluster(
         metadata_line
     };
 
+    // Policy signoff
+    let msg = if policy.as_ref().map(|p| p.required_signoff).unwrap_or(false) {
+        format!("{}\n\nSigned-off-by: kaptaind <kaptaind@localhost>", msg)
+    } else {
+        msg
+    };
+
     // Abstract token calculation
     let mut input_tokens = 0;
     for event in &cluster.events {
@@ -461,76 +529,106 @@ async fn process_cluster(
         }
     }
     let output_tokens = msg.len() / 4;
-    let metrics = crate::daemon::telemetry::track_cost(&config.repo_path, input_tokens, output_tokens);
+    let cost_metrics =
+        crate::daemon::telemetry::track_cost(&config.repo_path, input_tokens, output_tokens);
     tracing::info!(
-        input_tokens = metrics.input_tokens,
-        output_tokens = metrics.output_tokens,
-        marginal_cost = %metrics.marginal_cost,
-        aggregate_cost = %metrics.aggregate_cost,
+        input_tokens = cost_metrics.input_tokens,
+        output_tokens = cost_metrics.output_tokens,
+        marginal_cost = %cost_metrics.marginal_cost,
+        aggregate_cost = %cost_metrics.aggregate_cost,
         "Token usage and cost tracking"
     );
 
     if let Err(err) = crate::commit::orchestrator::commit_with_staging(
-        &repo.inner,
+        repo.root(),
         &msg,
         &config.staging,
         &cluster_paths,
     ) {
         tracing::error!(error = %err, "commit failed");
+        broadcast_event(
+            &event_tx,
+            "commit_failed",
+            serde_json::json!({
+                "error": err.to_string(),
+                "cluster_id": cluster.id.to_string(),
+            }),
+        );
         write_trace_if_active(
             &config.repo_path,
             &cluster,
             tracer::TraceResult::Skipped {
                 reason: "commit_failed".to_string(),
             },
-            &test_outcome,
+            test_outcome.trace_test(),
             agent_event.clone(),
         );
         status.status = State::Failed;
         status.last_error = Some(err.to_string());
         write_status(&config.repo_path, status);
-        crate::daemon::notification::notify_error(&config.notify, &err.to_string(), None);
+        crate::daemon::notification::notify_error(&config.notify, &err.to_string(), None, config.capabilities.network_webhooks);
         return;
     }
+
+    metrics.commits_made.fetch_add(1, Ordering::Relaxed);
+
+    broadcast_event(
+        &event_tx,
+        "commit_succeeded",
+        serde_json::json!({
+            "version": next.to_string(),
+            "cluster_id": cluster.id.to_string(),
+            "score": weight.score,
+        }),
+    );
 
     // Run post-commit hooks and send webhook events
     if let Some(angler) = angler {
         // Run post-commit hooks
         let _ = angler.run_post_commit().await;
 
-        // Send webhook events
-        let webhook_event = WebhookEvent::Commit {
-            version: next.to_string(),
-            score: weight.score,
-            message: msg.clone(),
-            files_changed: cluster_paths.len(),
-            cluster_id: cluster.id.to_string(),
-        };
-        let webhook_results = angler.broadcast_webhook_event(&webhook_event, &cluster_paths).await;
-        for (endpoint_id, result) in webhook_results {
-            if !result.success {
-                tracing::warn!(endpoint = %endpoint_id, error = ?result.error, "webhook delivery failed");
+        // Send webhook events (skipped in air-gapped mode)
+        if config.capabilities.network_webhooks {
+            let webhook_event = WebhookEvent::Commit {
+                version: next.to_string(),
+                score: weight.score,
+                message: msg.clone(),
+                files_changed: cluster_paths.len(),
+                cluster_id: cluster.id.to_string(),
+            };
+            let webhook_results = angler
+                .broadcast_webhook_event(&webhook_event, &cluster_paths)
+                .await;
+            for (endpoint_id, result) in webhook_results {
+                if !result.success {
+                    tracing::warn!(endpoint = %endpoint_id, error = ?result.error, "webhook delivery failed");
+                }
             }
         }
 
         // Trigger post-commit bait
         let bait_context = BaitContext {
             event: BaitEvent::PostCommit,
-            files: cluster_paths.iter().map(|p| crate::angler::FileChangeInfo {
-                path: p.clone(),
-                change_type: "modified".to_string(),
-                size: 0,
-            }).collect(),
+            files: cluster_paths
+                .iter()
+                .map(|p| crate::angler::FileChangeInfo {
+                    path: p.clone(),
+                    change_type: "modified".to_string(),
+                    size: 0,
+                })
+                .collect(),
             repo_path: config.repo_path.clone(),
             cluster_id: Some(cluster.id.to_string()),
             version: Some(next.to_string()),
             score: Some(weight.score),
             metadata: std::collections::HashMap::new(),
         };
-        let _ = angler.trigger_baits(BaitEvent::PostCommit, &bait_context).await;
+        let _ = angler
+            .trigger_baits(BaitEvent::PostCommit, &bait_context)
+            .await;
     }
 
-    if config.push.enabled {
+    if config.push.enabled && config.capabilities.network_push {
         // Run pre-push hooks if configured
         if let Some(angler) = angler {
             let refs = vec![(
@@ -539,17 +637,29 @@ async fn process_cluster(
                 format!("refs/heads/{}", config.push.branch),
                 "origin/HEAD".to_string(),
             )];
-            if let Some(hook_result) = angler.run_pre_push(&config.push.remote, "origin", &refs).await {
+            if let Some(hook_result) = angler
+                .run_pre_push(&config.push.remote, "origin", &refs)
+                .await
+            {
                 if !hook_result.success {
                     tracing::warn!(stderr = %hook_result.stderr, "pre-push hook failed");
-                    if config.angler.git_hooks.pre_push.as_ref().map(|c| c.required).unwrap_or(false) {
+                    if config
+                        .angler
+                        .git_hooks
+                        .pre_push
+                        .as_ref()
+                        .map(|c| c.required)
+                        .unwrap_or(false)
+                    {
                         status.status = State::Failed;
-                        status.last_error = Some(format!("Pre-push hook failed: {}", hook_result.stderr));
+                        status.last_error =
+                            Some(format!("Pre-push hook failed: {}", hook_result.stderr));
                         write_status(&config.repo_path, status);
                         crate::daemon::notification::notify_error(
                             &config.notify,
                             &format!("Pre-push hook failed: {}", hook_result.stderr),
                             None,
+                            config.capabilities.network_webhooks,
                         );
                         return;
                     }
@@ -557,7 +667,14 @@ async fn process_cluster(
             }
         }
 
-        if let Err(err) = crate::push::push(&config.repo_path, &config.push.branch).await {
+        let push_options = crate::push::PushOptions {
+            remote: config.push.remote.clone(),
+            branch: config.push.branch.clone(),
+            dry_run: config.push.dry_run,
+            protect_branches: config.push.safety.protect_branches.clone(),
+        };
+
+        if let Err(err) = crate::push::push(&config.repo_path, &push_options, &config.push.retry).await {
             tracing::warn!(error = %err, "push failed");
             write_trace_if_active(
                 &config.repo_path,
@@ -565,13 +682,13 @@ async fn process_cluster(
                 tracer::TraceResult::Skipped {
                     reason: "push_failed".to_string(),
                 },
-                &test_outcome,
+                test_outcome.trace_test(),
                 agent_event.clone(),
             );
             status.status = State::Failed;
             status.last_error = Some(format!("push failed: {err}"));
             write_status(&config.repo_path, status);
-            crate::daemon::notification::notify_error(&config.notify, &err.to_string(), None);
+            crate::daemon::notification::notify_error(&config.notify, &err.to_string(), None, config.capabilities.network_webhooks);
             return;
         }
 
@@ -582,28 +699,42 @@ async fn process_cluster(
                 commits: 1,
                 remote: config.push.remote.clone(),
             };
-            let _ = angler.broadcast_webhook_event(&webhook_event, &cluster_paths).await;
+            let _ = angler
+                .broadcast_webhook_event(&webhook_event, &cluster_paths)
+                .await;
 
             // Trigger post-push bait
             let bait_context = BaitContext {
                 event: BaitEvent::PostPush,
-                files: cluster_paths.iter().map(|p| crate::angler::FileChangeInfo {
-                    path: p.clone(),
-                    change_type: "modified".to_string(),
-                    size: 0,
-                }).collect(),
+                files: cluster_paths
+                    .iter()
+                    .map(|p| crate::angler::FileChangeInfo {
+                        path: p.clone(),
+                        change_type: "modified".to_string(),
+                        size: 0,
+                    })
+                    .collect(),
                 repo_path: config.repo_path.clone(),
                 cluster_id: Some(cluster.id.to_string()),
                 version: Some(next.to_string()),
                 score: Some(weight.score),
                 metadata: std::collections::HashMap::new(),
             };
-            let _ = angler.trigger_baits(BaitEvent::PostPush, &bait_context).await;
+            let _ = angler
+                .trigger_baits(BaitEvent::PostPush, &bait_context)
+                .await;
         }
     }
 
     let files_changed = cluster_paths.len();
-crate::daemon::notification::notify_commit(&config.notify, &next.to_string(), weight.score, &msg, files_changed);
+    crate::daemon::notification::notify_commit(
+        &config.notify,
+        &next.to_string(),
+        weight.score,
+        &msg,
+        files_changed,
+        config.capabilities.network_webhooks,
+    );
 
     // Write trace record for successful commit
     write_trace_if_active(
@@ -613,7 +744,7 @@ crate::daemon::notification::notify_commit(&config.notify, &next.to_string(), we
             bump: format!("{bump:?}"),
             version: next.to_string(),
         },
-        &test_outcome,
+        test_outcome.trace_test(),
         agent_event,
     );
 
@@ -630,7 +761,10 @@ crate::daemon::notification::notify_commit(&config.notify, &next.to_string(), we
         timestamp: now,
         project_id: config.repo_path.display().to_string(),
         payload: crate::vacs::VacsPayload {
-            files_changed: cluster_paths.iter().filter_map(|p| p.to_str().map(|s| s.to_string())).collect(),
+            files_changed: cluster_paths
+                .iter()
+                .filter_map(|p| p.to_str().map(|s| s.to_string()))
+                .collect(),
             diff_summary: msg.clone(),
             aoc_id: None, // TODO: Extract from session if active
             complexity_score: weight.score as f64,
@@ -644,12 +778,8 @@ crate::daemon::notification::notify_commit(&config.notify, &next.to_string(), we
         let config_clone = config.clone();
         let version_str = next.to_string();
         let commit_hash = repo
-            .inner
-            .head()
-            .ok()
-            .and_then(|h| h.peel_to_commit().ok())
-            .map(|c| c.id().to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+            .head_commit_hash()
+            .unwrap_or_else(|_| "unknown".to_string());
         let tests_passed = matches!(test_outcome, TestOutcome::Passed);
         let diff_f64 = weight.score as f64;
         let runtime_paths = diff.runtime_paths as u32;
@@ -657,9 +787,15 @@ crate::daemon::notification::notify_commit(&config.notify, &next.to_string(), we
         let parse_confidence = if diff.parse_metadata.is_empty() {
             1.0
         } else {
-            diff.parse_metadata.iter().map(|m| m.confidence).sum::<f64>() / diff.parse_metadata.len() as f64
+            diff.parse_metadata
+                .iter()
+                .map(|m| m.confidence)
+                .sum::<f64>()
+                / diff.parse_metadata.len() as f64
         };
         let shutdown_clone = shutdown.clone_token();
+        let event_tx_qual = event_tx.clone();
+        let cluster_id = cluster.id.to_string();
         tasks.spawn(async move {
             crate::release::orchestrator::post_commit(
                 &repo_path,
@@ -673,6 +809,14 @@ crate::daemon::notification::notify_commit(&config.notify, &next.to_string(), we
                 Some(shutdown_clone),
             )
             .await;
+            broadcast_event(
+                &event_tx_qual,
+                "release_qualified",
+                serde_json::json!({
+                    "version": version_str,
+                    "cluster_id": cluster_id,
+                }),
+            );
         });
     }
 
@@ -687,10 +831,14 @@ async fn auto_prune(repo_path: &Path) {
     // Keep max 1000 items in analysis/ and traces/
     prune_directory(&repo_path.join(".kaptaind").join("analysis"), 1000).await;
     prune_directory(&repo_path.join(".kaptaind").join("traces"), 1000).await;
-    
+
     // Auto-reap stale AoC sessions (older than 72 hours)
     if let Ok(Some(session)) = crate::aoc::session::load_active(repo_path) {
-        if Utc::now().signed_duration_since(session.created_at).num_hours() > 72 {
+        if Utc::now()
+            .signed_duration_since(session.created_at)
+            .num_hours()
+            > 72
+        {
             tracing::info!(aoc_id = %session.id, "auto-reaping stale AoC session");
             // Perform an auto-ship of the stale session
             let _ = auto_ship_aoc(repo_path, &session).await;
@@ -707,16 +855,13 @@ async fn auto_ship_aoc(repo_path: &Path, session: &crate::aoc::AocSession) -> an
     };
 
     let traces = crate::aoc::tracer::read_traces_for_aoc(repo_path, &session.id)?;
-    
+
     let commit_count = traces
         .iter()
         .filter(|t| matches!(t.result, crate::aoc::TraceResult::Committed { .. }))
         .count();
-        
-    let test_failures = traces
-        .iter()
-        .filter(|t| t.test.outcome == "failed")
-        .count();
+
+    let test_failures = traces.iter().filter(|t| t.test.outcome == "failed").count();
 
     let manifest = crate::aoc::AocManifest {
         id: session.id.clone(),
@@ -769,7 +914,11 @@ async fn prune_directory(dir_path: &Path, max_items: usize) {
     }
 }
 
-fn rate_limit_allows(now: DateTime<Utc>, last: Option<DateTime<Utc>>, min_interval: Duration) -> bool {
+fn rate_limit_allows(
+    now: DateTime<Utc>,
+    last: Option<DateTime<Utc>>,
+    min_interval: Duration,
+) -> bool {
     match last {
         Some(last_commit) => {
             let elapsed = now - last_commit;
@@ -848,6 +997,7 @@ fn persist_analysis_artifact(
     weight: &crate::weight::WeightResult,
     bump: Bump,
     version: &Version,
+    air_gapped: bool,
 ) -> anyhow::Result<()> {
     let dir = config.repo_path.join(".kaptaind").join("analysis");
     std::fs::create_dir_all(&dir)?;
@@ -861,6 +1011,7 @@ fn persist_analysis_artifact(
         ended_at: cluster.ended_at,
         diff: diff.clone(),
         weight: weight.clone(),
+        air_gapped,
     };
 
     let file_path = dir.join(format!("{}.json", cluster.id));
@@ -879,24 +1030,53 @@ pub struct AnalysisArtifact {
     pub ended_at: DateTime<Utc>,
     pub diff: DiffAnalysis,
     pub weight: crate::weight::WeightResult,
+    #[serde(default)]
+    pub air_gapped: bool,
 }
 
 #[derive(Debug, Clone)]
-enum TestOutcome {
+pub enum TestOutcome {
     Passed,
     Failed { code: Option<i32>, stderr: String },
     Skipped,
 }
 
+impl TestOutcome {
+    fn trace_test(&self) -> tracer::TraceTest {
+        match self {
+            TestOutcome::Passed => tracer::TraceTest {
+                outcome: "passed".to_string(),
+                stderr: None,
+            },
+            TestOutcome::Failed { stderr, .. } => tracer::TraceTest {
+                outcome: "failed".to_string(),
+                stderr: Some(stderr.clone()),
+            },
+            TestOutcome::Skipped => tracer::TraceTest {
+                outcome: "skipped".to_string(),
+                stderr: None,
+            },
+        }
+    }
+}
+
 async fn run_test_hook(config: &Config) -> TestOutcome {
-    let Some(command) = config.test.command.as_deref() else {
+    run_test_hook_for_config(&config.test, &config.repo_path).await
+}
+
+pub async fn run_test_hook_for_config(test: &TestConfig, repo_path: &Path) -> TestOutcome {
+    let Some(command) = test.command.as_deref() else {
         return TestOutcome::Skipped;
     };
+
+    if let Err(err) = crate::util::shell_validation::validate_shell_command(command) {
+        tracing::warn!(error = %err, command = command, "shell command validation failed");
+    }
 
     match Command::new("sh")
         .arg("-lc")
         .arg(command)
-        .current_dir(&config.repo_path)
+        .current_dir(repo_path)
         .output()
         .await
     {
@@ -912,7 +1092,7 @@ async fn run_test_hook(config: &Config) -> TestOutcome {
     }
 }
 
-fn should_block_commit(test: &TestConfig, outcome: &TestOutcome) -> bool {
+pub fn should_block_commit(test: &TestConfig, outcome: &TestOutcome) -> bool {
     test.required && matches!(outcome, TestOutcome::Failed { .. })
 }
 
@@ -1004,45 +1184,12 @@ fn looks_like_glob(value: &str) -> bool {
     value.contains('*') || value.contains('?') || value.contains('[') || value.contains('{')
 }
 
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
-pub enum State {
-    Idle,
-    Clustering,
-    Testing,
-    Committing,
-    Failed,
-    Stopping,
-    Stopped,
-}
-
-#[derive(Debug, Clone, Serialize, serde::Deserialize)]
-pub struct StatusReport {
-    pub status: State,
-    pub last_version: Option<String>,
-    pub last_action_time: DateTime<Utc>,
-    pub last_error: Option<String>,
-}
-
-fn write_status(repo_path: &Path, report: &StatusReport) {
-    let dir = repo_path.join(".kaptaind");
-    if std::fs::create_dir_all(&dir).is_err() {
-        return;
-    }
-    let status_file = dir.join("status.json");
-    if let Ok(content) = serde_json::to_string_pretty(report) {
-        let tmp = status_file.with_extension("tmp");
-        if std::fs::write(&tmp, content).is_ok() {
-            let _ = std::fs::rename(&tmp, &status_file);
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::{
         apply_test_outcome, format_commit, looks_like_glob, persist_analysis_artifact,
-        rate_limit_allows, run_test_hook, save_version, should_block_commit, AnalysisArtifact, IgnoreMatcher,
-        TestOutcome,
+        rate_limit_allows, run_test_hook, save_version, should_block_commit, AnalysisArtifact,
+        IgnoreMatcher, TestOutcome,
     };
     use crate::cluster::engine::Cluster;
     use crate::config::loader::{Config, TestConfig};
@@ -1131,7 +1278,14 @@ mod tests {
             api_added: true,
         };
 
-        let message = format_commit(&cluster, &diff, &weight, crate::version::Bump::Minor, &Version::new(0, 2, 0), &None);
+        let message = format_commit(
+            &cluster,
+            &diff,
+            &weight,
+            crate::version::Bump::Minor,
+            &Version::new(0, 2, 0),
+            &None,
+        );
         assert!(message.contains("api-added"));
         assert!(message.contains("paths=4"));
         assert!(message.contains("deps=5"));
@@ -1162,6 +1316,7 @@ mod tests {
             &weight,
             crate::version::Bump::Patch,
             &Version::new(0, 1, 1),
+            false,
         )
         .expect("persist artifact");
 
@@ -1202,7 +1357,7 @@ mod tests {
         let repo_root = dir.path().join("repo");
         std::fs::create_dir_all(&repo_root).expect("create repo root");
         let cargo_toml_path = repo_root.join("Cargo.toml");
-        
+
         let cargo_toml_content = r#"[package]
 name = "kaptaind"
 version = "0.1.0"
@@ -1212,13 +1367,14 @@ edition = "2021"
 anyhow = "1"
 "#;
         std::fs::write(&cargo_toml_path, cargo_toml_content).expect("write Cargo.toml");
-        
+
         let version_path = repo_root.join("VERSION");
         let new_version = Version::new(0, 2, 0);
-        
+
         save_version(&version_path, &new_version).expect("save version");
-        
-        let updated_cargo_toml = std::fs::read_to_string(&cargo_toml_path).expect("read Cargo.toml");
+
+        let updated_cargo_toml =
+            std::fs::read_to_string(&cargo_toml_path).expect("read Cargo.toml");
         assert!(updated_cargo_toml.contains("version = \"0.2.0\""));
         assert!(updated_cargo_toml.contains("anyhow = \"1\""));
     }

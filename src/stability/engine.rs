@@ -27,9 +27,7 @@ pub fn update(record: &mut StabilityRecord, entry: StabilityEntry, delta_t_mins:
     let confidence_penalty: f64 = 1.0 - entry.parse_confidence;
 
     let was = record.score;
-    let new_score = (record.score
-        + W1_TESTS * t
-        + W2_BUILD * b
+    let new_score = (record.score + W1_TESTS * t + W2_BUILD * b
         - W3_DIFF * entry.delta_score
         - W4_RUNTIME * r
         - W5_CONFIDENCE * confidence_penalty
@@ -125,7 +123,10 @@ mod tests {
 
     #[test]
     fn failed_tests_reduce_score() {
-        let mut rec = StabilityRecord { score: 0.8, ..Default::default() };
+        let mut rec = StabilityRecord {
+            score: 0.8,
+            ..Default::default()
+        };
         update(&mut rec, entry("fail", "fail", 0.9, 5), 0.0);
         assert!(rec.score < 0.8);
     }

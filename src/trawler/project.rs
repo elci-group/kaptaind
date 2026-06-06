@@ -1,5 +1,5 @@
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 
 /// Represents the type of project detected in a directory
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -116,7 +116,14 @@ impl ProjectType {
     pub fn secondary_indicators(&self) -> &'static [&'static str] {
         match self {
             ProjectType::Rust => &["Cargo.lock", "src/main.rs", "src/lib.rs"],
-            ProjectType::Node => &["package-lock.json", "yarn.lock", "pnpm-lock.yaml", "node_modules", "src/index.js", "src/index.ts"],
+            ProjectType::Node => &[
+                "package-lock.json",
+                "yarn.lock",
+                "pnpm-lock.yaml",
+                "node_modules",
+                "src/index.js",
+                "src/index.ts",
+            ],
             ProjectType::Python => &["__pycache__", "*.py", ".venv", "venv", "tox.ini"],
             ProjectType::Go => &["go.sum", "main.go", "go.mod"],
             ProjectType::Swift => &["Sources", "*.swift", "Package.resolved"],
@@ -193,11 +200,7 @@ impl ProjectType {
     /// Get default ignore patterns for this project type
     pub fn ignore_patterns(&self) -> &'static [&'static str] {
         match self {
-            ProjectType::Rust => &[
-                "# Rust",
-                "target",
-                "Cargo.lock",
-            ],
+            ProjectType::Rust => &["# Rust", "target", "Cargo.lock"],
             ProjectType::Node => &[
                 "# Node.js",
                 "node_modules",
@@ -221,10 +224,7 @@ impl ProjectType {
                 ".tox",
                 ".mypy_cache",
             ],
-            ProjectType::Go => &[
-                "# Go",
-                "vendor",
-            ],
+            ProjectType::Go => &["# Go", "vendor"],
             ProjectType::Swift => &[
                 "# Swift",
                 ".build",
@@ -241,29 +241,10 @@ impl ProjectType {
                 ".idea",
                 "local.properties",
             ],
-            ProjectType::Ruby => &[
-                "# Ruby",
-                "vendor/bundle",
-                ".bundle",
-                "*.gem",
-            ],
-            ProjectType::Elixir => &[
-                "# Elixir",
-                "_build",
-                "deps",
-                ".elixir_ls",
-            ],
-            ProjectType::Php => &[
-                "# PHP",
-                "vendor",
-                "composer.lock",
-            ],
-            ProjectType::Dotnet => &[
-                "# .NET",
-                "bin",
-                "obj",
-                "*.user",
-            ],
+            ProjectType::Ruby => &["# Ruby", "vendor/bundle", ".bundle", "*.gem"],
+            ProjectType::Elixir => &["# Elixir", "_build", "deps", ".elixir_ls"],
+            ProjectType::Php => &["# PHP", "vendor", "composer.lock"],
+            ProjectType::Dotnet => &["# .NET", "bin", "obj", "*.user"],
             ProjectType::Cpp => &[
                 "# C++",
                 "build",
@@ -273,42 +254,18 @@ impl ProjectType {
                 "*.so",
                 "*.exe",
             ],
-            ProjectType::Lua => &[
-                "# Lua",
-                "rocks/",
-                "luarocks.lock",
-            ],
-            ProjectType::Scala => &[
-                "# Scala",
-                "target/",
-                ".sbtserver",
-            ],
-            ProjectType::Clojure => &[
-                "# Clojure",
-                "target/",
-                ".lein-repl-history",
-            ],
+            ProjectType::Lua => &["# Lua", "rocks/", "luarocks.lock"],
+            ProjectType::Scala => &["# Scala", "target/", ".sbtserver"],
+            ProjectType::Clojure => &["# Clojure", "target/", ".lein-repl-history"],
             ProjectType::Haskell => &[
                 "# Haskell",
                 "dist/",
                 "dist-newstyle/",
                 "cabal.project.local",
             ],
-            ProjectType::Julia => &[
-                "# Julia",
-                "Manifest.toml",
-            ],
-            ProjectType::R => &[
-                "# R",
-                ".Rhistory",
-                ".RData",
-            ],
-            ProjectType::Perl => &[
-                "# Perl",
-                "blib/",
-                "MANIFEST.bak",
-                "pm_to_blib",
-            ],
+            ProjectType::Julia => &["# Julia", "Manifest.toml"],
+            ProjectType::R => &["# R", ".Rhistory", ".RData"],
+            ProjectType::Perl => &["# Perl", "blib/", "MANIFEST.bak", "pm_to_blib"],
             ProjectType::Unknown => &[],
         }
     }
@@ -324,11 +281,25 @@ pub fn detect_project_type_with_confidence(path: &Path) -> DetectionResult {
 
     // Try each project type and collect results
     let all_types = vec![
-        ProjectType::Rust, ProjectType::Node, ProjectType::Python, ProjectType::Go,
-        ProjectType::Swift, ProjectType::Kotlin, ProjectType::Java, ProjectType::Ruby,
-        ProjectType::Elixir, ProjectType::Php, ProjectType::Dotnet, ProjectType::Cpp,
-        ProjectType::Lua, ProjectType::Scala, ProjectType::Clojure, ProjectType::Haskell,
-        ProjectType::Julia, ProjectType::R, ProjectType::Perl,
+        ProjectType::Rust,
+        ProjectType::Node,
+        ProjectType::Python,
+        ProjectType::Go,
+        ProjectType::Swift,
+        ProjectType::Kotlin,
+        ProjectType::Java,
+        ProjectType::Ruby,
+        ProjectType::Elixir,
+        ProjectType::Php,
+        ProjectType::Dotnet,
+        ProjectType::Cpp,
+        ProjectType::Lua,
+        ProjectType::Scala,
+        ProjectType::Clojure,
+        ProjectType::Haskell,
+        ProjectType::Julia,
+        ProjectType::R,
+        ProjectType::Perl,
     ];
 
     for project_type in all_types {
@@ -437,8 +408,7 @@ fn is_monorepo_root(path: &Path, proj_type: ProjectType) -> bool {
         }
         ProjectType::Python => {
             // Check for monorepo patterns
-            path.join("pyproject.toml").exists()
-                && path.join("packages").exists()
+            path.join("pyproject.toml").exists() && path.join("packages").exists()
         }
         _ => false,
     }
@@ -447,12 +417,12 @@ fn is_monorepo_root(path: &Path, proj_type: ProjectType) -> bool {
 /// Check if a directory contains any files matching a glob pattern
 fn has_glob_match(path: &Path, pattern: &str) -> bool {
     use glob::Pattern;
-    
+
     let pattern = match Pattern::new(pattern) {
         Ok(p) => p,
         Err(_) => return false,
     };
-    
+
     if let Ok(entries) = std::fs::read_dir(path) {
         for entry in entries.flatten() {
             if let Some(name) = entry.file_name().to_str() {
@@ -480,35 +450,92 @@ pub fn should_skip_directory(dir_name: &str) -> bool {
     // Skip common non-project directories
     const SKIP_DIRS: &[&str] = &[
         // Git & version control
-        ".git", ".hg", ".svn", ".bzr",
+        ".git",
+        ".hg",
+        ".svn",
+        ".bzr",
         // Build outputs & caches
-        "target", "build", "dist", "out", "bin", "obj",
-        "node_modules", "__pycache__", ".gradle", "vendor",
-        ".next", ".output", ".turbo", ".sbtserver",
+        "target",
+        "build",
+        "dist",
+        "out",
+        "bin",
+        "obj",
+        "node_modules",
+        "__pycache__",
+        ".gradle",
+        "vendor",
+        ".next",
+        ".output",
+        ".turbo",
+        ".sbtserver",
         // Editor & IDE
-        ".idea", ".vscode", ".vscode-server", ".vs",
-        ".sublime-text", ".atom",
+        ".idea",
+        ".vscode",
+        ".vscode-server",
+        ".vs",
+        ".sublime-text",
+        ".atom",
         // Dependencies & virtual envs
-        ".venv", "venv", "env", "vendor/bundle", "vendor",
-        ".cargo", ".composer", "Pods", "DerivedData",
-        "node_modules", ".yarn", ".npm", ".pnpm-store",
+        ".venv",
+        "venv",
+        "env",
+        "vendor/bundle",
+        "vendor",
+        ".cargo",
+        ".composer",
+        "Pods",
+        "DerivedData",
+        "node_modules",
+        ".yarn",
+        ".npm",
+        ".pnpm-store",
         // Testing & coverage
-        ".tox", ".pytest_cache", ".mypy_cache", ".coverage",
-        ".nyc_output", "coverage", ".rcov",
+        ".tox",
+        ".pytest_cache",
+        ".mypy_cache",
+        ".coverage",
+        ".nyc_output",
+        "coverage",
+        ".rcov",
         // Language-specific
-        ".elixir_ls", ".erlang_ls", ".metals", ".bloop",
-        "_build", "deps", ".mix", ".rebar3", "ebin",
-        "site-packages", ".eggs", ".eggs-info",
+        ".elixir_ls",
+        ".erlang_ls",
+        ".metals",
+        ".bloop",
+        "_build",
+        "deps",
+        ".mix",
+        ".rebar3",
+        "ebin",
+        "site-packages",
+        ".eggs",
+        ".eggs-info",
         // OS
-        ".DS_Store", ".AppleDouble", ".LSOverride", "Thumbs.db",
-        "$RECYCLE.BIN", ".directory",
+        ".DS_Store",
+        ".AppleDouble",
+        ".LSOverride",
+        "Thumbs.db",
+        "$RECYCLE.BIN",
+        ".directory",
         // Build systems
-        "cmake-build-debug", "cmake-build-release", "cmake-build-*",
-        ".scons", ".scons_opt_cache",
+        "cmake-build-debug",
+        "cmake-build-release",
+        "cmake-build-*",
+        ".scons",
+        ".scons_opt_cache",
         // Documentation
-        "docs", "doc", "site", "_site", "gh-pages",
+        "docs",
+        "doc",
+        "site",
+        "_site",
+        "gh-pages",
         // Archives & misc
-        ".tmp", ".cache", ".temp", "tmp", "temp",
+        ".tmp",
+        ".cache",
+        ".temp",
+        "tmp",
+        "temp",
         // Kaptaind
         ".kaptaind",
     ];

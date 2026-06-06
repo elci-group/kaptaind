@@ -1,19 +1,22 @@
 import { NextResponse } from "next/server";
-import { getServerSession } from "next-auth";
-import { authOptions } from "@/lib/auth";
+import {
+  requireAuth,
+  requireProjectAccess,
+  requireEntitlement,
+  getUserTier,
+  isAuthError,
+} from "@/lib/api-auth";
+import { rateLimit } from "@/lib/rate-limit";
 import { resolveRepoPath } from "@/lib/kaptaind/reader";
 import { getAnalysisArtifact } from "@/lib/kaptaind/analysis";
 import { listAocManifests } from "@/lib/kaptaind/aoc";
 import { inferenceChat } from "@/lib/inference";
-import type { AnalysisArtifact, AocManifest } from "@/types/kaptaind";
+import type { AocManifest } from "@/types/kaptaind";
 
 export async function POST(req: Request) {
-  const session = await getServerSession(authOptions);
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   try {
+    const session = await requireAuth(req);
+
     const body = await req.json();
     const { projectId, aocId } = body;
 
@@ -21,6 +24,25 @@ export async function POST(req: Request) {
       return NextResponse.json(
         { error: "projectId and aocId required" },
         { status: 400 }
+      );
+    }
+
+    await requireProjectAccess(req, projectId);
+    await requireEntitlement(req, "canUseAi");
+
+    const tier = await getUserTier(session.user.id);
+    const limitResult = await rateLimit(req, {
+      type: "ai",
+      userId: session.user.id,
+      tier,
+    });
+    if (!limitResult.allowed) {
+      return NextResponse.json(
+        { error: "Rate limit exceeded" },
+        {
+          status: 429,
+          headers: { "Retry-After": String(limitResult.retryAfter) },
+        }
       );
     }
 
@@ -41,6 +63,13 @@ export async function POST(req: Request) {
     );
     return NextResponse.json({ changelog });
   } catch (error) {
+    const authError = isAuthError(error);
+    if (authError) {
+      return NextResponse.json(
+        { error: authError.message },
+        { status: authError.status }
+      );
+    }
     const message =
       error instanceof Error ? error.message : "Unknown error occurred";
     return NextResponse.json({ error: message }, { status: 500 });

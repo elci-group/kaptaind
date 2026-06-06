@@ -119,7 +119,10 @@ fn save_state(path: &Path, state: &BundleState) {
     if let Some(parent) = path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let _ = std::fs::write(path, serde_json::to_string_pretty(state).unwrap_or_default());
+    let _ = std::fs::write(
+        path,
+        serde_json::to_string_pretty(state).unwrap_or_default(),
+    );
 }
 
 #[cfg(test)]
@@ -166,11 +169,7 @@ mod tests {
         // Seed previous state: 1000 bytes
         let state_dir = dir.path().join(".kaptaind");
         std::fs::create_dir_all(&state_dir).unwrap();
-        std::fs::write(
-            state_dir.join("bundle.json"),
-            r#"{"total_bytes": 1000}"#,
-        )
-        .unwrap();
+        std::fs::write(state_dir.join("bundle.json"), r#"{"total_bytes": 1000}"#).unwrap();
 
         // Create output that is 1500 bytes (50% increase)
         std::fs::write(dist.join("bundle.js"), "x".repeat(1500)).unwrap();

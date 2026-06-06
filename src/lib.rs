@@ -13,6 +13,7 @@ pub mod qualification;
 pub mod release;
 pub mod stability;
 pub mod trawler;
+pub mod util;
 pub mod vacs;
 pub mod version;
 pub mod watcher;

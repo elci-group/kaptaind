@@ -1,11 +1,11 @@
 use crate::config::loader::VacsConfig;
-use crate::vacs::extractor::{ConceptExtractor, Concept};
-use crate::vacs::scoring::{ScoringEngine, ScoredConcept};
-use crate::vacs::scheduler::Scheduler;
 use crate::vacs::asset::AssetManager;
-use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use crate::vacs::extractor::ConceptExtractor;
+use crate::vacs::scheduler::Scheduler;
+use crate::vacs::scoring::ScoringEngine;
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::mpsc;
 
@@ -27,7 +27,6 @@ pub struct VacsEvent {
 
 pub struct VacsEngine {
     config: VacsConfig,
-    repo_path: PathBuf,
     extractor: ConceptExtractor,
     scoring: ScoringEngine,
     scheduler: Scheduler,
@@ -40,7 +39,6 @@ impl VacsEngine {
         let (tx, rx) = mpsc::channel(100);
         let engine = Self {
             config: config.clone(),
-            repo_path: repo_path.to_path_buf(),
             extractor: ConceptExtractor::new(),
             scoring: ScoringEngine::new(),
             scheduler: Scheduler::new(config.clone()),
@@ -68,10 +66,10 @@ impl VacsEngine {
 
     async fn handle_event(&self, event: VacsEvent) -> anyhow::Result<()> {
         let concepts = self.extractor.extract(&event);
-        
+
         for concept in concepts {
             let scored = self.scoring.score(concept);
-            
+
             if scored.score >= 0.65 {
                 self.scheduler.schedule(scored).await?;
             }

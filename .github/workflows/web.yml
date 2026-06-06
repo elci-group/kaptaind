@@ -1,0 +1,64 @@
+name: Web CI
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "web/**"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "web/**"
+
+env:
+  CI: true
+
+jobs:
+  web-ci:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: kaptaind
+          POSTGRES_PASSWORD: kaptaind
+          POSTGRES_DB: kaptaind
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+    env:
+      DATABASE_URL: postgresql://kaptaind:kaptaind@localhost:5432/kaptaind
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Lint
+        working-directory: web
+        run: npm run lint
+
+      - name: Build
+        working-directory: web
+        run: npm run build
+
+      - name: Install Playwright browsers
+        working-directory: web
+        run: npx playwright install --with-deps
+
+      - name: Run Playwright tests
+        working-directory: web
+        run: npx playwright test

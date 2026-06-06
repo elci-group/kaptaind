@@ -1,0 +1,66 @@
+1:"$Sreact.fragment"
+2:I[7988,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],"default"]
+3:I[22016,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],""]
+4:I[90186,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],"default"]
+a:I[97367,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"OutletBoundary"]
+b:"$Sreact.suspense"
+5:T9e1,# Whitepaper: Test Hook Compliance
+
+## Abstract
+Kaptaind can execute test commands before committing and optionally block the release pipeline on failure. This whitepaper validates that required hooks block commits and optional hooks do not. All tests passed.
+
+## Claim Statement
+> "Runs your test hooks (e.g. cargo test, npm test) and records compliance." (Landing page, workflow step 04)
+
+## Methodology
+We invoked `run_test_hook_for_config` with a failing shell command (`exit 1`) in both required and optional configurations. We asserted the returned `TestOutcome` and verified the blocking semantics through `should_block_commit`.
+
+## Test Implementation
+Source: `tests/claims_validation.rs` and `src/daemon/scheduler.rs`
+
+```rust
+#[tokio::test]
+async fn claim_test_hook_blocks_commit_when_required_and_failing() {
+    let dir = tempdir().unwrap();
+    init_git_repo(dir.path());
+    let config = TestConfig { command: Some("exit 1".to_string()), required: true };
+    let outcome = run_test_hook_for_config(&config, dir.path()).await;
+    assert!(matches!(outcome, TestOutcome::Failed { .. }));
+    assert!(should_block_commit(&config, &outcome), "required failing hook should block");
+}
+
+#[tokio::test]
+async fn claim_test_hook_does_not_block_when_optional_and_failing() {
+    let dir = tempdir().unwrap();
+    init_git_repo(dir.path());
+    let config = TestConfig { command: Some("exit 1".to_string()), required: false };
+    let outcome = run_test_hook_for_config(&config, dir.path()).await;
+    assert!(matches!(outcome, TestOutcome::Failed { .. }));
+    assert!(!should_block_commit(&config, &outcome), "optional failing hook should not block");
+}
+```
+
+## Results
+**PASS** — Blocking semantics match configuration.
+
+| Configuration | Hook Result | Blocks Commit? | Result |
+|---------------|-------------|----------------|--------|
+| Required | Fails | Yes | PASS |
+| Optional | Fails | No | PASS |
+
+## Evidence
+The scheduler calls `should_block_commit` after `run_test_hook`. Required failures abort `process_cluster` before versioning or committing. Optional failures log a warning but allow the pipeline to continue.
+
+## Limitations
+- Only shell exit codes were tested; real test suites (cargo test, npm test) were not exercised.
+- Timeout behavior of test hooks was not evaluated.
+- The runtime weight adjustment (passing hooks reduce runtime weight to 0.1) was not directly measured.
+
+## Conclusion
+The claim is **supported**. Kaptaind correctly enforces test hook compliance according to the `required` flag.
+0:{"rsc":["$","$1","c",{"children":[[["$","$L2",null,{}],["$","div",null,{"className":"bg-zinc-950 text-zinc-100 min-h-screen py-12","children":["$","div",null,{"className":"mx-auto max-w-3xl px-6 lg:px-8","children":[["$","$L3",null,{"href":"/whitepapers","className":"inline-flex items-center text-sm text-zinc-500 hover:text-zinc-300 transition-colors mb-8","children":"← Back to Research & Validation"}],["$","article",null,{"className":"prose prose-invert max-w-none","children":["$","$L4",null,{"content":"$5"}]}],["$","div",null,{"className":"mt-16 pt-8 border-t border-zinc-800 text-center","children":["$","$L3",null,{"href":"/whitepapers","className":"inline-flex items-center text-sm text-zinc-500 hover:text-zinc-300 transition-colors","children":"← Browse all whitepapers"}]}]]}]}],["$","footer",null,{"className":"border-t border-zinc-800 bg-zinc-950","children":["$","div",null,{"className":"mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8","children":"$L6"}]}]],["$L7","$L8"],"$L9"]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"KIkAGxAWDQmJDwX7xyOak"}
+6:["$","div",null,{"className":"flex flex-col items-center justify-between gap-4 sm:flex-row","children":[["$","p",null,{"className":"text-sm text-zinc-400","children":"Kaptaind Pro — Automated semantic versioning, enhanced by AI."}],["$","div",null,{"className":"flex items-center gap-6","children":[["$","$L3",null,{"href":"/whitepapers","className":"text-sm text-zinc-500 hover:text-zinc-300 transition-colors","children":"Research & Validation"}],["$","p",null,{"className":"text-sm text-zinc-500","children":"Built with Next.js and Claude"}]]}]]}]
+7:["$","script","script-0",{"src":"/_next/static/chunks/2pes6-pd9xzbn.js","async":true}]
+8:["$","script","script-1",{"src":"/_next/static/chunks/0mnx6i03wgu-z.js","async":true}]
+9:["$","$La",null,{"children":["$","$b",null,{"name":"Next.MetadataOutlet","children":"$@c"}]}]
+c:null

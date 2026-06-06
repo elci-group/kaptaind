@@ -1,20 +1,19 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::Path;
 
 /// A single file change event within a cluster.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceEvent {
     pub paths: Vec<String>,
-    pub kind: String,                 // "create" | "modify" | "remove" | "other"
+    pub kind: String, // "create" | "modify" | "remove" | "other"
     pub t: DateTime<Utc>,
 }
 
 /// Test outcome recorded in a trace.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TraceTest {
-    pub outcome: String,              // "passed" | "failed" | "skipped" | "none"
+    pub outcome: String, // "passed" | "failed" | "skipped" | "none"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stderr: Option<String>,
 }
@@ -25,12 +24,12 @@ pub struct TraceTest {
 pub enum TraceResult {
     #[serde(rename = "committed")]
     Committed {
-        bump: String,                 // "Major" | "Minor" | "Patch"
+        bump: String, // "Major" | "Minor" | "Patch"
         version: String,
     },
     #[serde(rename = "skipped")]
     Skipped {
-        reason: String,               // "rate_limited" | "clean_tree" | "no_bump" | "test_failed"
+        reason: String, // "rate_limited" | "clean_tree" | "no_bump" | "test_failed"
     },
 }
 

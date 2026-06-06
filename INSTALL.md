@@ -153,7 +153,7 @@ If you prefer to install manually, follow these steps.
 ### Prerequisites
 
 - **Rust & Cargo** (install from https://rustup.rs/)
-- **Git** (for cloning the repository)
+- **Git** (for cloning and for Kaptaind runtime repository operations)
 - **C Compiler** (gcc/clang for building)
 
 ### Step-by-Step

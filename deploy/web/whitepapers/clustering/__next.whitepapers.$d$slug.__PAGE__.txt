@@ -1,0 +1,70 @@
+1:"$Sreact.fragment"
+2:I[7988,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],"default"]
+3:I[22016,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],""]
+4:I[90186,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],"default"]
+a:I[97367,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"OutletBoundary"]
+b:"$Sreact.suspense"
+5:Taa2,# Whitepaper: Event Clustering by Temporal Proximity
+
+## Abstract
+Kaptaind groups filesystem events into clusters based on temporal proximity. This whitepaper validates that the clustering engine correctly merges related events within the configured window and emits distinct clusters when the window expires. All tests passed.
+
+## Claim Statement
+> "Groups related changes by temporal proximity & file relationships automatically." (Landing page, architecture flow)
+
+## Methodology
+We tested the `ClusterEngine` directly using the public API. Two hypotheses were evaluated:
+
+1. **H1**: Events occurring within the cluster window (default 5 seconds) are merged into a single cluster.
+2. **H2**: Events occurring outside the window produce separate clusters.
+
+The test environment used an in-memory `ClusterEngine` with a 1-second and 5-second window. No filesystem or daemon runtime was required.
+
+## Test Implementation
+Source: `tests/claims_validation.rs`
+
+```rust
+fn claim_clustering_groups_events_within_window() {
+    let mut engine = ClusterEngine::new(Duration::from_secs(5));
+    let first = FsEvent { paths: vec!["src/main.rs".into()], kind: Modify, timestamp: Utc::now() };
+    let second = FsEvent { paths: vec!["src/lib.rs".into()], kind: Modify, timestamp: Utc::now() + Duration::milliseconds(500) };
+    assert!(engine.ingest(first).is_none());
+    assert!(engine.ingest(second).is_none());
+    let cluster = engine.flush().unwrap();
+    assert_eq!(cluster.events.len(), 2);
+}
+
+fn claim_clustering_emits_when_window_expires() {
+    let mut engine = ClusterEngine::new(Duration::from_secs(1));
+    let first = FsEvent { paths: vec!["a.rs".into()], kind: Modify, timestamp: Utc::now() };
+    let second = FsEvent { paths: vec!["b.rs".into()], kind: Modify, timestamp: Utc::now() + Duration::seconds(2) };
+    assert!(engine.ingest(first).is_none());
+    let emitted = engine.ingest(second).unwrap();
+    assert_eq!(emitted.events.len(), 1);
+}
+```
+
+## Results
+**PASS** — Both hypotheses confirmed.
+
+| Test | Result |
+|------|--------|
+| Events within 500ms of each other merge | PASS |
+| Events 2 seconds apart emit separate clusters | PASS |
+
+## Evidence
+The `ClusterEngine::ingest` method returns `None` while merging and `Some(Cluster)` when the previous cluster is complete. The flushed cluster contains both events in H1 and only one event in H2.
+
+## Limitations
+- Tests used artificial timestamps, not real filesystem events.
+- Burst detection and adaptive window sizing were not evaluated.
+- Event compaction (merging duplicate paths) was not explicitly tested.
+
+## Conclusion
+The claim is **supported**. Kaptaind correctly clusters filesystem events by temporal proximity using a configurable window.
+0:{"rsc":["$","$1","c",{"children":[[["$","$L2",null,{}],["$","div",null,{"className":"bg-zinc-950 text-zinc-100 min-h-screen py-12","children":["$","div",null,{"className":"mx-auto max-w-3xl px-6 lg:px-8","children":[["$","$L3",null,{"href":"/whitepapers","className":"inline-flex items-center text-sm text-zinc-500 hover:text-zinc-300 transition-colors mb-8","children":"← Back to Research & Validation"}],["$","article",null,{"className":"prose prose-invert max-w-none","children":["$","$L4",null,{"content":"$5"}]}],["$","div",null,{"className":"mt-16 pt-8 border-t border-zinc-800 text-center","children":["$","$L3",null,{"href":"/whitepapers","className":"inline-flex items-center text-sm text-zinc-500 hover:text-zinc-300 transition-colors","children":"← Browse all whitepapers"}]}]]}]}],"$L6"],["$L7","$L8"],"$L9"]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"KIkAGxAWDQmJDwX7xyOak"}
+6:["$","footer",null,{"className":"border-t border-zinc-800 bg-zinc-950","children":["$","div",null,{"className":"mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8","children":["$","div",null,{"className":"flex flex-col items-center justify-between gap-4 sm:flex-row","children":[["$","p",null,{"className":"text-sm text-zinc-400","children":"Kaptaind Pro — Automated semantic versioning, enhanced by AI."}],["$","div",null,{"className":"flex items-center gap-6","children":[["$","$L3",null,{"href":"/whitepapers","className":"text-sm text-zinc-500 hover:text-zinc-300 transition-colors","children":"Research & Validation"}],["$","p",null,{"className":"text-sm text-zinc-500","children":"Built with Next.js and Claude"}]]}]]}]}]}]
+7:["$","script","script-0",{"src":"/_next/static/chunks/2pes6-pd9xzbn.js","async":true}]
+8:["$","script","script-1",{"src":"/_next/static/chunks/0mnx6i03wgu-z.js","async":true}]
+9:["$","$La",null,{"children":["$","$b",null,{"name":"Next.MetadataOutlet","children":"$@c"}]}]
+c:null

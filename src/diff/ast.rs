@@ -29,15 +29,29 @@ pub fn api_score(cluster: &Cluster, repo_root: &Path) -> ApiAnalysis {
     result
 }
 
-fn load_versions(repo_root: &Path) -> std::collections::HashMap<crate::diff::lang::adapter::Language, crate::diff::version::detector::LanguageVersion> {
+fn load_versions(
+    repo_root: &Path,
+) -> std::collections::HashMap<
+    String,
+    crate::diff::version::detector::LanguageVersion,
+> {
     let mut version_cache = VersionCache::load(repo_root);
     let versions = detect_all(&mut version_cache, repo_root);
     version_cache.save(repo_root);
     versions
 }
 
-pub fn api_score_with_cache(cluster: &Cluster, repo_root: &Path, ast_cache: &mut AstCache) -> ApiAnalysis {
-    api_score_inner(cluster, repo_root, ast_cache, AdapterRegistry::default_registry())
+pub fn api_score_with_cache(
+    cluster: &Cluster,
+    repo_root: &Path,
+    ast_cache: &mut AstCache,
+) -> ApiAnalysis {
+    api_score_inner(
+        cluster,
+        repo_root,
+        ast_cache,
+        AdapterRegistry::default_registry(),
+    )
 }
 
 pub fn api_score_with_plugins(
@@ -84,8 +98,12 @@ fn api_score_inner(
                 let file_hash = cache::hash_file(&resolved);
 
                 // Resolve version string for this language
-                let lang_version = lang_versions.get(&adapter.language()).cloned();
-                let version_str = lang_version.as_ref().map(|lv| lv.version.as_str()).unwrap_or("unknown").to_string();
+                let lang_version = lang_versions.get(adapter.language().as_str()).cloned();
+                let version_str = lang_version
+                    .as_ref()
+                    .map(|lv| lv.version.as_str())
+                    .unwrap_or("unknown")
+                    .to_string();
                 let version_source = lang_version.as_ref().map(|lv| lv.source);
 
                 let ast = if let Some(ref h) = file_hash {
@@ -139,7 +157,11 @@ fn api_score_inner(
                 });
 
                 let api_surface = adapter.extract_api(&ast);
-                let signatures: HashSet<String> = api_surface.public_symbols.into_iter().map(|s| s.name).collect();
+                let signatures: HashSet<String> = api_surface
+                    .public_symbols
+                    .into_iter()
+                    .map(|s| s.name)
+                    .collect();
 
                 // Fallback surface detection (routes, design tokens) still valid across languages
                 let is_surface = is_api_surface(path) || !signatures.is_empty();
@@ -165,7 +187,8 @@ fn api_score_inner(
 
                 let local_touch_score = 0.25_f32; // per file heuristic
                 let local_sig_score = (signatures.len() as f32 / 8.0).clamp(0.0, 1.0);
-                let local_score: f32 = (0.55 * local_touch_score + 0.45 * local_sig_score).clamp(0.0, 1.0);
+                let local_score: f32 =
+                    (0.55 * local_touch_score + 0.45 * local_sig_score).clamp(0.0, 1.0);
 
                 let normalized_score = normalize(local_score, adapter.language());
                 if normalized_score > max_score {
@@ -206,7 +229,8 @@ fn api_score_inner(
 
                 let local_touch_score = 0.25_f32;
                 let local_sig_score = (signatures.len() as f32 / 8.0).clamp(0.0, 1.0);
-                let local_score: f32 = (0.55 * local_touch_score + 0.45 * local_sig_score).clamp(0.0, 1.0);
+                let local_score: f32 =
+                    (0.55 * local_touch_score + 0.45 * local_sig_score).clamp(0.0, 1.0);
                 if local_score > max_score {
                     max_score = local_score;
                 }
@@ -298,9 +322,10 @@ fn signature_from_line(line: &str) -> Option<String> {
         return Some(line.to_string());
     }
 
-    PREFIXES
-        .iter()
-        .find_map(|prefix| line.strip_prefix(prefix).map(|rest| format!("{prefix}{rest}")))
+    PREFIXES.iter().find_map(|prefix| {
+        line.strip_prefix(prefix)
+            .map(|rest| format!("{prefix}{rest}"))
+    })
 }
 
 fn is_api_surface(path: &Path) -> bool {
@@ -319,14 +344,17 @@ fn is_api_surface(path: &Path) -> bool {
 fn is_route_file(path: &Path) -> bool {
     let as_text = path.to_string_lossy().to_lowercase();
     let route_dirs = ["app/", "pages/", "routes/", "src/routes/"];
-    let has_route_dir = route_dirs.iter().any(|dir| {
-        as_text.contains(&format!("/{dir}")) || as_text.starts_with(dir)
-    });
+    let has_route_dir = route_dirs
+        .iter()
+        .any(|dir| as_text.contains(&format!("/{dir}")) || as_text.starts_with(dir));
     if !has_route_dir {
         return false;
     }
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    matches!(ext, "tsx" | "ts" | "jsx" | "js" | "svelte" | "vue" | "astro")
+    matches!(
+        ext,
+        "tsx" | "ts" | "jsx" | "js" | "svelte" | "vue" | "astro"
+    )
 }
 
 /// Detects design token / theme config files
@@ -365,7 +393,8 @@ mod tests {
         let dir = tempdir().expect("temp dir");
         let file_path = dir.path().join("src/api.rs");
         std::fs::create_dir_all(file_path.parent().expect("parent")).expect("create parent");
-        std::fs::write(&file_path, "pub fn expose() {}\npub struct Api;\n").expect("write api file");
+        std::fs::write(&file_path, "pub fn expose() {}\npub struct Api;\n")
+            .expect("write api file");
 
         let cluster = cluster_with_event(FsEvent {
             paths: vec![PathBuf::from("src/api.rs")],
@@ -400,7 +429,11 @@ mod tests {
         let dir = tempdir().expect("temp dir");
         let file_path = dir.path().join("src/component.tsx");
         std::fs::create_dir_all(file_path.parent().unwrap()).unwrap();
-        std::fs::write(&file_path, "export default function App() {}\nexport const API_URL = \"test\";\n").unwrap();
+        std::fs::write(
+            &file_path,
+            "export default function App() {}\nexport const API_URL = \"test\";\n",
+        )
+        .unwrap();
 
         let cluster = cluster_with_event(FsEvent {
             paths: vec![PathBuf::from("src/component.tsx")],
@@ -481,7 +514,9 @@ mod tests {
         let dir = tempdir().expect("temp dir");
         let file = dir.path().join("src/lib.rs");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(&file, r#"
+        std::fs::write(
+            &file,
+            r#"
 pub fn complex_function(
     name: &str,
     count: usize,
@@ -489,7 +524,9 @@ pub fn complex_function(
 ) -> Result<Vec<String>, Error> {
     todo!()
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let cluster = cluster_with_event(FsEvent {
             paths: vec![PathBuf::from("src/lib.rs")],
@@ -508,13 +545,17 @@ pub fn complex_function(
         let dir = tempdir().expect("temp dir");
         let file = dir.path().join("src/lib.rs");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(&file, r#"
+        std::fs::write(
+            &file,
+            r#"
 pub trait Service {
     type Error;
     fn call(&self, req: Request) -> Response;
     fn health(&self) -> bool;
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let cluster = cluster_with_event(FsEvent {
             paths: vec![PathBuf::from("src/lib.rs")],
@@ -532,13 +573,17 @@ pub trait Service {
         let dir = tempdir().expect("temp dir");
         let file = dir.path().join("src/lib.rs");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(&file, r#"
+        std::fs::write(
+            &file,
+            r#"
 pub enum Color {
     Red,
     Green,
     Blue,
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let cluster = cluster_with_event(FsEvent {
             paths: vec![PathBuf::from("src/lib.rs")],
@@ -556,7 +601,9 @@ pub enum Color {
         let dir = tempdir().expect("temp dir");
         let file = dir.path().join("src/lib.rs");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(&file, r#"
+        std::fs::write(
+            &file,
+            r#"
 pub struct Server {
     pub port: u16,
 }
@@ -568,7 +615,9 @@ impl Server {
     pub fn start(&self) {}
     fn internal(&self) {} // not pub, should not appear
 }
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let cluster = cluster_with_event(FsEvent {
             paths: vec![PathBuf::from("src/lib.rs")],
@@ -586,13 +635,17 @@ impl Server {
         let dir = tempdir().expect("temp dir");
         let file = dir.path().join("src/lib.rs");
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(&file, r#"
+        std::fs::write(
+            &file,
+            r#"
 fn private_fn() {}
 struct PrivateStruct { field: i32 }
 enum PrivateEnum { A, B }
 trait PrivateTrait { fn method(&self); }
 pub fn public_fn() {}
-"#).unwrap();
+"#,
+        )
+        .unwrap();
 
         let cluster = cluster_with_event(FsEvent {
             paths: vec![PathBuf::from("src/lib.rs")],

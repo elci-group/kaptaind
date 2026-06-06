@@ -46,7 +46,11 @@ fn test_status_command() {
         .expect("run command");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "Command failed with stderr: {}", stderr);
+    assert!(
+        output.status.success(),
+        "Command failed with stderr: {}",
+        stderr
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("1.2.3"));
 }
@@ -55,7 +59,7 @@ fn test_status_command() {
 fn test_log_command_with_artifacts() {
     let dir = tempdir().expect("temp dir");
     write_default_config(dir.path());
-    
+
     let analysis_dir = dir.path().join(".kaptaind").join("analysis");
     std::fs::create_dir_all(&analysis_dir).unwrap();
 
@@ -97,7 +101,11 @@ fn test_log_command_with_artifacts() {
         .expect("run command");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "Command failed with stderr: {}", stderr);
+    assert!(
+        output.status.success(),
+        "Command failed with stderr: {}",
+        stderr
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("2.0.0"));
     assert!(stdout.contains("Major"));
@@ -108,8 +116,8 @@ fn test_log_command_with_artifacts() {
 fn test_analyze_command_on_clean_repo() {
     let dir = tempdir().expect("temp dir");
     write_default_config(dir.path());
-    
-    let _repo = git2::Repository::init(dir.path()).unwrap();
+
+    init_git(dir.path());
 
     let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
         .current_dir(dir.path())
@@ -118,7 +126,11 @@ fn test_analyze_command_on_clean_repo() {
         .expect("run command");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "Command failed with stderr: {}", stderr);
+    assert!(
+        output.status.success(),
+        "Command failed with stderr: {}",
+        stderr
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Working tree is clean"));
 }
@@ -127,21 +139,13 @@ fn test_analyze_command_on_clean_repo() {
 fn test_analyze_command_on_dirty_repo() {
     let dir = tempdir().expect("temp dir");
     write_default_config(dir.path());
-    
-    let repo = git2::Repository::init(dir.path()).unwrap();
-    
+
+    init_git(dir.path());
+
     let file_path = dir.path().join("src_file.rs");
     std::fs::write(&file_path, "pub fn hello() {}").unwrap();
-    
-    let mut index = repo.index().unwrap();
-    index.add_path(std::path::Path::new("src_file.rs")).unwrap();
-    index.write().unwrap();
-    let tree_id = index.write_tree().unwrap();
-    let tree = repo.find_tree(tree_id).unwrap();
-    
-    // Create a dummy signature
-    let sig = git2::Signature::now("test", "test@example.com").unwrap();
-    repo.commit(Some("HEAD"), &sig, &sig, "init", &tree, &[]).unwrap();
+    git(dir.path(), &["add", "src_file.rs"]);
+    git(dir.path(), &["commit", "-m", "init"]);
 
     std::fs::write(&file_path, "pub fn hello() {}\npub fn world() {}").unwrap();
 
@@ -152,7 +156,11 @@ fn test_analyze_command_on_dirty_repo() {
         .expect("run command");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "Command failed with stderr: {}", stderr);
+    assert!(
+        output.status.success(),
+        "Command failed with stderr: {}",
+        stderr
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Dry-run Analysis Result"));
     assert!(stdout.contains("Touched Paths"));
@@ -161,7 +169,7 @@ fn test_analyze_command_on_dirty_repo() {
 #[test]
 fn test_init_detects_node_project() {
     let dir = tempdir().expect("temp dir");
-    let _repo = git2::Repository::init(dir.path()).unwrap();
+    init_git(dir.path());
     std::fs::write(dir.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
@@ -171,7 +179,11 @@ fn test_init_detects_node_project() {
         .expect("run command");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "Command failed with stderr: {}", stderr);
+    assert!(
+        output.status.success(),
+        "Command failed with stderr: {}",
+        stderr
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Node"));
 
@@ -185,7 +197,7 @@ fn test_init_detects_node_project() {
 #[test]
 fn test_init_does_not_overwrite_existing() {
     let dir = tempdir().expect("temp dir");
-    let _repo = git2::Repository::init(dir.path()).unwrap();
+    init_git(dir.path());
     std::fs::write(dir.path().join("kaptaind.toml"), "# existing config").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
@@ -195,10 +207,45 @@ fn test_init_does_not_overwrite_existing() {
         .expect("run command");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(output.status.success(), "Command failed with stderr: {}", stderr);
+    assert!(
+        output.status.success(),
+        "Command failed with stderr: {}",
+        stderr
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("already exists"));
 
     let content = std::fs::read_to_string(dir.path().join("kaptaind.toml")).unwrap();
     assert_eq!(content, "# existing config");
+}
+
+fn init_git(path: &std::path::Path) {
+    git(path, &["init"]);
+    git(path, &["config", "user.name", "Kaptaind Test"]);
+    git(path, &["config", "user.email", "kaptaind@example.com"]);
+    git(path, &["add", "-A"]);
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(["diff", "--cached", "--quiet"])
+        .output()
+        .expect("run git diff");
+    if !output.status.success() {
+        git(path, &["commit", "-m", "initial fixtures"]);
+    }
+}
+
+fn git(path: &std::path::Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .output()
+        .expect("run git");
+    assert!(
+        output.status.success(),
+        "git {} failed: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }

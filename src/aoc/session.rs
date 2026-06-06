@@ -6,8 +6,8 @@ use std::path::Path;
 /// An active or completed Aim of Change session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AocSession {
-    pub id: String,                       // UUID as string for stable serialization
-    pub label: String,                    // User-friendly name (e.g. "refactor-engine")
+    pub id: String,    // UUID as string for stable serialization
+    pub label: String, // User-friendly name (e.g. "refactor-engine")
     pub created_at: DateTime<Utc>,
     pub initial_version: String,
     /// Optional release intent (directive §8.3): "none" | "preview" | "internal" | "public".
@@ -21,7 +21,7 @@ pub struct AocSession {
 /// A completed AoC manifest that links all traces from a session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AocManifest {
-    pub id: String,                   // UUID
+    pub id: String, // UUID
     pub label: String,
     pub created_at: DateTime<Utc>,
     pub shipped_at: DateTime<Utc>,
@@ -30,7 +30,7 @@ pub struct AocManifest {
     pub cluster_count: usize,
     pub commit_count: usize,
     pub test_failures: usize,
-    pub trace_ids: Vec<String>,       // cluster UUIDs in order
+    pub trace_ids: Vec<String>, // cluster UUIDs in order
 }
 
 /// Load the currently active AoC session, if any.
@@ -85,7 +85,10 @@ pub fn list_manifests(repo_path: &Path) -> anyhow::Result<Vec<AocManifest>> {
         let entry = entry?;
         let path = entry.path();
         if path.extension().map(|ext| ext == "json").unwrap_or(false)
-            && path.file_name().map(|n| n != "active.json").unwrap_or(false)
+            && path
+                .file_name()
+                .map(|n| n != "active.json")
+                .unwrap_or(false)
         {
             if let Ok(content) = fs::read_to_string(&path) {
                 if let Ok(manifest) = serde_json::from_str::<AocManifest>(&content) {

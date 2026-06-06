@@ -1,3 +1,3 @@
 pub mod controller;
 
-pub use controller::push;
+pub use controller::{push, PushOptions};

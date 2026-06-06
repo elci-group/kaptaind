@@ -1,14 +1,16 @@
+use crate::aoc::tracer::TraceRecord;
+use chrono::Utc;
 use rusqlite::{params, Connection};
 use std::path::Path;
-use crate::aoc::tracer::TraceRecord;
-use chrono::{DateTime, Utc};
 
 pub fn init_db(repo_path: &Path) -> anyhow::Result<()> {
     let kaptaind_dir = repo_path.join(".kaptaind");
     std::fs::create_dir_all(&kaptaind_dir).unwrap_or_default();
     let db_path = kaptaind_dir.join("traces.db");
     let conn = Connection::open(db_path)?;
-    
+
+    conn.pragma_update(None, "journal_mode", "WAL")?;
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS traces (
             cluster_id TEXT PRIMARY KEY,
@@ -32,9 +34,9 @@ pub fn init_db(repo_path: &Path) -> anyhow::Result<()> {
 pub fn save_trace(repo_path: &Path, record: &TraceRecord) -> anyhow::Result<()> {
     let db_path = repo_path.join(".kaptaind").join("traces.db");
     let conn = Connection::open(db_path)?;
-    
+
     let data = serde_json::to_string(record)?;
-    
+
     conn.execute(
         "INSERT OR REPLACE INTO traces (cluster_id, aoc_id, started_at, ended_at, duration_ms, data)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -56,10 +58,11 @@ pub fn get_traces_for_aoc(repo_path: &Path, aoc_id: &str) -> anyhow::Result<Vec<
     if !db_path.exists() {
         return Ok(Vec::new());
     }
-    
+
     let conn = Connection::open(db_path)?;
-    let mut stmt = conn.prepare("SELECT data FROM traces WHERE aoc_id = ?1 ORDER BY started_at ASC")?;
-    
+    let mut stmt =
+        conn.prepare("SELECT data FROM traces WHERE aoc_id = ?1 ORDER BY started_at ASC")?;
+
     let trace_iter = stmt.query_map([aoc_id], |row| {
         let data: String = row.get(0)?;
         Ok(data)
@@ -81,7 +84,7 @@ pub fn prune_old_traces(repo_path: &Path, days: i64) -> anyhow::Result<usize> {
     if !db_path.exists() {
         return Ok(0);
     }
-    
+
     let conn = Connection::open(db_path)?;
     let cutoff = Utc::now() - chrono::Duration::days(days);
     let deleted = conn.execute(

@@ -1,8 +1,8 @@
 use crate::diff::lang::adapter::AstRepresentation;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::collections::{HashMap, VecDeque};
+use std::path::Path;
 
 const CACHE_FILE: &str = ".kaptaind/ast_cache.json";
 
@@ -20,13 +20,32 @@ pub struct CachedSymbol {
     pub kind: String,
 }
 
+fn default_capacity() -> usize {
+    2048
+}
+
 /// Persistent file-hash cache for AST analysis results.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AstCache {
     /// Map from relative file path to cached entry.
     entries: HashMap<String, CacheEntry>,
+    #[serde(default = "default_capacity")]
+    capacity: usize,
+    #[serde(skip)]
+    access_order: VecDeque<String>,
     #[serde(skip)]
     dirty: bool,
+}
+
+impl Default for AstCache {
+    fn default() -> Self {
+        Self {
+            entries: HashMap::new(),
+            capacity: 2048,
+            access_order: VecDeque::new(),
+            dirty: false,
+        }
+    }
 }
 
 impl AstCache {
@@ -36,7 +55,10 @@ impl AstCache {
         let Ok(content) = std::fs::read_to_string(&path) else {
             return Self::default();
         };
-        serde_json::from_str(&content).unwrap_or_default()
+        let mut cache: Self = serde_json::from_str(&content).unwrap_or_default();
+        cache.access_order = cache.entries.keys().cloned().collect();
+        cache.dirty = false;
+        cache
     }
 
     /// Persist cache to disk (only if dirty).
@@ -55,11 +77,13 @@ impl AstCache {
 
     /// Look up a cached AST result by file path and current hash.
     /// Returns `Some(AstRepresentation)` if the file hasn't changed since last parse.
-    pub fn get(&self, relative_path: &str, current_hash: &str) -> Option<AstRepresentation> {
+    pub fn get(&mut self, relative_path: &str, current_hash: &str) -> Option<AstRepresentation> {
         let entry = self.entries.get(relative_path)?;
         if entry.hash != current_hash {
             return None;
         }
+        self.access_order.retain(|k| k != relative_path);
+        self.access_order.push_back(relative_path.to_string());
         let symbols = entry
             .symbols
             .iter()
@@ -77,6 +101,11 @@ impl AstCache {
 
     /// Store a parsed AST result for a file.
     pub fn put(&mut self, relative_path: &str, hash: &str, ast: &AstRepresentation) {
+        if self.entries.len() >= self.capacity && !self.entries.contains_key(relative_path) {
+            if let Some(oldest) = self.access_order.pop_front() {
+                self.entries.remove(&oldest);
+            }
+        }
         let symbols = ast
             .symbols
             .iter()
@@ -93,6 +122,8 @@ impl AstCache {
                 structure_hash: ast.structure_hash,
             },
         );
+        self.access_order.retain(|k| k != relative_path);
+        self.access_order.push_back(relative_path.to_string());
         self.dirty = true;
     }
 
@@ -104,8 +135,15 @@ impl AstCache {
     /// Evict entries for files that no longer exist relative to repo_root.
     pub fn prune(&mut self, repo_root: &Path) {
         let before = self.entries.len();
-        self.entries
-            .retain(|path, _| repo_root.join(path).exists());
+        self.entries.retain(|path, _| repo_root.join(path).exists());
+        self.access_order.retain(|path| self.entries.contains_key(path));
+        while self.entries.len() > self.capacity {
+            if let Some(oldest) = self.access_order.pop_front() {
+                self.entries.remove(&oldest);
+            } else {
+                break;
+            }
+        }
         if self.entries.len() != before {
             self.dirty = true;
         }
@@ -117,14 +155,14 @@ pub fn hash_file(path: &Path) -> Option<String> {
     let content = std::fs::read(path).ok()?;
     let mut hasher = Sha256::new();
     hasher.update(&content);
-    Some(hex::encode(hasher.finalize()))
+    Some(crate::util::hex::encode(hasher.finalize()))
 }
 
 /// Compute SHA256 of a byte slice (for testing).
 pub fn hash_bytes(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
-    hex::encode(hasher.finalize())
+    crate::util::hex::encode(hasher.finalize())
 }
 
 #[cfg(test)]
@@ -168,7 +206,7 @@ mod tests {
 
     #[test]
     fn cache_miss_on_unknown_path() {
-        let cache = AstCache::default();
+        let mut cache = AstCache::default();
         assert!(cache.get("src/main.rs", "abc123").is_none());
     }
 
@@ -189,7 +227,7 @@ mod tests {
         cache.put("src/lib.rs", "hash1", &ast);
         cache.save(dir.path());
 
-        let loaded = AstCache::load(dir.path());
+        let mut loaded = AstCache::load(dir.path());
         let result = loaded.get("src/lib.rs", "hash1");
         assert!(result.is_some());
         assert_eq!(result.unwrap().symbols[0].name, "hello");
@@ -237,5 +275,19 @@ mod tests {
         assert_eq!(cache.len(), 1);
         assert!(cache.get("src/lib.rs", "h1").is_some());
         assert!(cache.get("src/gone.rs", "h2").is_none());
+    }
+
+    #[test]
+    fn cache_respects_capacity() {
+        let mut cache = AstCache::default();
+        cache.capacity = 2;
+        let ast = AstRepresentation::default();
+        cache.put("a.rs", "h1", &ast);
+        cache.put("b.rs", "h2", &ast);
+        cache.put("c.rs", "h3", &ast);
+        assert_eq!(cache.len(), 2);
+        assert!(cache.get("a.rs", "h1").is_none());
+        assert!(cache.get("b.rs", "h2").is_some());
+        assert!(cache.get("c.rs", "h3").is_some());
     }
 }

@@ -20,7 +20,10 @@ pub fn start(
 
     let handle = thread::spawn(move || watch_loop(tx, config, shutdown, ready_tx));
 
-    match ready_rx.recv().context("watcher startup signal not received")? {
+    match ready_rx
+        .recv()
+        .context("watcher startup signal not received")?
+    {
         Ok(()) => Ok(handle),
         Err(message) => {
             let _ = handle.join();
@@ -68,6 +71,8 @@ fn watch_loop(
 }
 
 pub fn join(handle: thread::JoinHandle<notify::Result<()>>) -> anyhow::Result<()> {
-    let result = handle.join().map_err(|_| anyhow!("watcher thread panicked"))?;
+    let result = handle
+        .join()
+        .map_err(|_| anyhow!("watcher thread panicked"))?;
     result.map_err(Into::into)
 }

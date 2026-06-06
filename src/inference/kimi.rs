@@ -89,7 +89,8 @@ struct ChatResponse {
 #[derive(serde::Deserialize)]
 struct Choice {
     message: ResponseMessage,
-    finish_reason: Option<String>,
+    #[serde(rename = "finish_reason")]
+    _finish_reason: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -116,7 +117,10 @@ fn resolve_endpoint(config: &InferenceConfig) -> KimiEndpoint {
             "china" | "cn" => KimiEndpoint::MoonshotChina,
             "coding" | "kimi" => KimiEndpoint::KimiCoding,
             _ => {
-                tracing::warn!(endpoint = endpoint_str, "unknown kimi endpoint, using auto-detect");
+                tracing::warn!(
+                    endpoint = endpoint_str,
+                    "unknown kimi endpoint, using auto-detect"
+                );
                 auto_detect_endpoint()
             }
         };
@@ -210,10 +214,7 @@ fn build_user_prompt(ctx: &CommitContext<'_>, endpoint: KimiEndpoint) -> String 
              - API surface impact: {:.2}/1.0\n\
              - Dependency changes: {} nodes\n\
              - Runtime config changes: {} files",
-            ctx.diff.structural,
-            ctx.diff.api,
-            ctx.diff.dependency_nodes,
-            ctx.diff.runtime_paths
+            ctx.diff.structural, ctx.diff.api, ctx.diff.dependency_nodes, ctx.diff.runtime_paths
         )
     } else {
         String::new()
@@ -243,7 +244,7 @@ fn build_user_prompt(ctx: &CommitContext<'_>, endpoint: KimiEndpoint) -> String 
 pub async fn generate(
     config: &InferenceConfig,
     ctx: &CommitContext<'_>,
-    _model: &str,  // Model is resolved internally based on endpoint
+    _model: &str, // Model is resolved internally based on endpoint
 ) -> Option<String> {
     let endpoint = resolve_endpoint(config);
     let api_key = resolve_api_key(endpoint)?;
@@ -279,7 +280,7 @@ pub async fn generate(
             },
         ],
         max_tokens: Some(150),
-        temperature: Some(0.3),  // Lower for consistent formatting
+        temperature: Some(0.3), // Lower for consistent formatting
         thinking,
     };
 

@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use chrono::{DateTime, Utc};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssetMetrics {
@@ -57,7 +57,7 @@ impl AssetManager {
                 }
             }
         }
-        
+
         assets.sort_by_key(|a| std::cmp::Reverse(a.created_at));
         Ok(assets)
     }

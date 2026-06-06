@@ -39,6 +39,39 @@ impl RegistryDistributor {
 
     /// Build and push a Docker image containing the package.
     pub async fn distribute(&self, pkg: &PackageResult) -> anyhow::Result<()> {
+        let (full_tag, dockerfile_path) = self.build(pkg).await?;
+
+        // Push the image
+        tracing::info!(image = %full_tag, registry = ?self.registry, "pushing Docker image");
+        let push_output = Command::new("docker")
+            .arg("push")
+            .arg(&full_tag)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("failed to execute docker push")?;
+
+        if !push_output.status.success() {
+            let stderr = String::from_utf8_lossy(&push_output.stderr);
+            return Err(anyhow!("docker push failed: {}", stderr));
+        }
+
+        // Cleanup temporary Dockerfile
+        let _ = tokio::fs::remove_file(&dockerfile_path).await;
+
+        tracing::info!(
+            version = pkg.manifest.version,
+            image = %full_tag,
+            registry = ?self.registry,
+            "image distributed to registry"
+        );
+
+        Ok(())
+    }
+
+    /// Build the Docker image and return the full tag and Dockerfile path.
+    async fn build(&self, pkg: &PackageResult) -> anyhow::Result<(String, std::path::PathBuf)> {
         // Verify Docker is available
         self.verify_docker().await?;
 
@@ -82,33 +115,7 @@ impl RegistryDistributor {
             return Err(anyhow!("docker build failed: {}", stderr));
         }
 
-        // Push the image
-        tracing::info!(image = %full_tag, registry = ?self.registry, "pushing Docker image");
-        let push_output = Command::new("docker")
-            .arg("push")
-            .arg(&full_tag)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .output()
-            .await
-            .context("failed to execute docker push")?;
-
-        if !push_output.status.success() {
-            let stderr = String::from_utf8_lossy(&push_output.stderr);
-            return Err(anyhow!("docker push failed: {}", stderr));
-        }
-
-        // Cleanup temporary Dockerfile
-        let _ = tokio::fs::remove_file(&dockerfile_path).await;
-
-        tracing::info!(
-            version = pkg.manifest.version,
-            image = %full_tag,
-            registry = ?self.registry,
-            "image distributed to registry"
-        );
-
-        Ok(())
+        Ok((full_tag, dockerfile_path))
     }
 
     fn build_image_name(&self) -> String {
@@ -208,17 +215,160 @@ impl ExternalRegistryDistributor {
         }
     }
 
-    pub async fn distribute(&self, _pkg: &PackageResult) -> anyhow::Result<()> {
+    pub async fn distribute(&self, pkg: &PackageResult) -> anyhow::Result<()> {
         match self.tool.as_str() {
-            "crane" => {
-                // Future: Implement crane (Google's container tool) support
-                Err(anyhow!("crane distribution not yet implemented"))
-            }
-            "skopeo" => {
-                // Future: Implement skopeo support for non-Docker environments
-                Err(anyhow!("skopeo distribution not yet implemented"))
-            }
+            "crane" => self.distribute_crane(pkg).await,
+            "skopeo" => self.distribute_skopeo(pkg).await,
             _ => Err(anyhow!("unknown external registry tool: {}", self.tool)),
         }
+    }
+
+    async fn distribute_skopeo(&self, pkg: &PackageResult) -> anyhow::Result<()> {
+        let builder = RegistryDistributor::new(self.config.clone());
+        let (full_tag, dockerfile_path) = builder.build(pkg).await?;
+
+        let registry = std::env::var("DOCKER_REGISTRY").ok();
+        let username = std::env::var("DOCKER_USERNAME").ok();
+        let password = std::env::var("DOCKER_PASSWORD").ok();
+
+        // Login if credentials provided
+        if let (Some(user), Some(pass)) = (&username, &password) {
+            let reg = registry.as_deref().unwrap_or("docker.io");
+            let output = Command::new("skopeo")
+                .arg("login")
+                .arg("-u")
+                .arg(user)
+                .arg("-p")
+                .arg(pass)
+                .arg(reg)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .context("failed to execute skopeo login")?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(anyhow!("skopeo login failed: {}", stderr));
+            }
+        }
+
+        let source = format!("docker-daemon:{}", full_tag);
+        let dest = format!("docker://{}", full_tag);
+
+        tracing::info!(image = %full_tag, "copying image with skopeo");
+        let output = Command::new("skopeo")
+            .arg("copy")
+            .arg(&source)
+            .arg(&dest)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("failed to execute skopeo copy")?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            return Err(anyhow!("skopeo copy failed: {}", stderr));
+        }
+
+        // Cleanup temporary Dockerfile
+        let _ = tokio::fs::remove_file(&dockerfile_path).await;
+
+        tracing::info!(
+            image = %full_tag,
+            registry = ?registry,
+            "image distributed with skopeo"
+        );
+
+        Ok(())
+    }
+
+    async fn distribute_crane(&self, pkg: &PackageResult) -> anyhow::Result<()> {
+        let builder = RegistryDistributor::new(self.config.clone());
+        let (full_tag, dockerfile_path) = builder.build(pkg).await?;
+
+        let registry = std::env::var("DOCKER_REGISTRY").ok();
+        let username = std::env::var("DOCKER_USERNAME").ok();
+        let password = std::env::var("DOCKER_PASSWORD").ok();
+
+        // Login if credentials provided
+        if let (Some(user), Some(pass)) = (&username, &password) {
+            let reg = registry.as_deref().unwrap_or("docker.io");
+            let output = Command::new("crane")
+                .arg("auth")
+                .arg("login")
+                .arg(reg)
+                .arg("-u")
+                .arg(user)
+                .arg("-p")
+                .arg(pass)
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .output()
+                .await
+                .context("failed to execute crane auth login")?;
+
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return Err(anyhow!("crane auth login failed: {}", stderr));
+            }
+        }
+
+        let build_dir = pkg.tarball.parent().unwrap_or(Path::new("."));
+        let tmp_path = build_dir.join(format!(".kaptaind-{}-image.tar", pkg.manifest.version));
+
+        tracing::info!(image = %full_tag, "exporting image with docker save");
+        let save_output = Command::new("docker")
+            .arg("save")
+            .arg(&full_tag)
+            .arg("-o")
+            .arg(&tmp_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("failed to execute docker save")?;
+
+        if !save_output.status.success() {
+            let stderr = String::from_utf8_lossy(&save_output.stderr);
+            let _ = tokio::fs::remove_file(&tmp_path).await;
+            let _ = tokio::fs::remove_file(&dockerfile_path).await;
+            return Err(anyhow!(
+                "docker save failed: {}. crane requires a pre-built image or docker daemon",
+                stderr
+            ));
+        }
+
+        tracing::info!(image = %full_tag, "pushing image with crane");
+        let push_output = Command::new("crane")
+            .arg("push")
+            .arg(&tmp_path)
+            .arg(&full_tag)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .await
+            .context("failed to execute crane push")?;
+
+        // Cleanup temp tarball regardless of push result
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+
+        if !push_output.status.success() {
+            let stderr = String::from_utf8_lossy(&push_output.stderr);
+            let _ = tokio::fs::remove_file(&dockerfile_path).await;
+            return Err(anyhow!("crane push failed: {}", stderr));
+        }
+
+        // Cleanup temporary Dockerfile
+        let _ = tokio::fs::remove_file(&dockerfile_path).await;
+
+        tracing::info!(
+            image = %full_tag,
+            registry = ?registry,
+            "image distributed with crane"
+        );
+
+        Ok(())
     }
 }

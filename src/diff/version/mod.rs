@@ -1,5 +1,8 @@
-pub mod cache;
-pub mod detector;
+pub mod cache {
+    pub use kaptaind_diff::diff_version::cache::*;
+}
+pub mod detector {
+    pub use kaptaind_diff::diff_version::detector::*;
+}
 
-pub use cache::VersionCache;
-pub use detector::{detect_all, LanguageVersion};
+pub use kaptaind_diff::diff_version::{detect_all, LanguageVersion, VersionCache, VersionSource};

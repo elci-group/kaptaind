@@ -19,6 +19,26 @@ pub enum Language {
     Plugin,
 }
 
+impl Language {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Language::Rust => "rust",
+            Language::Go => "go",
+            Language::TypeScript => "typescript",
+            Language::JavaScript => "javascript",
+            Language::Python => "python",
+            Language::HtmlCss => "htmlcss",
+            Language::Swift => "swift",
+            Language::Kotlin => "kotlin",
+            Language::Vue => "vue",
+            Language::Svelte => "svelte",
+            Language::Astro => "astro",
+            Language::Scss => "scss",
+            Language::Plugin => "plugin",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Symbol {
     pub name: String,

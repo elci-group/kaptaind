@@ -1,0 +1,32 @@
+# Git
+.git/
+.gitignore
+
+# Web
+web/node_modules/
+web/.next/
+web/dist/
+web/test-results/
+
+# Rust
+target/
+Cargo.lock
+
+# Docs
+*.md
+!README.md
+!INSTALL.md
+!SECURITY.md
+
+# Tests
+tests/
+
+# Deploy artifacts
+deploy/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

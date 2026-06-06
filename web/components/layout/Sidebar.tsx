@@ -11,9 +11,11 @@ const navItems = [
   { href: "/dashboard/changelog", label: "Changelog", pro: true },
   { href: "/dashboard/bump-reasoning", label: "Bump Reasoning", pro: true },
   { href: "/dashboard/team", label: "Team", pro: true },
+  { href: "/dashboard/policies", label: "Policies", pro: true },
+  { href: "/dashboard/audit", label: "Audit Log", pro: true },
 ];
 
-export default function Sidebar({ tier }: { tier: "free" | "pro" }) {
+export default function Sidebar({ tier }: { tier: "free" | "pro" | "team" | "enterprise" }) {
   const pathname = usePathname();
 
   return (
@@ -57,13 +59,13 @@ export default function Sidebar({ tier }: { tier: "free" | "pro" }) {
       <div className="border-t border-zinc-200 p-4 dark:border-zinc-800">
         <div className="mb-3 flex items-center justify-between">
           <span className="text-xs text-zinc-500 dark:text-zinc-400">Plan</span>
-          <Badge variant={tier === "pro" ? "pro" : "default"}>
-            {tier === "pro" ? "Pro" : "Free"}
+          <Badge variant={tier === "free" ? "default" : "pro"}>
+            {tier === "free" ? "Free" : tier.charAt(0).toUpperCase() + tier.slice(1)}
           </Badge>
         </div>
-        {tier !== "pro" && (
+        {tier === "free" && (
           <Link
-            href="/api/billing/create-checkout"
+            href="/api/billing/create-checkout?plan=pro"
             className="mb-3 block w-full rounded-lg bg-violet-600 px-3 py-2 text-center text-sm font-medium text-white hover:bg-violet-700"
           >
             Upgrade to Pro

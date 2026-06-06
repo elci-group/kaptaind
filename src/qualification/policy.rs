@@ -89,10 +89,18 @@ pub(crate) mod duration_string {
 
     pub fn parse_duration(s: &str) -> Option<Duration> {
         if let Some(v) = s.strip_suffix('h') {
-            return v.trim().parse::<u64>().ok().map(|n| Duration::from_secs(n * 3600));
+            return v
+                .trim()
+                .parse::<u64>()
+                .ok()
+                .map(|n| Duration::from_secs(n * 3600));
         }
         if let Some(v) = s.strip_suffix('m') {
-            return v.trim().parse::<u64>().ok().map(|n| Duration::from_secs(n * 60));
+            return v
+                .trim()
+                .parse::<u64>()
+                .ok()
+                .map(|n| Duration::from_secs(n * 60));
         }
         if let Some(v) = s.strip_suffix('s') {
             return v.trim().parse::<u64>().ok().map(|n| Duration::from_secs(n));

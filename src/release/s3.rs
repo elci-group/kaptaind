@@ -6,7 +6,7 @@
 use crate::config::loader::S3DistConfig;
 use crate::release::packager::PackageResult;
 use anyhow::{anyhow, Context};
-use reqwest::{Client, Method};
+use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::SystemTime;
@@ -28,11 +28,15 @@ impl S3Distributor {
     pub fn new(config: S3DistConfig) -> anyhow::Result<Self> {
         let access_key = std::env::var("AWS_ACCESS_KEY_ID")
             .or_else(|_| std::env::var("S3_ACCESS_KEY"))
-            .map_err(|_| anyhow!("S3 access key not found. Set AWS_ACCESS_KEY_ID or S3_ACCESS_KEY"))?;
+            .map_err(|_| {
+                anyhow!("S3 access key not found. Set AWS_ACCESS_KEY_ID or S3_ACCESS_KEY")
+            })?;
 
         let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
             .or_else(|_| std::env::var("S3_SECRET_KEY"))
-            .map_err(|_| anyhow!("S3 secret key not found. Set AWS_SECRET_ACCESS_KEY or S3_SECRET_KEY"))?;
+            .map_err(|_| {
+                anyhow!("S3 secret key not found. Set AWS_SECRET_ACCESS_KEY or S3_SECRET_KEY")
+            })?;
 
         let endpoint = std::env::var("S3_ENDPOINT").ok();
 
@@ -82,7 +86,7 @@ impl S3Distributor {
             .await
             .with_context(|| format!("failed to read file: {}", local_path.display()))?;
 
-        let content_hash = hex::encode(Sha256::digest(&content));
+        let content_hash = crate::util::hex::encode(Sha256::digest(&content));
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
@@ -96,15 +100,24 @@ impl S3Distributor {
             .to_string();
 
         let host = self.endpoint.as_ref().map_or_else(
-            || format!("{}.s3.{}.amazonaws.com", self.config.bucket, self.config.region),
+            || {
+                format!(
+                    "{}.s3.{}.amazonaws.com",
+                    self.config.bucket, self.config.region
+                )
+            },
             |e| {
                 let endpoint = e.trim_end_matches('/');
-                format!("{}.{}", self.config.bucket, endpoint.strip_prefix("https://").unwrap_or(endpoint))
+                format!(
+                    "{}.{}",
+                    self.config.bucket,
+                    endpoint.strip_prefix("https://").unwrap_or(endpoint)
+                )
             },
         );
 
         // Build canonical request
-        let canonical_uri = format!("/ {}", key);
+        let canonical_uri = format!("/{}", key);
         let canonical_querystring = "";
         let content_type = "application/gzip";
         let headers = format!(
@@ -113,11 +126,7 @@ impl S3Distributor {
         let signed_headers = "content-type;host;x-amz-content-sha256;x-amz-date";
         let canonical_request = format!(
             "PUT\n{}\n{}\n{}\n{}\n{}",
-            canonical_uri,
-            canonical_querystring,
-            headers,
-            signed_headers,
-            content_hash
+            canonical_uri, canonical_querystring, headers, signed_headers, content_hash
         );
 
         // Create string to sign
@@ -126,12 +135,13 @@ impl S3Distributor {
             "AWS4-HMAC-SHA256\n{}\n{}\n{}",
             datetime,
             credential_scope,
-            hex::encode(Sha256::digest(canonical_request.as_bytes()))
+            crate::util::hex::encode(Sha256::digest(canonical_request.as_bytes()))
         );
 
         // Calculate signature
         let signing_key = self.get_signing_key(&date)?;
-        let signature = hex::encode(hmac_sha256(&signing_key, string_to_sign.as_bytes()));
+        let signature =
+            crate::util::hex::encode(hmac_sha256(&signing_key, string_to_sign.as_bytes()));
 
         // Build authorization header
         let auth_header = format!(
@@ -141,7 +151,12 @@ impl S3Distributor {
 
         // Build URL
         let url = if let Some(endpoint) = &self.endpoint {
-            format!("{}/{}/{}", endpoint.trim_end_matches('/'), self.config.bucket, key)
+            format!(
+                "{}/{}/{}",
+                endpoint.trim_end_matches('/'),
+                self.config.bucket,
+                key
+            )
         } else {
             format!("https://{}/{}", host, key)
         };
@@ -180,11 +195,11 @@ impl S3Distributor {
 }
 
 fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
-    use sha2::Sha256;
     use hmac::{Hmac, Mac};
-    
+    use sha2::Sha256;
+
     type HmacSha256 = Hmac<Sha256>;
-    
+
     let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");
     mac.update(data);
     mac.finalize().into_bytes().to_vec()

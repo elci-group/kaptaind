@@ -130,7 +130,10 @@ mod tests {
     fn qualifies_when_all_criteria_met() {
         let rec = passing_record(0.9, 3);
         let cfg = QualificationConfig::default();
-        assert_eq!(evaluate(&rec, &cfg, true, true, 0.3, None), QualificationResult::Qualified);
+        assert_eq!(
+            evaluate(&rec, &cfg, true, true, 0.3, None),
+            QualificationResult::Qualified
+        );
     }
 
     #[test]

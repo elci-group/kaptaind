@@ -102,7 +102,9 @@ struct RateLimitState {
 
 impl RateLimitState {
     fn new() -> Self {
-        Self { requests: Vec::new() }
+        Self {
+            requests: Vec::new(),
+        }
     }
 
     fn check_rate_limit(&mut self, limit_per_min: u32) -> bool {
@@ -178,7 +180,9 @@ impl WebhookManager {
         // Check rate limit
         if let Some(limit) = endpoint.rate_limit_per_min {
             let mut limits = self.rate_limits.write().await;
-            let state = limits.entry(endpoint.id.clone()).or_insert_with(RateLimitState::new);
+            let state = limits
+                .entry(endpoint.id.clone())
+                .or_insert_with(RateLimitState::new);
 
             if !state.check_rate_limit(limit) {
                 return DeliveryResult {
@@ -208,7 +212,10 @@ impl WebhookManager {
         };
 
         // Get retry configuration
-        let retry_config = endpoint.retry.as_ref().unwrap_or(&self.config.default_retry);
+        let retry_config = endpoint
+            .retry
+            .as_ref()
+            .unwrap_or(&self.config.default_retry);
 
         // Attempt delivery with retries
         let mut last_error = None;
@@ -339,7 +346,8 @@ impl WebhookManager {
         file_changes: &[std::path::PathBuf],
     ) -> bool {
         // Check if endpoint is subscribed to this event type
-        if !endpoint.events.is_empty() && !endpoint.events.contains(&event.event_type().to_string()) {
+        if !endpoint.events.is_empty() && !endpoint.events.contains(&event.event_type().to_string())
+        {
             return false;
         }
 
@@ -454,7 +462,7 @@ impl WebhookManager {
                 mac.update(data.as_bytes());
                 let result = mac.finalize();
                 let bytes = result.into_bytes();
-                format!("sha256={}", hex::encode(bytes))
+                format!("sha256={}", crate::util::hex::encode(bytes))
             }
             SignatureAlgorithm::HmacSha512 => {
                 let mut mac = HmacSha512::new_from_slice(secret.as_bytes())
@@ -462,7 +470,7 @@ impl WebhookManager {
                 mac.update(data.as_bytes());
                 let result = mac.finalize();
                 let bytes = result.into_bytes();
-                format!("sha512={}", hex::encode(bytes))
+                format!("sha512={}", crate::util::hex::encode(bytes))
             }
             SignatureAlgorithm::Ed25519 => {
                 // Ed25519 signing would require additional dependencies
@@ -473,7 +481,7 @@ impl WebhookManager {
                 mac.update(data.as_bytes());
                 let result = mac.finalize();
                 let bytes = result.into_bytes();
-                format!("sha256={}", hex::encode(bytes))
+                format!("sha256={}", crate::util::hex::encode(bytes))
             }
         }
     }
@@ -503,7 +511,7 @@ fn is_retriable_status(status: reqwest::StatusCode) -> bool {
         429 | // Too Many Requests
         502 | // Bad Gateway
         503 | // Service Unavailable
-        504   // Gateway Timeout
+        504 // Gateway Timeout
     )
 }
 
@@ -520,14 +528,14 @@ pub fn verify_signature(
                 .expect("HMAC can take key of any size");
             mac.update(payload.as_bytes());
             let result = mac.finalize();
-            format!("sha256={}", hex::encode(result.into_bytes()))
+            format!("sha256={}", crate::util::hex::encode(result.into_bytes()))
         }
         SignatureAlgorithm::HmacSha512 => {
             let mut mac = HmacSha512::new_from_slice(secret.as_bytes())
                 .expect("HMAC can take key of any size");
             mac.update(payload.as_bytes());
             let result = mac.finalize();
-            format!("sha512={}", hex::encode(result.into_bytes()))
+            format!("sha512={}", crate::util::hex::encode(result.into_bytes()))
         }
         SignatureAlgorithm::Ed25519 => {
             // Not implemented
@@ -607,7 +615,10 @@ mod tests {
         // Create a signature
         let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
         mac.update(payload.as_bytes());
-        let signature = format!("sha256={}", hex::encode(mac.finalize().into_bytes()));
+        let signature = format!(
+            "sha256={}",
+            crate::util::hex::encode(mac.finalize().into_bytes())
+        );
 
         // Verify it
         assert!(verify_signature(

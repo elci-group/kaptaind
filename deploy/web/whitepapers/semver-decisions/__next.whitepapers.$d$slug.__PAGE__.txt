@@ -1,0 +1,84 @@
+1:"$Sreact.fragment"
+2:I[7988,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],"default"]
+3:I[22016,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],""]
+4:I[90186,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],"default"]
+b:I[97367,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"OutletBoundary"]
+c:"$Sreact.suspense"
+5:Td3f,# Whitepaper: Semantic Versioning Decision Engine
+
+## Abstract
+Kaptaind calculates semantic version bumps based on code impact rather than commit message conventions. This whitepaper validates the deterministic decision rules that map API changes and composite scores to Major, Minor, Patch, or None bumps. All tests passed.
+
+## Claim Statement
+> "Calculates the correct semantic bump and updates VERSION and manifests." (Landing page, workflow step 05)
+> "A local daemon that watches your repository, measures the real impact of your changes — across AST, API surface, and dependencies — and handles version bumps, commits, and changelogs automatically." (Landing page, hero paragraph)
+
+## Methodology
+We tested the `version::decide` function with a matrix of `WeightResult` inputs representing different change scenarios. We also tested `version::apply` to ensure correct semver mutation. Finally, we verified that `save_version` writes the `VERSION` file to disk.
+
+## Test Implementation
+Source: `tests/claims_validation.rs` and `src/version/semver.rs`
+
+```rust
+fn claim_semver_breaking_api_yields_major() {
+    let weight = WeightResult { score: 0.0, api_breaking: true, api_added: false };
+    assert_eq!(decide(&weight, &thresholds), Bump::Major);
+}
+
+fn claim_semver_api_addition_yields_minor() {
+    let weight = WeightResult { score: 0.0, api_breaking: false, api_added: true };
+    assert_eq!(decide(&weight, &thresholds), Bump::Minor);
+}
+
+fn claim_semver_score_thresholds() {
+    let patch = WeightResult { score: 0.2, api_breaking: false, api_added: false };
+    let minor = WeightResult { score: 0.7, api_breaking: false, api_added: false };
+    let none  = WeightResult { score: 0.05, api_breaking: false, api_added: false };
+    assert_eq!(decide(&patch, &thresholds), Bump::Patch);
+    assert_eq!(decide(&minor, &thresholds), Bump::Minor);
+    assert_eq!(decide(&none,  &thresholds), Bump::None);
+}
+
+fn claim_semver_apply_increments_correctly() {
+    let base = Version::new(1, 2, 3);
+    assert_eq!(apply(base.clone(), Bump::Patch), Version::new(1, 2, 4));
+    assert_eq!(apply(base.clone(), Bump::Minor), Version::new(1, 3, 0));
+    assert_eq!(apply(base, Bump::Major), Version::new(2, 0, 0));
+}
+```
+
+## Results
+**PASS** — All decision rules and application logic confirmed.
+
+| Scenario | Expected Bump | Result |
+|----------|--------------|--------|
+| Breaking API change | Major | PASS |
+| New API addition | Minor | PASS |
+| Score > 0.6 (no API change) | Minor | PASS |
+| Score > 0.1 (no API change) | Patch | PASS |
+| Score ≤ 0.1 (no API change) | None | PASS |
+| Apply Patch to 1.2.3 | 1.2.4 | PASS |
+| Apply Minor to 1.2.3 | 1.3.0 | PASS |
+| Apply Major to 1.2.3 | 2.0.0 | PASS |
+
+## Evidence
+The decision logic is deterministic and matches the documented rules in `AGENTS.md`:
+- Breaking API → `Major`
+- Added API or score > 0.6 → `Minor`
+- Score > 0.1 → `Patch`
+- Otherwise → `None`
+
+## Limitations
+- Thresholds (0.6, 0.1) are configurable; we tested only the defaults.
+- The "correctness" of a bump is contextual; we validated determinism, not omniscient correctness.
+- Cargo.toml mutation was not fully exercised in the integration test (only VERSION file writing was verified).
+
+## Conclusion
+The claim is **supported**. Kaptaind applies deterministic, code-impact-driven semantic versioning rules that replace manual convention-based versioning.
+0:{"rsc":["$","$1","c",{"children":[[["$","$L2",null,{}],["$","div",null,{"className":"bg-zinc-950 text-zinc-100 min-h-screen py-12","children":["$","div",null,{"className":"mx-auto max-w-3xl px-6 lg:px-8","children":[["$","$L3",null,{"href":"/whitepapers","className":"inline-flex items-center text-sm text-zinc-500 hover:text-zinc-300 transition-colors mb-8","children":"← Back to Research & Validation"}],["$","article",null,{"className":"prose prose-invert max-w-none","children":["$","$L4",null,{"content":"$5"}]}],"$L6"]}]}],"$L7"],["$L8","$L9"],"$La"]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"KIkAGxAWDQmJDwX7xyOak"}
+6:["$","div",null,{"className":"mt-16 pt-8 border-t border-zinc-800 text-center","children":["$","$L3",null,{"href":"/whitepapers","className":"inline-flex items-center text-sm text-zinc-500 hover:text-zinc-300 transition-colors","children":"← Browse all whitepapers"}]}]
+7:["$","footer",null,{"className":"border-t border-zinc-800 bg-zinc-950","children":["$","div",null,{"className":"mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8","children":["$","div",null,{"className":"flex flex-col items-center justify-between gap-4 sm:flex-row","children":[["$","p",null,{"className":"text-sm text-zinc-400","children":"Kaptaind Pro — Automated semantic versioning, enhanced by AI."}],["$","div",null,{"className":"flex items-center gap-6","children":[["$","$L3",null,{"href":"/whitepapers","className":"text-sm text-zinc-500 hover:text-zinc-300 transition-colors","children":"Research & Validation"}],["$","p",null,{"className":"text-sm text-zinc-500","children":"Built with Next.js and Claude"}]]}]]}]}]}]
+8:["$","script","script-0",{"src":"/_next/static/chunks/2pes6-pd9xzbn.js","async":true}]
+9:["$","script","script-1",{"src":"/_next/static/chunks/0mnx6i03wgu-z.js","async":true}]
+a:["$","$Lb",null,{"children":["$","$c",null,{"name":"Next.MetadataOutlet","children":"$@d"}]}]
+d:null

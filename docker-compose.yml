@@ -1,0 +1,48 @@
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: kaptaind
+      POSTGRES_PASSWORD: kaptaind
+      POSTGRES_DB: kaptaind
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kaptaind"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+
+  daemon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: kaptaind-daemon
+    restart: unless-stopped
+    volumes:
+      - ./kaptaind.toml:/opt/kaptaind/kaptaind.toml:ro
+      - daemon-data:/opt/kaptaind/.kaptaind
+    working_dir: /opt/kaptaind
+
+  web:
+    image: nginx:alpine
+    container_name: kaptaind-web
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./deploy/web:/usr/share/nginx/html:ro
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      daemon:
+        condition: service_started
+      postgres:
+        condition: service_healthy
+
+volumes:
+  daemon-data:
+  pgdata:

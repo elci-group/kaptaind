@@ -238,10 +238,7 @@ impl SelectiveEngine {
         self.filter_by_action(changes, |action| matches!(action, CaptureAction::Block))
             .into_iter()
             .map(|(change, result)| {
-                let reason = format!(
-                    "Blocked by rule: {}",
-                    result.rule_id.unwrap_or_default()
-                );
+                let reason = format!("Blocked by rule: {}", result.rule_id.unwrap_or_default());
                 (change, reason)
             })
             .collect()
@@ -249,23 +246,22 @@ impl SelectiveEngine {
 
     /// Get all quarantined changes.
     pub fn get_quarantined_changes(&self, changes: &[FileChange]) -> Vec<(FileChange, String)> {
-        self.filter_by_action(changes, |action| matches!(action, CaptureAction::Quarantine))
-            .into_iter()
-            .map(|(change, result)| {
-                let reason = format!(
-                    "Quarantined by rule: {}",
-                    result.rule_id.unwrap_or_default()
-                );
-                (change, reason)
-            })
-            .collect()
+        self.filter_by_action(changes, |action| {
+            matches!(action, CaptureAction::Quarantine)
+        })
+        .into_iter()
+        .map(|(change, result)| {
+            let reason = format!(
+                "Quarantined by rule: {}",
+                result.rule_id.unwrap_or_default()
+            );
+            (change, reason)
+        })
+        .collect()
     }
 
     /// Get changes grouped by their tags.
-    pub fn get_tagged_changes(
-        &self,
-        changes: &[FileChange],
-    ) -> HashMap<String, Vec<FileChange>> {
+    pub fn get_tagged_changes(&self, changes: &[FileChange]) -> HashMap<String, Vec<FileChange>> {
         let mut tagged: HashMap<String, Vec<FileChange>> = HashMap::new();
 
         for change in changes {
@@ -285,7 +281,8 @@ impl SelectiveEngine {
         let compiled = Self::compile_rule(rule)?;
         self.compiled_rules.push(compiled);
         // Re-sort by priority
-        self.compiled_rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        self.compiled_rules
+            .sort_by(|a, b| b.priority.cmp(&a.priority));
         Ok(())
     }
 
@@ -457,10 +454,7 @@ pub mod templates {
             content_patterns: vec![
                 r#"(?i)(password|secret|api[_-]?key|token)\s*=\s*['"][^'"]+['"]"#.to_string(),
             ],
-            change_types: vec![
-                ChangeType::Added,
-                ChangeType::Modified,
-            ],
+            change_types: vec![ChangeType::Added, ChangeType::Modified],
             action: CaptureAction::Block,
             priority: 100,
             enabled: true,
@@ -481,10 +475,7 @@ pub mod templates {
             name: "Large Files".to_string(),
             patterns: vec!["**/*".to_string()],
             content_patterns: vec![],
-            change_types: vec![
-                ChangeType::Added,
-                ChangeType::Modified,
-            ],
+            change_types: vec![ChangeType::Added, ChangeType::Modified],
             action: CaptureAction::Quarantine,
             priority: 50,
             enabled: true,
@@ -586,7 +577,6 @@ pub mod templates {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
     #[test]
     fn test_file_change_creation() {

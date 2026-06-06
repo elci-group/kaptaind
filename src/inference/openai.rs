@@ -104,10 +104,7 @@ pub async fn generate(
         return None;
     }
 
-    let content = completion_response.choices[0]
-        .message
-        .content
-        .trim();
+    let content = completion_response.choices[0].message.content.trim();
     if content.is_empty() {
         tracing::warn!("openai message content was empty");
         return None;

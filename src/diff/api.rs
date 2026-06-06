@@ -219,12 +219,7 @@ fn is_web_config(path: &Path) -> bool {
     let lower = file_name.to_lowercase();
 
     // Exact matches
-    if matches!(
-        lower.as_str(),
-        "vercel.json"
-            | "netlify.toml"
-            | ".babelrc"
-    ) {
+    if matches!(lower.as_str(), "vercel.json" | "netlify.toml" | ".babelrc") {
         return true;
     }
 
@@ -265,7 +260,7 @@ fn is_mobile_config(path: &Path) -> bool {
             | "proguard-rules.pro"
             | "gradle.properties"
     ) || lower.ends_with(".xcconfig")
-      || lower.ends_with(".entitlements")
+        || lower.ends_with(".entitlements")
 }
 
 fn resolve_path(repo_root: &Path, path: &Path) -> PathBuf {
@@ -278,7 +273,10 @@ fn resolve_path(repo_root: &Path, path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::{dependency_score, is_dependency_file, is_web_config, parse_cargo_dependencies, parse_package_dependencies, parse_requirements, runtime_score};
+    use super::{
+        dependency_score, is_dependency_file, is_web_config, parse_cargo_dependencies,
+        parse_package_dependencies, parse_requirements, runtime_score,
+    };
     use crate::cluster::engine::Cluster;
     use crate::watcher::{FsEvent, FsEventKind};
     use chrono::Utc;
@@ -332,7 +330,8 @@ mod tests {
     fn scores_dependency_manifest_changes() {
         let dir = tempdir().expect("temp dir");
         let path = dir.path().join("Cargo.toml");
-        std::fs::write(&path, "[dependencies]\nserde = \"1\"\nanyhow = \"1\"\n").expect("write cargo manifest");
+        std::fs::write(&path, "[dependencies]\nserde = \"1\"\nanyhow = \"1\"\n")
+            .expect("write cargo manifest");
 
         let cluster = Cluster {
             id: Uuid::new_v4(),

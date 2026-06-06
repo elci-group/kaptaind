@@ -1,6 +1,12 @@
 use fltk::prelude::*;
 use fltk::{
-    app, button::{Button, CheckButton}, enums::Color, frame::Frame, text::TextEditor, window::Window, dialog,
+    app,
+    button::{Button, CheckButton},
+    dialog,
+    enums::Color,
+    frame::Frame,
+    text::TextEditor,
+    window::Window,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -33,7 +39,10 @@ struct InstallerState {
 impl Default for InstallerState {
     fn default() -> Self {
         Self {
-            install_path: PathBuf::from(format!("{}/.local/bin", std::env::var("HOME").unwrap_or_else(|_| "/root".to_string()))),
+            install_path: PathBuf::from(format!(
+                "{}/.local/bin",
+                std::env::var("HOME").unwrap_or_else(|_| "/root".to_string())
+            )),
             build_mode: "release".to_string(),
             system_install: false,
             enable_autostart: false,
@@ -44,18 +53,9 @@ impl Default for InstallerState {
 fn detect_system_info() -> SystemInfo {
     let os = std::env::consts::OS.to_string();
     let arch = std::env::consts::ARCH.to_string();
-    let has_rust = Command::new("rustc")
-        .arg("--version")
-        .output()
-        .is_ok();
-    let has_cargo = Command::new("cargo")
-        .arg("--version")
-        .output()
-        .is_ok();
-    let has_git = Command::new("git")
-        .arg("--version")
-        .output()
-        .is_ok();
+    let has_rust = Command::new("rustc").arg("--version").output().is_ok();
+    let has_cargo = Command::new("cargo").arg("--version").output().is_ok();
+    let has_git = Command::new("git").arg("--version").output().is_ok();
 
     SystemInfo {
         os,
@@ -109,15 +109,30 @@ fn screen_welcome(sender: app::Sender<Message>) -> app::Receiver<Message> {
          • Create configuration directory",
         info.os,
         info.arch,
-        if info.has_rust { "✓ Found" } else { "✗ Missing" },
-        if info.has_cargo { "✓ Found" } else { "✗ Missing" },
-        if info.has_git { "✓ Found" } else { "✗ Missing" }
+        if info.has_rust {
+            "✓ Found"
+        } else {
+            "✗ Missing"
+        },
+        if info.has_cargo {
+            "✓ Found"
+        } else {
+            "✗ Missing"
+        },
+        if info.has_git {
+            "✓ Found"
+        } else {
+            "✗ Missing"
+        }
     ));
     info_text.set_buffer_type(fltk::text::TextEditorType::Wrapped);
 
     let mut next_btn = Button::default()
         .with_size(BUTTON_WIDTH, BUTTON_HEIGHT)
-        .with_pos(WINDOW_WIDTH - PADDING - BUTTON_WIDTH, WINDOW_HEIGHT - PADDING - BUTTON_HEIGHT)
+        .with_pos(
+            WINDOW_WIDTH - PADDING - BUTTON_WIDTH,
+            WINDOW_HEIGHT - PADDING - BUTTON_HEIGHT,
+        )
         .with_label("Next >");
     next_btn.set_color(Color::from_hex(0x4CAF50));
     next_btn.set_label_color(Color::White);
@@ -183,7 +198,10 @@ fn screen_dependencies(sender: app::Sender<Message>) -> app::Receiver<Message> {
 
     let mut next_btn = Button::default()
         .with_size(BUTTON_WIDTH, BUTTON_HEIGHT)
-        .with_pos(WINDOW_WIDTH - PADDING - BUTTON_WIDTH, WINDOW_HEIGHT - PADDING - BUTTON_HEIGHT)
+        .with_pos(
+            WINDOW_WIDTH - PADDING - BUTTON_WIDTH,
+            WINDOW_HEIGHT - PADDING - BUTTON_HEIGHT,
+        )
         .with_label("Next >");
     next_btn.set_color(Color::from_hex(0x4CAF50));
     next_btn.set_label_color(Color::White);
@@ -215,7 +233,10 @@ fn screen_dependencies(sender: app::Sender<Message>) -> app::Receiver<Message> {
     receiver
 }
 
-fn screen_options(sender: app::Sender<Message>, state: Arc<Mutex<InstallerState>>) -> app::Receiver<Message> {
+fn screen_options(
+    sender: app::Sender<Message>,
+    state: Arc<Mutex<InstallerState>>,
+) -> app::Receiver<Message> {
     let (sender_inner, receiver) = app::channel::<Message>();
 
     let mut wind = Window::default()
@@ -248,7 +269,10 @@ fn screen_options(sender: app::Sender<Message>, state: Arc<Mutex<InstallerState>
 
     let mut install_btn = Button::default()
         .with_size(BUTTON_WIDTH, BUTTON_HEIGHT)
-        .with_pos(WINDOW_WIDTH - PADDING - BUTTON_WIDTH, WINDOW_HEIGHT - PADDING - BUTTON_HEIGHT)
+        .with_pos(
+            WINDOW_WIDTH - PADDING - BUTTON_WIDTH,
+            WINDOW_HEIGHT - PADDING - BUTTON_HEIGHT,
+        )
         .with_label("Install");
     install_btn.set_color(Color::from_hex(0x2196F3));
     install_btn.set_label_color(Color::White);
@@ -325,7 +349,10 @@ fn screen_progress(sender: app::Sender<Message>) -> app::Receiver<Message> {
     receiver
 }
 
-fn screen_complete(sender: app::Sender<Message>, state: Arc<Mutex<InstallerState>>) -> app::Receiver<Message> {
+fn screen_complete(
+    sender: app::Sender<Message>,
+    state: Arc<Mutex<InstallerState>>,
+) -> app::Receiver<Message> {
     let (sender_inner, receiver) = app::channel::<Message>();
 
     let mut wind = Window::default()
@@ -369,7 +396,10 @@ fn screen_complete(sender: app::Sender<Message>, state: Arc<Mutex<InstallerState
 
     let mut finish_btn = Button::default()
         .with_size(BUTTON_WIDTH, BUTTON_HEIGHT)
-        .with_pos(WINDOW_WIDTH - PADDING - BUTTON_WIDTH, WINDOW_HEIGHT - PADDING - BUTTON_HEIGHT)
+        .with_pos(
+            WINDOW_WIDTH - PADDING - BUTTON_WIDTH,
+            WINDOW_HEIGHT - PADDING - BUTTON_HEIGHT,
+        )
         .with_label("Finish");
     finish_btn.set_color(Color::from_hex(0x4CAF50));
     finish_btn.set_label_color(Color::White);

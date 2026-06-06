@@ -1,6 +1,6 @@
-use fs2::FileExt;
 use crate::aoc::tracer::AgentEvent;
 use chrono::Utc;
+use fs2::FileExt;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::Path;
@@ -10,7 +10,10 @@ pub fn log_event(repo_path: &Path, event: &AgentEvent) -> anyhow::Result<()> {
     let dir = repo_path.join(".kaptaind").join("aoc");
     fs::create_dir_all(&dir)?;
     let log_path = dir.join("interceptor.jsonl");
-    let mut file = OpenOptions::new().create(true).append(true).open(log_path)?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path)?;
     file.lock_exclusive()?;
     let content = serde_json::to_string(event)?;
     writeln!(file, "{}", content)?;
@@ -26,7 +29,10 @@ pub fn consume_events_in_window(
     start: chrono::DateTime<Utc>,
     end: chrono::DateTime<Utc>,
 ) -> anyhow::Result<Vec<AgentEvent>> {
-    let log_path = repo_path.join(".kaptaind").join("aoc").join("interceptor.jsonl");
+    let log_path = repo_path
+        .join(".kaptaind")
+        .join("aoc")
+        .join("interceptor.jsonl");
     if !log_path.exists() {
         return Ok(Vec::new());
     }
@@ -62,7 +68,7 @@ pub fn consume_events_in_window(
     for line in remaining {
         writeln!(file, "{}", line)?;
     }
-    
+
     file.unlock()?;
 
     Ok(matched)

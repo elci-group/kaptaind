@@ -19,7 +19,11 @@ pub struct WeightResult {
 }
 
 pub fn compute(diff: &DiffAnalysis, cfg: &WeightConfig) -> WeightResult {
-    let score = cfg.s * diff.structural + cfg.a * diff.api + cfg.d * diff.deps + cfg.r * diff.runtime + cfg.b * diff.bundle;
+    let score = cfg.s * diff.structural
+        + cfg.a * diff.api
+        + cfg.d * diff.deps
+        + cfg.r * diff.runtime
+        + cfg.b * diff.bundle;
 
     WeightResult {
         score,

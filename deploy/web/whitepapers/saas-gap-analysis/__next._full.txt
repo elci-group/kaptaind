@@ -1,0 +1,100 @@
+1:"$Sreact.fragment"
+2:I[5622,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"ThemeProvider"]
+3:I[53339,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"default"]
+4:I[39756,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"default"]
+5:I[37457,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"default"]
+7:I[97367,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"OutletBoundary"]
+8:"$Sreact.suspense"
+b:I[97367,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"ViewportBoundary"]
+d:I[97367,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"MetadataBoundary"]
+f:I[68027,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"default",1]
+:HL["/_next/static/chunks/1hc9gxvali7vt.css","style"]
+0:{"P":null,"c":["","whitepapers","saas-gap-analysis"],"q":"","i":false,"f":[[["",{"children":["whitepapers",{"children":[["slug","saas-gap-analysis","d",null],{"children":["__PAGE__",{}]}]}]},"$undefined","$undefined",16],[["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/_next/static/chunks/1hc9gxvali7vt.css","precedence":"next","crossOrigin":"$undefined","nonce":"$undefined"}],["$","script","script-0",{"src":"/_next/static/chunks/1j2zd7rj57ttl.js","async":true,"nonce":"$undefined"}],["$","script","script-1",{"src":"/_next/static/chunks/2im7c515bo69p.js","async":true,"nonce":"$undefined"}]],["$","html",null,{"lang":"en","className":"h-full antialiased dark","children":["$","body",null,{"className":"min-h-full flex flex-col bg-zinc-950 text-zinc-100","children":["$","$L2",null,{"children":["$","$L3",null,{"children":["$","$L4",null,{"parallelRouterKey":"children","error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$L5",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":[[["$","title",null,{"children":"404: This page could not be found."}],["$","div",null,{"style":{"fontFamily":"system-ui,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif,\"Apple Color Emoji\",\"Segoe UI Emoji\"","height":"100vh","textAlign":"center","display":"flex","flexDirection":"column","alignItems":"center","justifyContent":"center"},"children":["$","div",null,{"children":[["$","style",null,{"dangerouslySetInnerHTML":{"__html":"body{color:#000;background:#fff;margin:0}.next-error-h1{border-right:1px solid rgba(0,0,0,.3)}@media (prefers-color-scheme:dark){body{color:#fff;background:#000}.next-error-h1{border-right:1px solid rgba(255,255,255,.3)}}"}}],["$","h1",null,{"className":"next-error-h1","style":{"display":"inline-block","margin":"0 20px 0 0","padding":"0 23px 0 0","fontSize":24,"fontWeight":500,"verticalAlign":"top","lineHeight":"49px"},"children":404}],["$","div",null,{"style":{"display":"inline-block"},"children":["$","h2",null,{"style":{"fontSize":14,"fontWeight":400,"lineHeight":"49px","margin":0},"children":"This page could not be found."}]}]]}]}]],[]],"forbidden":"$undefined","unauthorized":"$undefined"}]}]}]}]}]]}],{"children":[["$","$1","c",{"children":[null,["$","$L4",null,{"parallelRouterKey":"children","error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$L5",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":"$undefined","forbidden":"$undefined","unauthorized":"$undefined"}]]}],{"children":[["$","$1","c",{"children":[null,["$","$L4",null,{"parallelRouterKey":"children","error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$L5",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":"$undefined","forbidden":"$undefined","unauthorized":"$undefined"}]]}],{"children":[["$","$1","c",{"children":["$L6",[["$","script","script-0",{"src":"/_next/static/chunks/2pes6-pd9xzbn.js","async":true,"nonce":"$undefined"}],["$","script","script-1",{"src":"/_next/static/chunks/0mnx6i03wgu-z.js","async":true,"nonce":"$undefined"}]],["$","$L7",null,{"children":["$","$8",null,{"name":"Next.MetadataOutlet","children":"$@9"}]}]]}],{},null,false,null]},null,false,"$@a"]},null,false,"$@a"]},null,false,null],["$","$1","h",{"children":[null,["$","$Lb",null,{"children":"$Lc"}],["$","div",null,{"hidden":true,"children":["$","$Ld",null,{"children":["$","$8",null,{"name":"Next.Metadata","children":"$Le"}]}]}],null]}],false]],"m":"$undefined","G":["$f",[["$","link","0",{"rel":"stylesheet","href":"/_next/static/chunks/1hc9gxvali7vt.css","precedence":"next","crossOrigin":"$undefined","nonce":"$undefined"}]]],"S":true,"h":null,"s":"$undefined","l":"$undefined","p":"$undefined","d":"$undefined","b":"KIkAGxAWDQmJDwX7xyOak"}
+10:[]
+a:"$W10"
+c:[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1"}]]
+11:I[27201,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"IconMark"]
+9:null
+e:[["$","title","0",{"children":"Kaptaind | Whitepaper: Saas Gap Analysis"}],["$","meta","1",{"name":"description","content":"Automated semantic versioning daemon, enhanced by AI. Subscribe to unlock LLM-powered commit messages, changelogs, and bump reasoning."}],["$","link","2",{"rel":"icon","href":"/favicon.ico?favicon.2vob68tjqpejf.ico","sizes":"256x256","type":"image/x-icon"}],["$","$L11","3",{}]]
+12:I[7988,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],"default"]
+13:I[22016,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],""]
+14:I[90186,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],"default"]
+15:T1147,# Whitepaper: SaaS & Enterprise Claims — Gap Analysis
+
+## Abstract
+The Kaptaind landing page includes several enterprise-focused claims related to SSO, RBAC, cryptographic audit trails, custom retention, self-hosting, and policy engines. This whitepaper documents which claims are fully implemented, partially implemented, or aspirational.
+
+## Claims Evaluated
+
+### 1. SSO / SAML / OIDC
+**Claim:** "Secure team access integrated with Okta, Azure AD, and Google Workspace."
+
+**Status: PARTIAL**
+- The Prisma schema includes `OrganizationMembership` with roles (`OWNER`, `ADMIN`, `MEMBER`).
+- The NextAuth configuration (`web/lib/auth.ts`) currently supports only GitHub OAuth and email/password (CredentialsProvider).
+- No SAML, OIDC, or SCIM provider configurations were found in the codebase.
+- **Conclusion:** Schema and role model exist; provider integrations do not.
+
+### 2. Role-Based Access Control (RBAC)
+**Claim:** "Granular permissions for policy definition, version overrides, and audit log exports."
+
+**Status: PARTIAL**
+- The schema defines `OrganizationMembership.role` and `TeamMember.role`.
+- `web/lib/entitlements.ts` maps plans to boolean capabilities (`canUsePolicyPacks`, `canExportAuditLogs`).
+- No middleware enforcing these permissions on API routes was found.
+- **Conclusion:** Role storage and entitlement definitions exist; enforcement middleware is missing.
+
+### 3. Immutable Audit Trails
+**Claim:** "Cryptographically signed release traces mapping every line changed to its version decision."
+
+**Status: PARTIAL**
+- The `AuditLog` model has `beforeHash` and `afterHash` fields.
+- The daemon writes analysis artifacts and trace files locally.
+- **No cryptographic chaining** (Merkle tree, sequential hashes, or digital signatures) was found.
+- Webhook HMAC signatures exist (`src/angler/webhooks.rs`) but sign outbound HTTP payloads, not audit trails.
+- **Conclusion:** Audit records exist; cryptographic immutability is not implemented.
+
+### 4. Custom Retention Policies
+**Claim:** "Keep traces and artifact history for 30 days, 180 days, or indefinitely."
+
+**Status: PARTIAL**
+- `Entitlements.retentionDays` is defined per plan (Free=0, Pro=30, Team=180, Enterprise=3650).
+- **No automated pruning or expiration logic** was found in the daemon or web backend.
+- **Conclusion:** Entitlements define retention limits; enforcement is manual or not yet built.
+
+### 5. Enterprise Self-Hosting
+**Claim:** "Deploy in your own VPC with external Postgres, object storage, and 100% air-gapped support."
+
+**Status: PARTIAL**
+- The Prisma schema targets SQLite by default (`provider = "sqlite"`).
+- Postgres can be configured via `DATABASE_URL` (standard Prisma behavior).
+- No explicit air-gapped toggles, offline-mode flags, or S3-compatible storage adapters were found.
+- **Conclusion:** Self-hosting is possible (Next.js + Prisma); air-gapped and object storage features are not explicitly implemented.
+
+### 6. Advanced Policy Engine
+**Claim:** "Apply organization-wide branch protection, test requirements, and restricted file check policies."
+
+**Status: PARTIAL**
+- The `Policy` model has JSON columns: `versionBumpRules`, `branchProtections`, `minimumTests`, `disallowedFilePatterns`.
+- The daemon has `.kaptaindignore`, test hooks, and staging rules, but these are local per-repo settings.
+- **No centralized policy enforcement** linking the `Policy` table to the daemon scheduler was found.
+- **Conclusion:** Schema supports policies; centralized enforcement does not yet exist.
+
+## Overall Assessment
+
+| Claim | Implementation | Schema | Enforcement | Result |
+|-------|---------------|--------|-------------|--------|
+| SSO/SAML/OIDC | ❌ | ✅ | ❌ | PARTIAL |
+| RBAC | ❌ | ✅ | ❌ | PARTIAL |
+| Immutable Audit Trails | ❌ | ✅ | ❌ | PARTIAL |
+| Custom Retention | ❌ | ✅ | ❌ | PARTIAL |
+| Enterprise Self-Hosting | ⚠️ | ✅ | ❌ | PARTIAL |
+| Advanced Policy Engine | ❌ | ✅ | ❌ | PARTIAL |
+
+## Conclusion
+All six enterprise claims have **database schema and entitlement scaffolding** in place, but the **runtime enforcement, provider integrations, and automated workflows are incomplete**. The claims on the landing page should be qualified to reflect that these are roadmap features rather than shipping capabilities.
+
+**Recommendation:** Add "Coming Soon" or "Beta" badges to enterprise features, or restrict the claims to what is demonstrably implemented today.
+6:[["$","$L12",null,{}],["$","div",null,{"className":"bg-zinc-950 text-zinc-100 min-h-screen py-12","children":["$","div",null,{"className":"mx-auto max-w-3xl px-6 lg:px-8","children":[["$","$L13",null,{"href":"/whitepapers","className":"inline-flex items-center text-sm text-zinc-500 hover:text-zinc-300 transition-colors mb-8","children":"← Back to Research & Validation"}],["$","article",null,{"className":"prose prose-invert max-w-none","children":["$","$L14",null,{"content":"$15"}]}],"$L16"]}]}],"$L17"]
+16:["$","div",null,{"className":"mt-16 pt-8 border-t border-zinc-800 text-center","children":["$","$L13",null,{"href":"/whitepapers","className":"inline-flex items-center text-sm text-zinc-500 hover:text-zinc-300 transition-colors","children":"← Browse all whitepapers"}]}]
+17:["$","footer",null,{"className":"border-t border-zinc-800 bg-zinc-950","children":["$","div",null,{"className":"mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8","children":["$","div",null,{"className":"flex flex-col items-center justify-between gap-4 sm:flex-row","children":[["$","p",null,{"className":"text-sm text-zinc-400","children":"Kaptaind Pro — Automated semantic versioning, enhanced by AI."}],["$","div",null,{"className":"flex items-center gap-6","children":[["$","$L13",null,{"href":"/whitepapers","className":"text-sm text-zinc-500 hover:text-zinc-300 transition-colors","children":"Research & Validation"}],["$","p",null,{"className":"text-sm text-zinc-500","children":"Built with Next.js and Claude"}]]}]]}]}]}]

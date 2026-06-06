@@ -245,7 +245,7 @@ export default function PricingPage() {
             </div>
             <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-6">
               <h3 className="font-semibold text-zinc-100">
-                What's the difference between Pro and Enterprise?
+                What&apos;s the difference between Pro and Enterprise?
               </h3>
               <p className="mt-2 text-sm text-zinc-400">
                 Pro adds AI-powered insights. Enterprise adds cost optimization through batching, caching, and smart model selection—critical for high-volume teams.

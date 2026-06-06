@@ -68,8 +68,8 @@ pub use bait::{BaitContext, BaitManager, BaitResult, FileChangeInfo};
 pub use config::ChangeType;
 pub use config::{
     AnglerConfig, BaitConfig, BaitDefinition, BaitEvent, BaitType, CaptureAction, CaptureRule,
-    GitHooksConfig, HookConfig, RetryConfig, SelectiveConfig, SignatureAlgorithm,
-    WebhookEndpoint, WebhooksConfig,
+    GitHooksConfig, HookConfig, RetryConfig, SelectiveConfig, SignatureAlgorithm, WebhookEndpoint,
+    WebhooksConfig,
 };
 pub use git_hooks::{GitHookManager, HookResult};
 pub use selective::{CaptureResult, FileChange, SelectiveEngine};
@@ -178,6 +178,11 @@ impl AnglerSystem {
             || self.bait.is_some()
     }
 
+    /// Return the configuration used to initialize this Angler system.
+    pub fn config(&self) -> &AnglerConfig {
+        &self.config
+    }
+
     /// Run pre-commit hooks.
     pub async fn run_pre_commit(&self, staged_files: &[std::path::PathBuf]) -> Option<HookResult> {
         if let Some(ref manager) = self.git_hooks {
@@ -230,33 +235,32 @@ impl AnglerSystem {
         file_changes: &[std::path::PathBuf],
     ) -> Vec<(String, DeliveryResult)> {
         if let Some(ref manager) = self.webhooks {
-            manager
-                .broadcast_event(event, file_changes)
-                .await
+            manager.broadcast_event(event, file_changes).await
         } else {
             Vec::new()
         }
     }
 
     /// Evaluate file changes against selective rules.
-    pub fn evaluate_changes(&self, changes: &[selective::FileChange]) -> Vec<(selective::FileChange, CaptureResult)> {
+    pub fn evaluate_changes(
+        &self,
+        changes: &[selective::FileChange],
+    ) -> Vec<(selective::FileChange, CaptureResult)> {
         if let Some(ref engine) = self.selective {
             engine.evaluate_batch(changes)
         } else {
             changes
                 .iter()
-                .map(|c| {
-                    (
-                        c.clone(),
-                        CaptureResult::no_match(CaptureAction::Pass),
-                    )
-                })
+                .map(|c| (c.clone(), CaptureResult::no_match(CaptureAction::Pass)))
                 .collect()
         }
     }
 
     /// Check if changes would be blocked.
-    pub fn would_block_changes(&self, changes: &[selective::FileChange]) -> Vec<(selective::FileChange, String)> {
+    pub fn would_block_changes(
+        &self,
+        changes: &[selective::FileChange],
+    ) -> Vec<(selective::FileChange, String)> {
         if let Some(ref engine) = self.selective {
             engine.get_blocked_changes(changes)
         } else {
@@ -376,7 +380,11 @@ pub fn cicd_config(webhook_url: &str) -> AnglerConfig {
             endpoints: vec![WebhookEndpoint {
                 id: "ci-cd".to_string(),
                 url: webhook_url.to_string(),
-                events: vec!["commit".to_string(), "push".to_string(), "error".to_string()],
+                events: vec![
+                    "commit".to_string(),
+                    "push".to_string(),
+                    "error".to_string(),
+                ],
                 headers: std::collections::HashMap::new(),
                 retry: None,
                 verify_signature: false,
@@ -399,7 +407,10 @@ pub fn cicd_config(webhook_url: &str) -> AnglerConfig {
         bait: BaitConfig {
             enabled: true,
             plugins_dir: PathBuf::from(".kaptaind/baits"),
-            baits: vec![bait::templates::metrics_bait(&format!("{}/metrics", webhook_url))],
+            baits: vec![bait::templates::metrics_bait(&format!(
+                "{}/metrics",
+                webhook_url
+            ))],
             auto_discover: true,
         },
     }

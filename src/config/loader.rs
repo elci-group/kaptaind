@@ -1,5 +1,5 @@
-use crate::qualification::policy::QualificationConfig;
 use crate::angler::config::AnglerConfig;
+use crate::qualification::policy::QualificationConfig;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -40,6 +40,20 @@ pub struct Config {
     pub angler: AnglerConfig,
     #[serde(default)]
     pub repo_path: PathBuf,
+    #[serde(default)]
+    pub policy_id: Option<String>,
+    #[serde(default = "default_prune_interval_minutes")]
+    pub prune_interval_minutes: u64,
+    #[serde(default = "default_retention_days")]
+    pub retention_days: u32,
+    #[serde(default)]
+    pub air_gapped: bool,
+    #[serde(default = "default_health_port")]
+    pub health_port: u16,
+    #[serde(default)]
+    pub capabilities: CapabilitiesConfig,
+    #[serde(default)]
+    pub strict_shell_validation: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -113,8 +127,24 @@ pub struct LocalDistConfig {
     pub path: String,
 }
 
+fn default_prune_interval_minutes() -> u64 {
+    60
+}
+
+fn default_retention_days() -> u32 {
+    30
+}
+
+fn default_health_port() -> u16 {
+    9090
+}
+
 fn default_local_dist_path() -> String {
     ".kaptaind/releases/".to_string()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for LocalDistConfig {
@@ -171,9 +201,15 @@ pub struct ClusterConfig {
     pub burst_threshold: usize,
 }
 
-fn default_min_window_secs() -> u64 { 2 }
-fn default_max_window_secs() -> u64 { 30 }
-fn default_burst_threshold() -> usize { 10 }
+fn default_min_window_secs() -> u64 {
+    2
+}
+fn default_max_window_secs() -> u64 {
+    30
+}
+fn default_burst_threshold() -> usize {
+    10
+}
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PushConfig {
@@ -211,10 +247,18 @@ pub struct RetryConfig {
     pub max_delay_ms: u64,
 }
 
-fn default_retry_max_attempts() -> u32 { 3 }
-fn default_retry_initial_delay_ms() -> u64 { 1000 }
-fn default_retry_backoff_multiplier() -> f64 { 2.0 }
-fn default_retry_max_delay_ms() -> u64 { 30000 }
+fn default_retry_max_attempts() -> u32 {
+    3
+}
+fn default_retry_initial_delay_ms() -> u64 {
+    1000
+}
+fn default_retry_backoff_multiplier() -> f64 {
+    2.0
+}
+fn default_retry_max_delay_ms() -> u64 {
+    30000
+}
 
 impl Default for RetryConfig {
     fn default() -> Self {
@@ -235,7 +279,9 @@ pub struct ConflictConfig {
     pub auto_abort_on_conflict: bool,
 }
 
-fn default_auto_abort_on_conflict() -> bool { true }
+fn default_auto_abort_on_conflict() -> bool {
+    true
+}
 
 impl Default for ConflictConfig {
     fn default() -> Self {
@@ -257,7 +303,9 @@ pub struct PrePushConfig {
     pub timeout_secs: u64,
 }
 
-fn default_pre_push_timeout_secs() -> u64 { 300 }
+fn default_pre_push_timeout_secs() -> u64 {
+    300
+}
 
 impl Default for PrePushConfig {
     fn default() -> Self {
@@ -280,7 +328,9 @@ pub struct SafetyConfig {
     pub protect_branches: Vec<String>,
 }
 
-fn default_require_upstream_exist() -> bool { true }
+fn default_require_upstream_exist() -> bool {
+    true
+}
 
 impl Default for SafetyConfig {
     fn default() -> Self {
@@ -304,9 +354,15 @@ pub struct BatchConfig {
     pub push_on_quit: bool,
 }
 
-fn default_batch_min_commits() -> usize { 3 }
-fn default_batch_max_wait_secs() -> u64 { 300 }
-fn default_push_on_quit() -> bool { true }
+fn default_batch_min_commits() -> usize {
+    3
+}
+fn default_batch_max_wait_secs() -> u64 {
+    300
+}
+fn default_push_on_quit() -> bool {
+    true
+}
 
 impl Default for BatchConfig {
     fn default() -> Self {
@@ -336,6 +392,20 @@ pub struct NotifyConfig {
     pub on_commit: Option<String>,
     pub on_error: Option<String>,
     pub webhook_url: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct CapabilitiesConfig {
+    #[serde(default = "default_true")]
+    pub network_push: bool,
+    #[serde(default = "default_true")]
+    pub network_webhooks: bool,
+    #[serde(default = "default_true")]
+    pub network_inference: bool,
+    #[serde(default = "default_true")]
+    pub bundle_scoring: bool,
+    #[serde(default = "default_true")]
+    pub external_plugins: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -501,9 +571,15 @@ pub struct VacsConfig {
     pub max_jobs_per_hour: u32,
 }
 
-fn default_vacs_mode() -> String { "balanced".to_string() }
-fn default_vacs_allowed_assets() -> Vec<String> { vec!["diagram".to_string(), "chart".to_string()] }
-fn default_vacs_max_jobs_per_hour() -> u32 { 5 }
+fn default_vacs_mode() -> String {
+    "balanced".to_string()
+}
+fn default_vacs_allowed_assets() -> Vec<String> {
+    vec!["diagram".to_string(), "chart".to_string()]
+}
+fn default_vacs_max_jobs_per_hour() -> u32 {
+    5
+}
 
 impl Default for VacsConfig {
     fn default() -> Self {
@@ -551,9 +627,15 @@ pub struct TrawlConfig {
     pub interval_secs: u64,
 }
 
-fn default_trawl_depth() -> usize { 3 }
-fn default_trawl_skip_initialized() -> bool { true }
-fn default_trawl_auto_register() -> bool { true }
+fn default_trawl_depth() -> usize {
+    3
+}
+fn default_trawl_skip_initialized() -> bool {
+    true
+}
+fn default_trawl_auto_register() -> bool {
+    true
+}
 
 impl Default for TrawlConfig {
     fn default() -> Self {
@@ -625,6 +707,13 @@ impl Default for Config {
             trawl: TrawlConfig::default(),
             angler: AnglerConfig::default(),
             repo_path: cwd,
+            policy_id: None,
+            prune_interval_minutes: default_prune_interval_minutes(),
+            retention_days: default_retention_days(),
+            air_gapped: false,
+            health_port: default_health_port(),
+            capabilities: CapabilitiesConfig::default(),
+            strict_shell_validation: false,
         }
     }
 }
@@ -645,7 +734,10 @@ pub fn load() -> anyhow::Result<Config> {
 fn find_repo_root(start: &Path) -> PathBuf {
     let mut current = start;
     loop {
-        if current.join(".git").exists() || current.join("kaptaind.toml").exists() || current.join("Cargo.toml").exists() {
+        if current.join(".git").exists()
+            || current.join("kaptaind.toml").exists()
+            || current.join("Cargo.toml").exists()
+        {
             return current.to_path_buf();
         }
         match current.parent() {
@@ -660,6 +752,14 @@ fn finalize_config(base_dir: PathBuf, mut config: Config) -> Config {
     config.repo_path = absolutize(&base_dir, &config.repo_path);
     config.watch.path = absolutize(&config.repo_path, &config.watch.path);
     config.watch.ignore_file = absolutize(&config.repo_path, &config.watch.ignore_file);
+
+    // Backward compatibility: air_gapped=true disables all network capabilities
+    if config.air_gapped {
+        config.capabilities.network_push = false;
+        config.capabilities.network_webhooks = false;
+        config.capabilities.network_inference = false;
+    }
+
     config
 }
 
@@ -686,12 +786,19 @@ pub struct VersionThresholdConfig {
     pub patch: f32,
 }
 
-fn default_minor_threshold() -> f32 { 0.6 }
-fn default_patch_threshold() -> f32 { 0.1 }
+fn default_minor_threshold() -> f32 {
+    0.6
+}
+fn default_patch_threshold() -> f32 {
+    0.1
+}
 
 impl Default for VersionThresholdConfig {
     fn default() -> Self {
-        Self { minor: 0.6, patch: 0.1 }
+        Self {
+            minor: 0.6,
+            patch: 0.1,
+        }
     }
 }
 
@@ -719,7 +826,9 @@ pub struct PluginAdapterConfig {
     pub language_confidence: f32,
 }
 
-fn default_plugin_confidence() -> f32 { 0.8 }
+fn default_plugin_confidence() -> f32 {
+    0.8
+}
 
 mod duration_secs {
     use serde::{Deserialize, Deserializer};
@@ -753,8 +862,14 @@ mod tests {
         };
 
         let finalized = finalize_config(base, config);
-        assert_eq!(finalized.repo_path, PathBuf::from("/tmp/kaptaind-config/repo"));
-        assert_eq!(finalized.watch.path, PathBuf::from("/tmp/kaptaind-config/repo/src"));
+        assert_eq!(
+            finalized.repo_path,
+            PathBuf::from("/tmp/kaptaind-config/repo")
+        );
+        assert_eq!(
+            finalized.watch.path,
+            PathBuf::from("/tmp/kaptaind-config/repo/src")
+        );
         assert_eq!(
             finalized.watch.ignore_file,
             PathBuf::from("/tmp/kaptaind-config/repo/config/.kaptainignore")

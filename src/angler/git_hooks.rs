@@ -9,7 +9,6 @@ use crate::angler::config::{GitHooksConfig, HookConfig};
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 use tracing::{debug, error, info, warn};
@@ -125,7 +124,10 @@ impl GitHookManager {
             self.install_hook_script(name)?;
         }
 
-        info!("Installed {} git hooks", hooks.len() + self.config.custom.len());
+        info!(
+            "Installed {} git hooks",
+            hooks.len() + self.config.custom.len()
+        );
         Ok(())
     }
 
@@ -193,10 +195,7 @@ impl GitHookManager {
             });
 
             if !should_run {
-                debug!(
-                    "Skipping hook {} - no matching files",
-                    hook_name
-                );
+                debug!("Skipping hook {} - no matching files", hook_name);
                 return Ok(HookResult::success());
             }
         }
@@ -246,7 +245,10 @@ impl GitHookManager {
     ) -> Result<HookResult> {
         let mut args = vec![remote_name.to_string(), remote_url.to_string()];
         for (local_ref, local_sha, remote_ref, remote_sha) in refs {
-            args.push(format!("{} {} {} {}", local_ref, local_sha, remote_ref, remote_sha));
+            args.push(format!(
+                "{} {} {} {}",
+                local_ref, local_sha, remote_ref, remote_sha
+            ));
         }
         self.execute_hook("pre-push", &args, &[]).await
     }
@@ -345,6 +347,10 @@ exec kaptaind-cli angler exec-hook {} "$@"
     ) -> Result<HookResult> {
         let start = std::time::Instant::now();
 
+        if let Err(err) = crate::util::shell_validation::validate_shell_command(&config.command) {
+            tracing::warn!(error = %err, hook = hook_name, command = %config.command, "shell command validation failed");
+        }
+
         let working_dir = config
             .working_dir
             .as_ref()
@@ -374,7 +380,7 @@ exec kaptaind-cli angler exec-hook {} "$@"
         let timeout_duration = Duration::from_secs(config.timeout_secs);
 
         // Spawn the process
-        let mut child = match cmd.spawn() {
+        let child = match cmd.spawn() {
             Ok(child) => child,
             Err(e) => {
                 error!("Failed to spawn hook {}: {}", hook_name, e);
@@ -382,46 +388,24 @@ exec kaptaind-cli angler exec-hook {} "$@"
             }
         };
 
-        let result = match timeout(timeout_duration, child.wait()).await {
-            Ok(Ok(status)) => {
-                let stdout = child
-                    .stdout
-                    .take()
-                    .map(|mut s| {
-                        let mut buf = String::new();
-                        use std::io::Read;
-                        let _ = s.read_to_string(&mut buf);
-                        buf
-                    })
-                    .unwrap_or_default();
-
-                let stderr = child
-                    .stderr
-                    .take()
-                    .map(|mut s| {
-                        let mut buf = String::new();
-                        use std::io::Read;
-                        let _ = s.read_to_string(&mut buf);
-                        buf
-                    })
-                    .unwrap_or_default();
-
-                HookResult {
-                    success: status.success(),
-                    exit_code: status.code(),
-                    stdout,
-                    stderr,
-                    duration_ms: start.elapsed().as_millis() as u64,
-                    timed_out: false,
-                }
-            }
+        let result = match timeout(timeout_duration, child.wait_with_output()).await {
+            Ok(Ok(output)) => HookResult {
+                success: output.status.success(),
+                exit_code: output.status.code(),
+                stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+                stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+                duration_ms: start.elapsed().as_millis() as u64,
+                timed_out: false,
+            },
             Ok(Err(e)) => {
                 error!("Hook {} process error: {}", hook_name, e);
                 HookResult::failure(format!("Process error: {}", e))
             }
             Err(_) => {
-                warn!("Hook {} timed out after {}s", hook_name, config.timeout_secs);
-                let _ = child.kill().await;
+                warn!(
+                    "Hook {} timed out after {}s",
+                    hook_name, config.timeout_secs
+                );
                 HookResult::timeout()
             }
         };
@@ -437,7 +421,10 @@ exec kaptaind-cli angler exec-hook {} "$@"
                 hook_name, result.exit_code
             );
         } else {
-            debug!("Hook {} completed successfully in {}ms", hook_name, result.duration_ms);
+            debug!(
+                "Hook {} completed successfully in {}ms",
+                hook_name, result.duration_ms
+            );
         }
 
         Ok(result)

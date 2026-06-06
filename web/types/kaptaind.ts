@@ -86,8 +86,8 @@ export interface AgentEvent {
   id: string;
   timestamp: string;
   model?: string;
-  input?: any;
-  output?: any;
+  input?: unknown;
+  output?: unknown;
   tools: string[];
   latency_ms: number;
 }

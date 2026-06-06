@@ -21,7 +21,7 @@ impl Cluster {
         }
     }
 
-    pub fn add_event(&mut self, mut event: FsEvent) {
+    pub fn add_event(&mut self, event: FsEvent) {
         self.ended_at = event.timestamp;
         self.events.push(event);
 
@@ -31,9 +31,12 @@ impl Cluster {
     }
 
     fn compact(&mut self) {
-        let mut grouped: std::collections::HashMap<crate::watcher::FsEventKind, Vec<std::path::PathBuf>> = std::collections::HashMap::new();
+        let mut grouped: std::collections::HashMap<
+            crate::watcher::FsEventKind,
+            Vec<std::path::PathBuf>,
+        > = std::collections::HashMap::new();
         let mut latest_ts = self.started_at;
-        
+
         for event in self.events.drain(..) {
             if event.timestamp > latest_ts {
                 latest_ts = event.timestamp;
@@ -43,7 +46,7 @@ impl Cluster {
                 entry.push(path);
             }
         }
-        
+
         for (kind, mut paths) in grouped {
             paths.sort_unstable();
             paths.dedup();
@@ -107,11 +110,7 @@ impl ClusterEngine {
         if !self.adaptive {
             return self.base_window;
         }
-        let event_count = self
-            .current
-            .as_ref()
-            .map(|c| c.events.len())
-            .unwrap_or(0);
+        let event_count = self.current.as_ref().map(|c| c.events.len()).unwrap_or(0);
 
         if event_count >= self.burst_threshold {
             self.max_window
@@ -179,7 +178,10 @@ mod tests {
     fn clusters_events_within_window() {
         let mut engine = ClusterEngine::new(Duration::from_secs(2));
         let first = event("src/main.rs", Utc::now());
-        let second = event("src/lib.rs", first.timestamp + ChronoDuration::milliseconds(500));
+        let second = event(
+            "src/lib.rs",
+            first.timestamp + ChronoDuration::milliseconds(500),
+        );
 
         assert!(engine.ingest(first).is_none());
         assert!(engine.ingest(second).is_none());

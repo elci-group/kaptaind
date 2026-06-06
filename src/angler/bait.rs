@@ -123,7 +123,11 @@ impl BaitManager {
             if plugins_dir.exists() {
                 match Self::discover_baits(&plugins_dir) {
                     Ok(discovered) => {
-                        info!("Discovered {} baits from {}", discovered.len(), plugins_dir.display());
+                        info!(
+                            "Discovered {} baits from {}",
+                            discovered.len(),
+                            plugins_dir.display()
+                        );
                         baits.extend(discovered);
                     }
                     Err(e) => {
@@ -184,7 +188,11 @@ impl BaitManager {
     }
 
     /// Execute a specific bait by ID.
-    pub async fn execute_bait_by_id(&self, bait_id: &str, context: &BaitContext) -> Option<BaitResult> {
+    pub async fn execute_bait_by_id(
+        &self,
+        bait_id: &str,
+        context: &BaitContext,
+    ) -> Option<BaitResult> {
         let bait = self.baits.iter().find(|b| b.id == bait_id)?;
         Some(self.execute_bait(bait, context).await)
     }
@@ -315,10 +323,7 @@ impl BaitManager {
             bait_type: BaitType::Shell,
             command: dest_path.to_string_lossy().to_string(),
             file_patterns: vec![],
-            events: vec![
-                BaitEvent::PreCommit,
-                BaitEvent::PostCommit,
-            ],
+            events: vec![BaitEvent::PreCommit, BaitEvent::PostCommit],
             enabled: true,
             timeout_secs: 30,
             env: HashMap::new(),
@@ -344,6 +349,10 @@ impl BaitManager {
             Err(e) => return BaitResult::failure(format!("Failed to serialize context: {}", e)),
         };
 
+        if let Err(err) = crate::util::shell_validation::validate_shell_command(&bait.command) {
+            tracing::warn!(error = %err, bait = %bait.id, command = %bait.command, "shell command validation failed");
+        }
+
         let mut cmd = Command::new(&bait.command);
         cmd.arg("run")
             .current_dir(&self.repo_path)
@@ -359,15 +368,15 @@ impl BaitManager {
         self.run_command_with_timeout(cmd, bait.timeout_secs).await
     }
 
-    async fn execute_shell_bait(
-        &self,
-        bait: &BaitDefinition,
-        context: &BaitContext,
-    ) -> BaitResult {
+    async fn execute_shell_bait(&self, bait: &BaitDefinition, context: &BaitContext) -> BaitResult {
         let context_json = match serde_json::to_string(context) {
             Ok(json) => json,
             Err(e) => return BaitResult::failure(format!("Failed to serialize context: {}", e)),
         };
+
+        if let Err(err) = crate::util::shell_validation::validate_shell_command(&bait.command) {
+            tracing::warn!(error = %err, bait = %bait.id, command = %bait.command, "shell command validation failed");
+        }
 
         let mut cmd = Command::new("sh");
         cmd.arg("-c")
@@ -436,11 +445,7 @@ impl BaitManager {
         }
     }
 
-    async fn run_command_with_timeout(
-        &self,
-        mut cmd: Command,
-        timeout_secs: u64,
-    ) -> BaitResult {
+    async fn run_command_with_timeout(&self, mut cmd: Command, timeout_secs: u64) -> BaitResult {
         let timeout_duration = Duration::from_secs(timeout_secs);
 
         match timeout(timeout_duration, cmd.output()).await {
@@ -551,10 +556,7 @@ pub mod templates {
             bait_type: BaitType::Webhook,
             command: endpoint.to_string(),
             file_patterns: vec![],
-            events: vec![
-                BaitEvent::ClusterComplete,
-                BaitEvent::AnalysisComplete,
-            ],
+            events: vec![BaitEvent::ClusterComplete, BaitEvent::AnalysisComplete],
             enabled: true,
             timeout_secs: 15,
             env: HashMap::new(),
@@ -615,7 +617,7 @@ mod tests {
         };
 
         let json = serde_json::to_string(&context).unwrap();
-        assert!(json.contains("post_commit"));  // snake_case serialization
+        assert!(json.contains("post_commit")); // snake_case serialization
         assert!(json.contains("test.rs"));
     }
 

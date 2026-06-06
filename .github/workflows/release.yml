@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'VERSION'
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        run: echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build Rust binaries
+        run: cargo build --release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build web static export
+        working-directory: web
+        run: |
+          # Temporarily enable static export
+          sed -i "s|const nextConfig: NextConfig = {|const nextConfig: NextConfig = {\n  output: 'export',\n  distDir: 'dist',|" next.config.ts
+          # Exclude server-side routes that cannot be statically exported
+          mkdir -p _excluded
+          mv app/api _excluded/
+          mv app/dashboard _excluded/
+          npm run build
+          # Restore original structure
+          mv _excluded/api app/
+          mv _excluded/dashboard app/
+          rmdir _excluded
+
+      - name: Package release artifacts
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          mkdir -p release
+          cp target/release/kaptaind release/
+          cp target/release/kaptaind-cli release/
+          tar -czf "release/kaptaind-${VERSION}-linux-x86_64.tar.gz" -C release kaptaind kaptaind-cli
+          tar -czf "release/web-static-${VERSION}.tar.gz" -C web/dist .
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Kaptaind v${{ steps.version.outputs.version }}
+          files: |
+            release/kaptaind-*-linux-x86_64.tar.gz
+            release/web-static-*.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

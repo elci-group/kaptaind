@@ -118,10 +118,7 @@ impl LanguageAdapter for PluginAdapter {
         }
 
         let response: PluginResponse = serde_json::from_slice(&output.stdout).map_err(|e| {
-            anyhow::anyhow!(
-                "plugin '{}' returned invalid JSON: {e}",
-                self.config.name
-            )
+            anyhow::anyhow!("plugin '{}' returned invalid JSON: {e}", self.config.name)
         })?;
 
         let symbols: Vec<Symbol> = response

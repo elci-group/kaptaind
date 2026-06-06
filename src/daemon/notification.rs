@@ -23,6 +23,7 @@ pub fn notify_commit(
     score: f32,
     msg: &str,
     files_changed: usize,
+    webhook_enabled: bool,
 ) {
     // Shell command hook
     if let Some(cmd) = &config.on_commit {
@@ -40,35 +41,43 @@ pub fn notify_commit(
     #[cfg(feature = "notifications")]
     {
         let title = format!("🚀 Kaptaind v{}", version);
-        let body = format!("Score: {:.3}\n{} file(s) changed\n{}", score, files_changed, truncate(msg, 100));
+        let body = format!(
+            "Score: {:.3}\n{} file(s) changed\n{}",
+            score,
+            files_changed,
+            truncate(msg, 100)
+        );
         let _ = send_desktop_notification(&title, &body, Priority::Normal);
     }
 
     // Webhook
-    if let Some(webhook_url) = &config.webhook_url {
-        let url = webhook_url.clone();
-        let content = format!(
-            "🚀 **Kaptaind** shipped `v{}`\n**Score:** {:.3}\n**Files:** {}\n**Message:**\n```\n{}\n```",
-            version, score, files_changed, msg
-        );
-        
-        tokio::spawn(async move {
-            let payload = if url.contains("discord.com") {
-                serde_json::json!({ "content": content })
-            } else {
-                serde_json::json!({ "text": content })
-            };
+    if webhook_enabled {
+        if let Some(webhook_url) = &config.webhook_url {
+            let url = webhook_url.clone();
+            let message = truncate(msg, 3500);
+            let content = format!(
+                "🚀 **Kaptaind** shipped `v{}`\n**Score:** {:.3}\n**Files:** {}\n**Message:**\n```\n{}\n```",
+                version, score, files_changed, message
+            );
 
-            let client = reqwest::Client::new();
-            if let Err(err) = client.post(&url).json(&payload).send().await {
-                tracing::warn!(error = %err, "failed to send commit webhook");
-            }
-        });
+            tokio::spawn(async move {
+                let payload = if url.contains("discord.com") {
+                    serde_json::json!({ "content": content })
+                } else {
+                    serde_json::json!({ "text": content })
+                };
+
+                let client = reqwest::Client::new();
+                if let Err(err) = client.post(&url).json(&payload).send().await {
+                    tracing::warn!(error = %err, "failed to send commit webhook");
+                }
+            });
+        }
     }
 }
 
 /// Send an error notification through all configured channels.
-pub fn notify_error(config: &NotifyConfig, error: &str, context: Option<&str>) {
+pub fn notify_error(config: &NotifyConfig, error: &str, context: Option<&str>, webhook_enabled: bool) {
     // Shell command hook
     if let Some(cmd) = &config.on_error {
         let _ = std::process::Command::new("sh")
@@ -92,36 +101,38 @@ pub fn notify_error(config: &NotifyConfig, error: &str, context: Option<&str>) {
     }
 
     // Webhook
-    if let Some(webhook_url) = &config.webhook_url {
-        let url = webhook_url.clone();
-        let error_text = if let Some(ctx) = context {
-            format!("{}: {}", ctx, error)
-        } else {
-            error.to_string()
-        };
-        let content = format!("🚨 **Kaptaind Error**\n```\n{}\n```", error_text);
-        
-        tokio::spawn(async move {
-            let payload = if url.contains("discord.com") {
-                serde_json::json!({ "content": content })
+    if webhook_enabled {
+        if let Some(webhook_url) = &config.webhook_url {
+            let url = webhook_url.clone();
+            let error_text = if let Some(ctx) = context {
+                format!("{}: {}", ctx, error)
             } else {
-                serde_json::json!({ "text": content })
+                error.to_string()
             };
+            let content = format!(
+                "🚨 **Kaptaind Error**\n```\n{}\n```",
+                truncate(&error_text, 3500)
+            );
 
-            let client = reqwest::Client::new();
-            if let Err(err) = client.post(&url).json(&payload).send().await {
-                tracing::warn!(error = %err, "failed to send error webhook");
-            }
-        });
+            tokio::spawn(async move {
+                let payload = if url.contains("discord.com") {
+                    serde_json::json!({ "content": content })
+                } else {
+                    serde_json::json!({ "text": content })
+                };
+
+                let client = reqwest::Client::new();
+                if let Err(err) = client.post(&url).json(&payload).send().await {
+                    tracing::warn!(error = %err, "failed to send error webhook");
+                }
+            });
+        }
     }
 }
 
 /// Send a status notification (e.g., daemon started, shut down).
 pub fn notify_status(title: &str, message: &str) {
-    #[cfg(feature = "notifications")]
-    {
-        let _ = send_desktop_notification(title, message, Priority::Low);
-    }
+    let _ = send_desktop_notification(title, message, Priority::Low);
 }
 
 /// Send a native desktop notification.
@@ -148,7 +159,6 @@ fn send_desktop_notification(title: &str, body: &str, priority: Priority) -> any
 
 /// Fallback when notifications feature is disabled
 #[cfg(not(feature = "notifications"))]
-#[allow(dead_code)]
 fn send_desktop_notification(_title: &str, _body: &str, _priority: Priority) -> anyhow::Result<()> {
     Ok(())
 }

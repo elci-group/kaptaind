@@ -67,6 +67,11 @@ bash install.sh
 
 See `install.sh --help` for options (custom path, system-wide, debug build, etc.).
 
+### Runtime Requirements
+
+- **Git executable in `PATH`**: Kaptaind uses the system `git` command for repository status, staging, commits, and commit hash lookup. Startup fails with a clear error if `git` is unavailable.
+- **Unix-like daemon mode**: `kaptaind --daemon` uses Kaptaind's internal Unix process detachment helper. On non-Unix environments, run in foreground mode or through a platform service manager.
+
 #### 💻 GUI Installer
 
 For a graphical installation experience:
@@ -174,8 +179,8 @@ You can also use special `kaptaind` flags to see system indices:
 
 Kaptaind operates entirely in the background, minimizing developer friction while maintaining deep contextual awareness of codebase changes. Here is how the internal architecture flows:
 
-1. **Daemonization & Persistence (`src/main.rs`)**: 
-   When executed with `--daemon`, the process forks and detaches from the current shell using the `daemonize` crate. It drops a `daemon.pid` alongside `daemon.out` and `daemon.err` files in the `.kaptaind/` directory.
+1. **Daemonization & Persistence (`src/main.rs`, `src/daemon/process.rs`)**: 
+   When executed with `--daemon`, the process uses Kaptaind's internal Unix daemonization helper to fork, detach from the current shell, redirect stdio, and write `daemon.pid`, `daemon.out`, and `daemon.err` files in the `.kaptaind/` directory.
 
 2. **Filesystem Watcher (`src/watcher/`)**: 
    A dedicated OS thread runs the `notify` watcher. It translates low-level `inotify`/`FSEvents` into abstract `FsEvent` models and pushes them across a cross-thread `tokio::mpsc` channel. 
@@ -194,8 +199,8 @@ Kaptaind operates entirely in the background, minimizing developer friction whil
 5. **Test Hook & Telemetry Gating (`src/daemon/scheduler.rs`)**: 
    Before any commit, the daemon updates `.kaptaind/status.json` and runs the pre-configured test hook (`cargo test` by default). If tests fail, the workflow aborts. It also tracks the "token cost" of the diff size and commit message size, writing to `.kaptaind/telemetry.json`.
 
-6. **Version Bump & Git Orchestration (`src/version/`, `src/commit/`)**: 
-   The weights are aggregated. Breaking APIs trigger `Major` bumps; new APIs trigger `Minor`; standard churn triggers `Patch`. The new version is flushed to the `VERSION` file (and `Cargo.toml` if present), a rich commit message is generated, and a JSON artifact is stored in `.kaptaind/analysis/` before `git2` creates the commit. Staging is configurable: stage all files (default), only cluster-touched files, or pattern-matched files with optional excludes. Notifications are dispatched via shell hooks, Discord/Slack webhooks, or both.
+6. **Version Bump & Git Orchestration (`src/version/`, `src/commit/`, `src/git/`)**: 
+   The weights are aggregated. Breaking APIs trigger `Major` bumps; new APIs trigger `Minor`; standard churn triggers `Patch`. The new version is flushed to the `VERSION` file (and `Cargo.toml` if present), a rich commit message is generated, and a JSON artifact is stored in `.kaptaind/analysis/` before Kaptaind's internal Git command adapter creates the commit via the system `git` executable. Staging is configurable: stage all files (default), only cluster-touched files, or pattern-matched files with optional excludes. Notifications are dispatched via shell hooks, Discord/Slack webhooks, or both.
 
 ## Configuration
 

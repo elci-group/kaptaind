@@ -1,6 +1,52 @@
-/target/
+# Rust
+target/
 **/*.rs.bk
 Cargo.lock
+
+# Environment
 .env
+.env.local
+
+# Kaptaind runtime artifacts
 .kaptaind/
 daemon.pid
+
+# Node.js / npm
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Next.js / web build
+.next/
+out/
+dist/
+*.tsbuildinfo
+
+# Vercel
+.vercel
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Test artifacts
+test-results/
+coverage/
+
+# Prisma (keep schema, ignore dev DB)
+*.db
+*.db-journal
+
+# Tauri
+apps/desktop/dist/
+apps/desktop/src-tauri/gen/schemas/*.json
+
+# Playwright
+playwright-report/

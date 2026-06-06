@@ -27,15 +27,13 @@ pub async fn distribute(
     // S3 distribution
     if let Some(s3_config) = &config.s3 {
         match crate::release::s3::S3Distributor::new(s3_config.clone()) {
-            Ok(distributor) => {
-                match distributor.distribute(pkg).await {
-                    Ok(_) => had_success = true,
-                    Err(e) => {
-                        tracing::warn!(error = %e, "S3 distribution failed");
-                        errors.push(format!("s3: {}", e));
-                    }
+            Ok(distributor) => match distributor.distribute(pkg).await {
+                Ok(_) => had_success = true,
+                Err(e) => {
+                    tracing::warn!(error = %e, "S3 distribution failed");
+                    errors.push(format!("s3: {}", e));
                 }
-            }
+            },
             Err(e) => {
                 tracing::warn!(error = %e, "S3 distributor initialization failed");
                 errors.push(format!("s3 init: {}", e));
@@ -45,12 +43,30 @@ pub async fn distribute(
 
     // Registry distribution
     if let Some(registry_config) = &config.registry {
-        let distributor = crate::release::registry::RegistryDistributor::new(registry_config.clone());
-        match distributor.distribute(pkg).await {
-            Ok(_) => had_success = true,
-            Err(e) => {
-                tracing::warn!(error = %e, "registry distribution failed");
-                errors.push(format!("registry: {}", e));
+        match registry_config.kind.as_str() {
+            "crane" | "skopeo" => {
+                let distributor = crate::release::registry::ExternalRegistryDistributor::new(
+                    &registry_config.kind,
+                    registry_config.clone(),
+                );
+                match distributor.distribute(pkg).await {
+                    Ok(_) => had_success = true,
+                    Err(e) => {
+                        tracing::warn!(error = %e, tool = %registry_config.kind, "external registry distribution failed");
+                        errors.push(format!("registry ({}): {}", registry_config.kind, e));
+                    }
+                }
+            }
+            _ => {
+                let distributor =
+                    crate::release::registry::RegistryDistributor::new(registry_config.clone());
+                match distributor.distribute(pkg).await {
+                    Ok(_) => had_success = true,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "registry distribution failed");
+                        errors.push(format!("registry: {}", e));
+                    }
+                }
             }
         }
     }

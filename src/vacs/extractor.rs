@@ -1,7 +1,6 @@
 use crate::vacs::engine::VacsEvent;
 use serde::{Deserialize, Serialize};
 use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SourceRefs {
@@ -61,7 +60,7 @@ impl ConceptType {
         let desc_lower = description.to_lowercase();
 
         // Security patterns
-        if path_lower.contains("auth") 
+        if path_lower.contains("auth")
             || path_lower.contains("security")
             || path_lower.contains("crypto")
             || path_lower.contains("encrypt")
@@ -70,7 +69,8 @@ impl ConceptType {
             || path_lower.contains("token")
             || desc_lower.contains("security")
             || desc_lower.contains("vulnerability")
-            || desc_lower.contains("auth") {
+            || desc_lower.contains("auth")
+        {
             return ConceptType::Security;
         }
 
@@ -83,7 +83,8 @@ impl ConceptType {
             || desc_lower.contains("performance")
             || desc_lower.contains("optimize")
             || desc_lower.contains("speed")
-            || desc_lower.contains("cache") {
+            || desc_lower.contains("cache")
+        {
             return ConceptType::Performance;
         }
 
@@ -98,7 +99,8 @@ impl ConceptType {
             || path_lower.contains("openapi")
             || desc_lower.contains("api")
             || desc_lower.contains("endpoint")
-            || desc_lower.contains("breaking") {
+            || desc_lower.contains("breaking")
+        {
             return ConceptType::Api;
         }
 
@@ -113,7 +115,8 @@ impl ConceptType {
             || path_lower.contains("gemfile")
             || desc_lower.contains("dependency")
             || desc_lower.contains("upgrade")
-            || desc_lower.contains("bump") {
+            || desc_lower.contains("bump")
+        {
             return ConceptType::Dependency;
         }
 
@@ -130,7 +133,8 @@ impl ConceptType {
             || path_lower.contains("helm")
             || path_lower.contains("terraform")
             || desc_lower.contains("config")
-            || desc_lower.contains("deploy") {
+            || desc_lower.contains("deploy")
+        {
             return ConceptType::Configuration;
         }
 
@@ -142,7 +146,8 @@ impl ConceptType {
             || desc_lower.contains("flow")
             || desc_lower.contains("workflow")
             || desc_lower.contains("sequence")
-            || desc_lower.contains("state") {
+            || desc_lower.contains("state")
+        {
             return ConceptType::Flow;
         }
 
@@ -157,7 +162,8 @@ impl ConceptType {
             || desc_lower.contains("database")
             || desc_lower.contains("schema")
             || desc_lower.contains("migration")
-            || desc_lower.contains("state") {
+            || desc_lower.contains("state")
+        {
             return ConceptType::State;
         }
 
@@ -171,7 +177,8 @@ impl ConceptType {
             || desc_lower.contains("refactor")
             || desc_lower.contains("restructure")
             || desc_lower.contains("architecture")
-            || desc_lower.contains("organize") {
+            || desc_lower.contains("organize")
+        {
             return ConceptType::Architecture;
         }
 
@@ -182,14 +189,14 @@ impl ConceptType {
     /// Visual affinity score - how well this concept type translates to visual representation
     fn visual_affinity(&self) -> f64 {
         match self {
-            ConceptType::Flow => 0.95,        // Flowcharts are natural
-            ConceptType::Architecture => 0.90, // Diagrams work well
-            ConceptType::State => 0.85,       // State machines
-            ConceptType::Api => 0.80,         // API diagrams
-            ConceptType::Dependency => 0.75,  // Dependency graphs
+            ConceptType::Flow => 0.95,          // Flowcharts are natural
+            ConceptType::Architecture => 0.90,  // Diagrams work well
+            ConceptType::State => 0.85,         // State machines
+            ConceptType::Api => 0.80,           // API diagrams
+            ConceptType::Dependency => 0.75,    // Dependency graphs
             ConceptType::Configuration => 0.60, // Less visual
-            ConceptType::Performance => 0.70, // Charts/graphs
-            ConceptType::Security => 0.65,    // Flow diagrams
+            ConceptType::Performance => 0.70,   // Charts/graphs
+            ConceptType::Security => 0.65,      // Flow diagrams
         }
     }
 }
@@ -218,47 +225,42 @@ impl ConceptExtractor {
         }
 
         // Group files by detected concept type
-        let mut type_groups: std::collections::HashMap<ConceptType, Vec<String>> = std::collections::HashMap::new();
-        
+        let mut type_groups: std::collections::HashMap<ConceptType, Vec<String>> =
+            std::collections::HashMap::new();
+
         for file in files {
             let concept_type = ConceptType::detect(file, &event.payload.diff_summary);
-            type_groups.entry(concept_type).or_default().push(file.clone());
+            type_groups
+                .entry(concept_type)
+                .or_default()
+                .push(file.clone());
         }
 
         // Create a concept for each significant group
         let mut concepts = Vec::new();
-        
+
         for (concept_type, type_files) in type_groups {
             // Skip groups with too few files (likely noise)
             if type_files.len() < 2 && event.payload.complexity_score < 0.4 {
                 continue;
             }
 
-            let concept = self.create_concept(
-                event,
-                concept_type,
-                &type_files,
-                &files,
-            );
-            
+            let concept = self.create_concept(event, concept_type, &type_files, &files);
+
             concepts.push(concept);
         }
 
         // If no concepts extracted, create a general one
         if concepts.is_empty() && event.payload.complexity_score >= 0.3 {
-            concepts.push(self.create_concept(
-                event,
-                ConceptType::Architecture,
-                files,
-                files,
-            ));
+            concepts.push(self.create_concept(event, ConceptType::Architecture, files, files));
         }
 
         // Track concepts for recurrence detection
         {
             let mut history = self.history.lock().unwrap();
             for concept in &concepts {
-                history.push((concept.concept_id.clone(), 
+                history.push((
+                    concept.concept_id.clone(),
                     match concept.concept_type.as_str() {
                         "flow" => ConceptType::Flow,
                         "api" => ConceptType::Api,
@@ -268,7 +270,8 @@ impl ConceptExtractor {
                         "dependency" => ConceptType::Dependency,
                         "configuration" => ConceptType::Configuration,
                         _ => ConceptType::Architecture,
-                    }));
+                    },
+                ));
             }
             // Keep last 100 entries
             let len = history.len();
@@ -288,10 +291,18 @@ impl ConceptExtractor {
         all_files: &[String],
     ) -> Concept {
         // Generate unique concept ID
-        let id_base = format!("{}{}{}", event.timestamp, concept_type.as_str(), type_files.join(","));
+        let id_base = format!(
+            "{}{}{}",
+            event.timestamp,
+            concept_type.as_str(),
+            type_files.join(",")
+        );
         let mut hasher = DefaultHasher::new();
         std::hash::Hash::hash(&id_base, &mut hasher);
-        let concept_id = format!("{:x}", std::hash::Hasher::finish(&hasher))[..16].to_string();
+        let concept_id = format!("{:016x}", std::hash::Hasher::finish(&hasher))
+            .chars()
+            .take(16)
+            .collect();
 
         // Calculate recurrence
         let recurrence = self.calculate_recurrence(concept_type, type_files);
@@ -304,7 +315,8 @@ impl ConceptExtractor {
             * event.payload.complexity_score;
 
         // Generate description based on concept type
-        let description = self.generate_description(concept_type, type_files, &event.payload.diff_summary);
+        let description =
+            self.generate_description(concept_type, type_files, &event.payload.diff_summary);
 
         Concept {
             concept_id,
@@ -327,15 +339,14 @@ impl ConceptExtractor {
 
     fn calculate_recurrence(&self, concept_type: ConceptType, files: &[String]) -> u32 {
         let history = self.history.lock().unwrap();
-        
-        let type_matches = history.iter()
-            .filter(|(_, ct)| *ct == concept_type)
-            .count();
-        
-        let file_matches: usize = history.iter()
+
+        let type_matches = history.iter().filter(|(_, ct)| *ct == concept_type).count();
+
+        let file_matches: usize = history
+            .iter()
             .filter(|(id, _)| files.iter().any(|f| id.contains(&f.replace('/', "_"))))
             .count();
-        
+
         (type_matches + file_matches).min(10) as u32
     }
 
@@ -349,7 +360,7 @@ impl ConceptExtractor {
         // - Complex changes without clear descriptions
         // - Security/Performance changes (need explanation)
         // - Many files changed
-        
+
         let mut gap = 0.5; // Base gap
 
         // Adjust based on complexity
@@ -404,13 +415,17 @@ impl ConceptExtractor {
         // Try to extract action from summary
         let action = if summary.to_lowercase().contains("add") {
             "addition"
-        } else if summary.to_lowercase().contains("remove") || summary.to_lowercase().contains("delete") {
+        } else if summary.to_lowercase().contains("remove")
+            || summary.to_lowercase().contains("delete")
+        {
             "removal"
         } else if summary.to_lowercase().contains("fix") {
             "fix"
         } else if summary.to_lowercase().contains("refactor") {
             "refactoring"
-        } else if summary.to_lowercase().contains("update") || summary.to_lowercase().contains("upgrade") {
+        } else if summary.to_lowercase().contains("update")
+            || summary.to_lowercase().contains("upgrade")
+        {
             "update"
         } else {
             "change"
@@ -423,7 +438,7 @@ impl ConceptExtractor {
         // Extract function names, struct names, etc. from summary
         // Simple heuristic: look for backticks and quoted strings
         let mut symbols = Vec::new();
-        
+
         // Match backtick-quoted identifiers
         for cap in summary.split('`').skip(1).step_by(2) {
             let symbol = cap.trim();
@@ -431,7 +446,7 @@ impl ConceptExtractor {
                 symbols.push(symbol.to_string());
             }
         }
-        
+
         // Match quoted strings
         for cap in summary.split('"').skip(1).step_by(2) {
             let symbol = cap.trim();
@@ -468,11 +483,14 @@ mod tests {
     fn test_detect_api_concept() {
         let extractor = ConceptExtractor::new();
         let event = create_test_event(
-            vec!["src/api/routes.rs".to_string(), "src/api/handlers.rs".to_string()],
+            vec![
+                "src/api/routes.rs".to_string(),
+                "src/api/handlers.rs".to_string(),
+            ],
             "Add new API endpoints for user management".to_string(),
             0.6,
         );
-        
+
         let concepts = extractor.extract(&event);
         assert!(!concepts.is_empty());
         assert!(concepts.iter().any(|c| c.concept_type == "api"));
@@ -486,7 +504,7 @@ mod tests {
             "Fix authentication vulnerability".to_string(),
             0.5,
         );
-        
+
         let concepts = extractor.extract(&event);
         assert!(!concepts.is_empty());
         assert!(concepts.iter().any(|c| c.concept_type == "security"));
@@ -500,7 +518,7 @@ mod tests {
             "Minor update".to_string(),
             0.05,
         );
-        
+
         let concepts = extractor.extract(&event);
         assert!(concepts.is_empty());
     }
@@ -509,14 +527,17 @@ mod tests {
     fn test_concept_features_calculated() {
         let extractor = ConceptExtractor::new();
         let event = create_test_event(
-            vec!["src/core/engine.rs".to_string(), "src/core/worker.rs".to_string()],
+            vec![
+                "src/core/engine.rs".to_string(),
+                "src/core/worker.rs".to_string(),
+            ],
             "Refactor core architecture".to_string(),
             0.8,
         );
-        
+
         let concepts = extractor.extract(&event);
         assert!(!concepts.is_empty());
-        
+
         let concept = &concepts[0];
         assert!(concept.features.complexity > 0.0);
         assert!(concept.features.visual_affinity > 0.0);

@@ -62,7 +62,7 @@ pub fn create(
     let tarball_bytes = std::fs::read(&tarball_path)?;
     let mut hasher = Sha256::new();
     hasher.update(&tarball_bytes);
-    let checksum = format!("sha256:{}", hex::encode(hasher.finalize()));
+    let checksum = format!("sha256:{}", crate::util::hex::encode(hasher.finalize()));
 
     let manifest = PackageManifest {
         version: version.to_string(),

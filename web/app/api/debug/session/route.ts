@@ -3,11 +3,13 @@ import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
 
 export async function GET() {
-  console.log("[debug] testing getServerSession...");
+  if (process.env.NODE_ENV !== "development") {
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
+  }
+
   const session = await getServerSession(authOptions);
-  console.log("[debug] session:", JSON.stringify(session));
+
   return NextResponse.json({
-    session,
     hasUser: !!session?.user,
     hasId: !!session?.user?.id,
   });

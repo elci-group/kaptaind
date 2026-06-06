@@ -1,8 +1,4 @@
 use crate::config::loader::InferenceConfig;
-use crate::diff::DiffAnalysis;
-use crate::version::Bump;
-use crate::weight::WeightResult;
-use semver::Version;
 use std::time::Duration;
 
 pub use super::CommitContext;
@@ -264,10 +260,7 @@ mod tests {
     #[test]
     fn subject_line_truncation_at_72_chars() {
         let long_line = "a".repeat(100);
-        let truncated = long_line
-            .chars()
-            .take(72)
-            .collect::<String>();
+        let truncated = long_line.chars().take(72).collect::<String>();
         assert_eq!(truncated.len(), 72);
     }
 }

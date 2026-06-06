@@ -1,13 +1,13 @@
-use crate::config::loader::InferenceConfig;
 use super::CommitContext;
+use crate::config::loader::InferenceConfig;
 use std::collections::HashSet;
 
 /// Content words to strip before Jaccard similarity computation.
 /// Only includes very common words that add little semantic meaning.
 /// Intentionally excludes commit prefixes (fix, feat, etc.) and action verbs (add, implement, etc.).
 const STOP_WORDS: &[&str] = &[
-    "a", "an", "the", "is", "to", "for", "in", "of", "and", "or", "but",
-    "with", "from", "at", "by", "on", "as", "be", "this", "that", "it",
+    "a", "an", "the", "is", "to", "for", "in", "of", "and", "or", "but", "with", "from", "at",
+    "by", "on", "as", "be", "this", "that", "it",
 ];
 
 /// Tokenizes a subject line into content word tokens for Jaccard comparison.
@@ -53,10 +53,7 @@ fn mean_similarity(candidate_tokens: &HashSet<String>, others: &[HashSet<String>
 /// Spawns one Ollama task per model in `config.consensus_models`,
 /// collects responses, applies semantic similarity scoring, and elects the best candidate.
 /// Returns `None` if quorum is not reached or similarity threshold is not met.
-pub async fn generate(
-    config: &InferenceConfig,
-    ctx: &CommitContext<'_>,
-) -> Option<String> {
+pub async fn generate(config: &InferenceConfig, ctx: &CommitContext<'_>) -> Option<String> {
     if config.consensus_models.is_empty() {
         tracing::warn!("consensus_models is empty; cannot run consensus inference");
         return None;
@@ -119,10 +116,7 @@ pub async fn generate(
     }
 
     // Tokenize all candidates once.
-    let token_sets: Vec<HashSet<String>> = candidates
-        .iter()
-        .map(|c| content_tokens(c))
-        .collect();
+    let token_sets: Vec<HashSet<String>> = candidates.iter().map(|c| content_tokens(c)).collect();
 
     // Score each candidate by mean similarity to all others.
     let scores: Vec<f64> = token_sets
@@ -205,15 +199,27 @@ mod tests {
 
     #[test]
     fn jaccard_identical() {
-        let a: HashSet<String> = vec!["oauth", "provider"].iter().map(|s| s.to_string()).collect();
-        let b: HashSet<String> = vec!["oauth", "provider"].iter().map(|s| s.to_string()).collect();
+        let a: HashSet<String> = vec!["oauth", "provider"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let b: HashSet<String> = vec!["oauth", "provider"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert!((jaccard(&a, &b) - 1.0).abs() < f64::EPSILON);
     }
 
     #[test]
     fn jaccard_disjoint() {
-        let a: HashSet<String> = vec!["oauth", "provider"].iter().map(|s| s.to_string()).collect();
-        let b: HashSet<String> = vec!["auth", "middleware"].iter().map(|s| s.to_string()).collect();
+        let a: HashSet<String> = vec!["oauth", "provider"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let b: HashSet<String> = vec!["auth", "middleware"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         assert!((jaccard(&a, &b) - 0.0).abs() < f64::EPSILON);
     }
 
@@ -224,8 +230,14 @@ mod tests {
         // intersection: {oauth}
         // union: {oauth, provider, middleware}
         // jaccard: 1/3 ≈ 0.333
-        let a: HashSet<String> = vec!["oauth", "provider"].iter().map(|s| s.to_string()).collect();
-        let b: HashSet<String> = vec!["oauth", "middleware"].iter().map(|s| s.to_string()).collect();
+        let a: HashSet<String> = vec!["oauth", "provider"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let b: HashSet<String> = vec!["oauth", "middleware"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let sim = jaccard(&a, &b);
         assert!((sim - 1.0 / 3.0).abs() < 0.01);
     }
@@ -239,7 +251,10 @@ mod tests {
 
     #[test]
     fn mean_similarity_empty_others() {
-        let tokens: HashSet<String> = vec!["oauth", "provider"].iter().map(|s| s.to_string()).collect();
+        let tokens: HashSet<String> = vec!["oauth", "provider"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
         let others: Vec<HashSet<String>> = vec![];
         assert!((mean_similarity(&tokens, &others) - 1.0).abs() < f64::EPSILON);
     }
@@ -250,10 +265,14 @@ mod tests {
         // other: {oauth, middleware}
         // jaccard: 1/3
         // mean: 1/3
-        let tokens: HashSet<String> = vec!["oauth", "provider"].iter().map(|s| s.to_string()).collect();
-        let others: Vec<HashSet<String>> = vec![
-            vec!["oauth", "middleware"].iter().map(|s| s.to_string()).collect(),
-        ];
+        let tokens: HashSet<String> = vec!["oauth", "provider"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        let others: Vec<HashSet<String>> = vec![vec!["oauth", "middleware"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect()];
         let sim = mean_similarity(&tokens, &others);
         assert!((sim - 1.0 / 3.0).abs() < 0.01);
     }
@@ -272,8 +291,6 @@ mod tests {
         let a_tokens = content_tokens(a);
         let b_tokens = content_tokens(b);
         let c_tokens = content_tokens(c);
-
-        let candidates = vec![a_tokens.clone(), b_tokens.clone(), c_tokens.clone()];
 
         // Score A (vs [B, C])
         let score_a = mean_similarity(&a_tokens, &[b_tokens.clone(), c_tokens.clone()]);

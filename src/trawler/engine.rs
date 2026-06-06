@@ -1,6 +1,6 @@
 use crate::trawler::project::{
     detect_project_type_with_confidence, is_git_repo, is_kaptaind_initialized,
-    should_skip_directory, ProjectType, Confidence,
+    should_skip_directory, Confidence, ProjectType,
 };
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -84,14 +84,7 @@ pub fn trawl(options: &TrawlOptions) -> anyhow::Result<TrawlResult> {
     let mut visited: HashSet<PathBuf> = HashSet::new();
 
     // Perform the recursive scan
-    scan_directory(
-        root,
-        0,
-        options,
-        &mut visited,
-        &mut projects,
-        &mut errors,
-    )?;
+    scan_directory(root, 0, options, &mut visited, &mut projects, &mut errors)?;
 
     // Filter by confidence threshold
     let filtered_projects: Vec<_> = projects
@@ -102,13 +95,23 @@ pub fn trawl(options: &TrawlOptions) -> anyhow::Result<TrawlResult> {
 
     // Calculate confidence metrics
     let avg_confidence = if !filtered_projects.is_empty() {
-        filtered_projects.iter().map(|p| p.confidence_score).sum::<f32>() / filtered_projects.len() as f32
+        filtered_projects
+            .iter()
+            .map(|p| p.confidence_score)
+            .sum::<f32>()
+            / filtered_projects.len() as f32
     } else {
         0.0
     };
 
-    let high_confidence_count = filtered_projects.iter().filter(|p| p.confidence_score >= 0.80).count();
-    let very_high_confidence_count = filtered_projects.iter().filter(|p| p.confidence_score >= 0.95).count();
+    let high_confidence_count = filtered_projects
+        .iter()
+        .filter(|p| p.confidence_score >= 0.80)
+        .count();
+    let very_high_confidence_count = filtered_projects
+        .iter()
+        .filter(|p| p.confidence_score >= 0.95)
+        .count();
 
     // Initialize projects that need it
     let mut initialized_count = 0;
@@ -129,14 +132,22 @@ pub fn trawl(options: &TrawlOptions) -> anyhow::Result<TrawlResult> {
                 // Register for auto-start if enabled
                 if options.auto_register {
                     if let Err(e) = register_project(&project.path) {
-                        errors.push(format!("Failed to register {}: {}", project.path.display(), e));
+                        errors.push(format!(
+                            "Failed to register {}: {}",
+                            project.path.display(),
+                            e
+                        ));
                     } else {
                         registered_count += 1;
                     }
                 }
             }
             Err(e) => {
-                errors.push(format!("Failed to initialize {}: {}", project.path.display(), e));
+                errors.push(format!(
+                    "Failed to initialize {}: {}",
+                    project.path.display(),
+                    e
+                ));
             }
         }
     }
@@ -222,7 +233,11 @@ fn scan_directory(
     let entries = match std::fs::read_dir(path) {
         Ok(entries) => entries,
         Err(e) => {
-            errors.push(format!("Failed to read directory {}: {}", path.display(), e));
+            errors.push(format!(
+                "Failed to read directory {}: {}",
+                path.display(),
+                e
+            ));
             return Ok(());
         }
     };
@@ -308,10 +323,10 @@ fn register_project(path: &Path) -> anyhow::Result<()> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
         .map_err(|_| anyhow::anyhow!("Could not determine home directory"))?;
-    
+
     let kaptaind_dir = Path::new(&home).join(".kaptaind");
     std::fs::create_dir_all(&kaptaind_dir)?;
-    
+
     let projects_file = kaptaind_dir.join("projects.txt");
     let path_str = path.display().to_string();
 
@@ -328,7 +343,7 @@ fn register_project(path: &Path) -> anyhow::Result<()> {
         .create(true)
         .append(true)
         .open(&projects_file)?;
-    
+
     use std::io::Write;
     writeln!(file, "{}", path_str)?;
 
@@ -405,13 +420,33 @@ pub fn generate_report(result: &TrawlResult) -> String {
     writeln!(report, "  Projects discovered: {}", result.projects.len()).unwrap();
     writeln!(report, "  Initialized: {}", result.initialized_count).unwrap();
     writeln!(report, "  Registered: {}", result.registered_count).unwrap();
-    writeln!(report, "  Skipped (already initialized): {}", result.skipped_count).unwrap();
+    writeln!(
+        report,
+        "  Skipped (already initialized): {}",
+        result.skipped_count
+    )
+    .unwrap();
 
     writeln!(report).unwrap();
     writeln!(report, "🎯 Detection Confidence:").unwrap();
-    writeln!(report, "  Average confidence: {:.1}%", result.avg_confidence * 100.0).unwrap();
-    writeln!(report, "  Very high confidence (≥95%): {}", result.very_high_confidence_count).unwrap();
-    writeln!(report, "  High confidence (≥80%): {}", result.high_confidence_count).unwrap();
+    writeln!(
+        report,
+        "  Average confidence: {:.1}%",
+        result.avg_confidence * 100.0
+    )
+    .unwrap();
+    writeln!(
+        report,
+        "  Very high confidence (≥95%): {}",
+        result.very_high_confidence_count
+    )
+    .unwrap();
+    writeln!(
+        report,
+        "  High confidence (≥80%): {}",
+        result.high_confidence_count
+    )
+    .unwrap();
 
     if !result.errors.is_empty() {
         writeln!(report, "  ⚠️  Errors: {}", result.errors.len()).unwrap();

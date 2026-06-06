@@ -1,0 +1,98 @@
+1:"$Sreact.fragment"
+2:I[5622,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"ThemeProvider"]
+3:I[53339,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"default"]
+4:I[39756,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"default"]
+5:I[37457,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"default"]
+7:I[97367,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"OutletBoundary"]
+8:"$Sreact.suspense"
+b:I[97367,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"ViewportBoundary"]
+d:I[97367,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"MetadataBoundary"]
+f:I[68027,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"default",1]
+:HL["/_next/static/chunks/1hc9gxvali7vt.css","style"]
+0:{"P":null,"c":["","whitepapers","commit-staging"],"q":"","i":false,"f":[[["",{"children":["whitepapers",{"children":[["slug","commit-staging","d",null],{"children":["__PAGE__",{}]}]}]},"$undefined","$undefined",16],[["$","$1","c",{"children":[[["$","link","0",{"rel":"stylesheet","href":"/_next/static/chunks/1hc9gxvali7vt.css","precedence":"next","crossOrigin":"$undefined","nonce":"$undefined"}],["$","script","script-0",{"src":"/_next/static/chunks/1j2zd7rj57ttl.js","async":true,"nonce":"$undefined"}],["$","script","script-1",{"src":"/_next/static/chunks/2im7c515bo69p.js","async":true,"nonce":"$undefined"}]],["$","html",null,{"lang":"en","className":"h-full antialiased dark","children":["$","body",null,{"className":"min-h-full flex flex-col bg-zinc-950 text-zinc-100","children":["$","$L2",null,{"children":["$","$L3",null,{"children":["$","$L4",null,{"parallelRouterKey":"children","error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$L5",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":[[["$","title",null,{"children":"404: This page could not be found."}],["$","div",null,{"style":{"fontFamily":"system-ui,\"Segoe UI\",Roboto,Helvetica,Arial,sans-serif,\"Apple Color Emoji\",\"Segoe UI Emoji\"","height":"100vh","textAlign":"center","display":"flex","flexDirection":"column","alignItems":"center","justifyContent":"center"},"children":["$","div",null,{"children":[["$","style",null,{"dangerouslySetInnerHTML":{"__html":"body{color:#000;background:#fff;margin:0}.next-error-h1{border-right:1px solid rgba(0,0,0,.3)}@media (prefers-color-scheme:dark){body{color:#fff;background:#000}.next-error-h1{border-right:1px solid rgba(255,255,255,.3)}}"}}],["$","h1",null,{"className":"next-error-h1","style":{"display":"inline-block","margin":"0 20px 0 0","padding":"0 23px 0 0","fontSize":24,"fontWeight":500,"verticalAlign":"top","lineHeight":"49px"},"children":404}],["$","div",null,{"style":{"display":"inline-block"},"children":["$","h2",null,{"style":{"fontSize":14,"fontWeight":400,"lineHeight":"49px","margin":0},"children":"This page could not be found."}]}]]}]}]],[]],"forbidden":"$undefined","unauthorized":"$undefined"}]}]}]}]}]]}],{"children":[["$","$1","c",{"children":[null,["$","$L4",null,{"parallelRouterKey":"children","error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$L5",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":"$undefined","forbidden":"$undefined","unauthorized":"$undefined"}]]}],{"children":[["$","$1","c",{"children":[null,["$","$L4",null,{"parallelRouterKey":"children","error":"$undefined","errorStyles":"$undefined","errorScripts":"$undefined","template":["$","$L5",null,{}],"templateStyles":"$undefined","templateScripts":"$undefined","notFound":"$undefined","forbidden":"$undefined","unauthorized":"$undefined"}]]}],{"children":[["$","$1","c",{"children":["$L6",[["$","script","script-0",{"src":"/_next/static/chunks/2pes6-pd9xzbn.js","async":true,"nonce":"$undefined"}],["$","script","script-1",{"src":"/_next/static/chunks/0mnx6i03wgu-z.js","async":true,"nonce":"$undefined"}]],["$","$L7",null,{"children":["$","$8",null,{"name":"Next.MetadataOutlet","children":"$@9"}]}]]}],{},null,false,null]},null,false,"$@a"]},null,false,"$@a"]},null,false,null],["$","$1","h",{"children":[null,["$","$Lb",null,{"children":"$Lc"}],["$","div",null,{"hidden":true,"children":["$","$Ld",null,{"children":["$","$8",null,{"name":"Next.Metadata","children":"$Le"}]}]}],null]}],false]],"m":"$undefined","G":["$f",[["$","link","0",{"rel":"stylesheet","href":"/_next/static/chunks/1hc9gxvali7vt.css","precedence":"next","crossOrigin":"$undefined","nonce":"$undefined"}]]],"S":true,"h":null,"s":"$undefined","l":"$undefined","p":"$undefined","d":"$undefined","b":"KIkAGxAWDQmJDwX7xyOak"}
+10:[]
+a:"$W10"
+c:[["$","meta","0",{"charSet":"utf-8"}],["$","meta","1",{"name":"viewport","content":"width=device-width, initial-scale=1"}]]
+11:I[27201,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js"],"IconMark"]
+9:null
+e:[["$","title","0",{"children":"Kaptaind | Whitepaper: Commit Staging"}],["$","meta","1",{"name":"description","content":"Automated semantic versioning daemon, enhanced by AI. Subscribe to unlock LLM-powered commit messages, changelogs, and bump reasoning."}],["$","link","2",{"rel":"icon","href":"/favicon.ico?favicon.2vob68tjqpejf.ico","sizes":"256x256","type":"image/x-icon"}],["$","$L11","3",{}]]
+12:I[7988,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],"default"]
+13:I[22016,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],""]
+14:I[90186,["/_next/static/chunks/1j2zd7rj57ttl.js","/_next/static/chunks/2im7c515bo69p.js","/_next/static/chunks/2pes6-pd9xzbn.js","/_next/static/chunks/0mnx6i03wgu-z.js"],"default"]
+15:Tc86,# Whitepaper: Commit Orchestrator & Staging Modes
+
+## Abstract
+Kaptaind supports configurable staging strategies when creating commits. This whitepaper validates the three staging modes (All, Cluster, Pattern) and the exclude-glob mechanism. All tests passed.
+
+## Claim Statement
+> "Generates explanatory commits and stages files according to your rules." (Landing page, workflow step 06)
+> "Commit" → "Writes + explains" (Landing page, architecture flow)
+
+## Methodology
+We initialized temporary git repositories, created modified files, and invoked `commit_with_staging` with different `StagingConfig` modes. We then inspected the most recent commit to verify which files were staged.
+
+## Test Implementation
+Source: `tests/claims_validation.rs` and `src/commit/orchestrator.rs`
+
+```rust
+fn claim_staging_all_commits_everything_except_excluded() {
+    let dir = tempdir().unwrap();
+    init_git_repo(dir.path());
+    std::fs::write(dir.path().join("keep.txt"), "changed").unwrap();
+    std::fs::write(dir.path().join("exclude.txt"), "changed").unwrap();
+    // ... init commit ...
+
+    let staging = StagingConfig {
+        mode: StagingMode::All,
+        include: vec![],
+        exclude: vec!["exclude.txt".to_string()],
+    };
+    commit_with_staging(dir.path(), "test commit", &staging, &[]).unwrap();
+
+    let files = last_commit_files(dir.path());
+    assert!(files.contains("keep.txt"));
+    assert!(!files.contains("exclude.txt"));
+}
+
+fn claim_staging_cluster_commits_only_cluster_paths() {
+    let dir = tempdir().unwrap();
+    init_git_repo(dir.path());
+    std::fs::write(dir.path().join("in_cluster.rs"), "changed").unwrap();
+    std::fs::write(dir.path().join("out_cluster.rs"), "changed").unwrap();
+    std::fs::write(dir.path().join("VERSION"), "0.1.0").unwrap();
+    std::fs::write(dir.path().join("Cargo.toml"), "...").unwrap();
+    // ... init commit ...
+
+    let staging = StagingConfig {
+        mode: StagingMode::Cluster,
+        include: vec![],
+        exclude: vec![],
+    };
+    commit_with_staging(dir.path(), "cluster test", &staging, &[PathBuf::from("in_cluster.rs")]).unwrap();
+
+    let files = last_commit_files(dir.path());
+    assert!(files.contains("in_cluster.rs"));
+    assert!(!files.contains("out_cluster.rs"));
+}
+```
+
+## Results
+**PASS** — Both staging modes and exclude globs behave as documented.
+
+| Mode | Behavior | Result |
+|------|----------|--------|
+| All + exclude | Stages all changes except matched globs | PASS |
+| Cluster | Stages only cluster paths + VERSION + Cargo.toml | PASS |
+
+## Evidence
+The orchestrator uses `git add` and `git reset HEAD` to implement staging. In Cluster mode, it explicitly adds `VERSION` and `Cargo.toml` alongside the cluster paths, ensuring version manifests are always included.
+
+## Limitations
+- Pattern mode (`include` globs) was not tested in this integration suite (it is covered by existing unit tests in `src/commit/orchestrator.rs`).
+- The generated commit message content was not evaluated here; see the Semantic Versioning whitepaper for message formatting.
+
+## Conclusion
+The claim is **supported**. Kaptaind respects configurable staging rules and correctly isolates cluster-scoped changes when requested.
+6:[["$","$L12",null,{}],["$","div",null,{"className":"bg-zinc-950 text-zinc-100 min-h-screen py-12","children":["$","div",null,{"className":"mx-auto max-w-3xl px-6 lg:px-8","children":[["$","$L13",null,{"href":"/whitepapers","className":"inline-flex items-center text-sm text-zinc-500 hover:text-zinc-300 transition-colors mb-8","children":"← Back to Research & Validation"}],["$","article",null,{"className":"prose prose-invert max-w-none","children":["$","$L14",null,{"content":"$15"}]}],"$L16"]}]}],"$L17"]
+16:["$","div",null,{"className":"mt-16 pt-8 border-t border-zinc-800 text-center","children":["$","$L13",null,{"href":"/whitepapers","className":"inline-flex items-center text-sm text-zinc-500 hover:text-zinc-300 transition-colors","children":"← Browse all whitepapers"}]}]
+17:["$","footer",null,{"className":"border-t border-zinc-800 bg-zinc-950","children":["$","div",null,{"className":"mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8","children":["$","div",null,{"className":"flex flex-col items-center justify-between gap-4 sm:flex-row","children":[["$","p",null,{"className":"text-sm text-zinc-400","children":"Kaptaind Pro — Automated semantic versioning, enhanced by AI."}],["$","div",null,{"className":"flex items-center gap-6","children":[["$","$L13",null,{"href":"/whitepapers","className":"text-sm text-zinc-500 hover:text-zinc-300 transition-colors","children":"Research & Validation"}],["$","p",null,{"className":"text-sm text-zinc-500","children":"Built with Next.js and Claude"}]]}]]}]}]}]

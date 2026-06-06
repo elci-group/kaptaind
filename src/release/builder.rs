@@ -31,6 +31,10 @@ pub async fn run(config: &BuildConfig, repo_path: &Path) -> BuildStatus {
         return BuildStatus::Skipped;
     };
 
+    if let Err(err) = crate::util::shell_validation::validate_shell_command(command) {
+        tracing::warn!(error = %err, command = command, "shell command validation failed");
+    }
+
     tracing::info!(command = command, "running build step");
 
     let timeout = tokio::time::Duration::from_secs(config.timeout_secs);
