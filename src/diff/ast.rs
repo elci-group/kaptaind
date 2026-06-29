@@ -266,7 +266,7 @@ fn extract_signatures_fallback(path: &Path) -> HashSet<String> {
     let Ok(meta) = std::fs::metadata(path) else {
         return HashSet::new();
     };
-    if meta.len() > 5 * 1024 * 1024 {
+    if meta.len() > 5 * 1024 * 1024 || meta.is_dir() {
         return HashSet::new();
     }
     let Ok(file) = std::fs::File::open(path) else {

@@ -970,16 +970,18 @@ fn load_version(path: &Path) -> Option<Version> {
 fn save_version(path: &Path, version: &Version) -> anyhow::Result<()> {
     std::fs::write(path, version.to_string())?;
 
-    // If Cargo.toml exists, update its version
+    // Update Cargo.toml version in common locations
     if let Some(repo_path) = path.parent() {
-        let cargo_toml_path = repo_path.join("Cargo.toml");
-        if cargo_toml_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&cargo_toml_path) {
-                if let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() {
-                    if let Some(package) = doc.get_mut("package") {
-                        if package.get("version").is_some() {
-                            package["version"] = toml_edit::value(version.to_string());
-                            let _ = std::fs::write(&cargo_toml_path, doc.to_string());
+        for cargo_rel in ["Cargo.toml", "src-tauri/Cargo.toml"] {
+            let cargo_toml_path = repo_path.join(cargo_rel);
+            if cargo_toml_path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&cargo_toml_path) {
+                    if let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() {
+                        if let Some(package) = doc.get_mut("package") {
+                            if package.get("version").is_some() {
+                                package["version"] = toml_edit::value(version.to_string());
+                                let _ = std::fs::write(&cargo_toml_path, doc.to_string());
+                            }
                         }
                     }
                 }

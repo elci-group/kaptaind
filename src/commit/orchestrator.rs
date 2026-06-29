@@ -21,10 +21,13 @@ pub fn commit_with_staging(
         }
         StagingMode::Cluster => {
             add_paths(repo_path, cluster_paths)?;
-            add_paths(
-                repo_path,
-                &[PathBuf::from("VERSION"), PathBuf::from("Cargo.toml")],
-            )?;
+            let mut meta_paths = vec![PathBuf::from("VERSION")];
+            for cargo_rel in ["Cargo.toml", "src-tauri/Cargo.toml"] {
+                if repo_path.join(cargo_rel).exists() {
+                    meta_paths.push(PathBuf::from(cargo_rel));
+                }
+            }
+            add_paths(repo_path, &meta_paths)?;
         }
         StagingMode::Pattern => {
             if staging.include.is_empty() {
