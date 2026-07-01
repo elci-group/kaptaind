@@ -31,10 +31,7 @@ pub fn api_score(cluster: &Cluster, repo_root: &Path) -> ApiAnalysis {
 
 fn load_versions(
     repo_root: &Path,
-) -> std::collections::HashMap<
-    String,
-    crate::diff::version::detector::LanguageVersion,
-> {
+) -> std::collections::HashMap<String, crate::diff::version::detector::LanguageVersion> {
     let mut version_cache = VersionCache::load(repo_root);
     let versions = detect_all(&mut version_cache, repo_root);
     version_cache.save(repo_root);

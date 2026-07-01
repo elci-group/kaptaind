@@ -24,9 +24,7 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
     warn_if_git_lock_exists(&config.repo_path);
 
     if config.air_gapped {
-        tracing::warn!(
-            "air-gapped mode enabled: push, webhooks, and bundle scoring are disabled"
-        );
+        tracing::warn!("air-gapped mode enabled: push, webhooks, and bundle scoring are disabled");
     }
 
     if !config.capabilities.network_push {
@@ -67,7 +65,8 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
         interval.tick().await; // first tick fires immediately
         loop {
             interval.tick().await;
-            let result = crate::daemon::prune::prune_analysis_artifacts(&repo_path, retention_days).await;
+            let result =
+                crate::daemon::prune::prune_analysis_artifacts(&repo_path, retention_days).await;
             tracing::info!(
                 deleted = result.deleted,
                 errors = result.errors,

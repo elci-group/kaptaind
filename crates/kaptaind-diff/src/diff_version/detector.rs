@@ -42,10 +42,7 @@ impl LanguageVersion {
 ///
 /// Results are read from the version cache when valid (TTL = 1 h); detected
 /// versions are written back to the cache before returning.
-pub fn detect_all(
-    cache: &mut VersionCache,
-    repo_path: &Path,
-) -> HashMap<String, LanguageVersion> {
+pub fn detect_all(cache: &mut VersionCache, repo_path: &Path) -> HashMap<String, LanguageVersion> {
     let mut map = HashMap::new();
 
     let detectors: &[(&str, fn(&Path) -> Option<LanguageVersion>)] = &[

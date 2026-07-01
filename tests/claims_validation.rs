@@ -51,7 +51,11 @@ fn git_commit(path: &Path, msg: &str) {
         .args(["commit", "-m", msg])
         .output()
         .expect("git commit");
-    assert!(output.status.success(), "git commit failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "git commit failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 fn sample_cluster_with_paths(paths: &[&str]) -> kaptaind::cluster::engine::Cluster {
@@ -96,11 +100,21 @@ fn claim_clustering_groups_events_within_window() {
         timestamp: Utc::now() + chrono::Duration::milliseconds(500),
     };
 
-    assert!(engine.ingest(first).is_none(), "first event should not emit cluster");
-    assert!(engine.ingest(second).is_none(), "second event within window should merge");
+    assert!(
+        engine.ingest(first).is_none(),
+        "first event should not emit cluster"
+    );
+    assert!(
+        engine.ingest(second).is_none(),
+        "second event within window should merge"
+    );
 
     let cluster = engine.flush().expect("cluster should exist");
-    assert_eq!(cluster.events.len(), 2, "cluster should contain both events");
+    assert_eq!(
+        cluster.events.len(),
+        2,
+        "cluster should contain both events"
+    );
 }
 
 #[test]
@@ -119,7 +133,9 @@ fn claim_clustering_emits_when_window_expires() {
     };
 
     assert!(engine.ingest(first).is_none());
-    let emitted = engine.ingest(second).expect("previous cluster should emit when window expires");
+    let emitted = engine
+        .ingest(second)
+        .expect("previous cluster should emit when window expires");
     assert_eq!(emitted.events.len(), 1);
 }
 
@@ -137,7 +153,11 @@ fn claim_five_dimensions_produced_by_analyze() {
     git_commit(repo, "init");
 
     // Make a change
-    std::fs::write(repo.join("src_file.rs"), "pub fn hello() {}\npub fn world() {}").unwrap();
+    std::fs::write(
+        repo.join("src_file.rs"),
+        "pub fn hello() {}\npub fn world() {}",
+    )
+    .unwrap();
 
     let cluster = sample_cluster_with_paths(&["src_file.rs"]);
     let analysis = kaptaind::diff::analyze(&cluster, repo);
@@ -170,7 +190,10 @@ fn claim_five_dimensions_produced_by_analyze() {
     );
 
     // At minimum, touched_paths should reflect the change
-    assert_eq!(analysis.touched_paths, 1, "touched_paths should count changed files");
+    assert_eq!(
+        analysis.touched_paths, 1,
+        "touched_paths should count changed files"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -223,17 +246,35 @@ fn claim_semver_score_thresholds() {
         api_added: false,
     };
 
-    assert_eq!(kaptaind::version::decide(&patch, &default_version_thresholds()), kaptaind::version::Bump::Patch);
-    assert_eq!(kaptaind::version::decide(&minor, &default_version_thresholds()), kaptaind::version::Bump::Minor);
-    assert_eq!(kaptaind::version::decide(&none, &default_version_thresholds()), kaptaind::version::Bump::None);
+    assert_eq!(
+        kaptaind::version::decide(&patch, &default_version_thresholds()),
+        kaptaind::version::Bump::Patch
+    );
+    assert_eq!(
+        kaptaind::version::decide(&minor, &default_version_thresholds()),
+        kaptaind::version::Bump::Minor
+    );
+    assert_eq!(
+        kaptaind::version::decide(&none, &default_version_thresholds()),
+        kaptaind::version::Bump::None
+    );
 }
 
 #[test]
 fn claim_semver_apply_increments_correctly() {
     let base = semver::Version::new(1, 2, 3);
-    assert_eq!(kaptaind::version::apply(base.clone(), kaptaind::version::Bump::Patch), semver::Version::new(1, 2, 4));
-    assert_eq!(kaptaind::version::apply(base.clone(), kaptaind::version::Bump::Minor), semver::Version::new(1, 3, 0));
-    assert_eq!(kaptaind::version::apply(base, kaptaind::version::Bump::Major), semver::Version::new(2, 0, 0));
+    assert_eq!(
+        kaptaind::version::apply(base.clone(), kaptaind::version::Bump::Patch),
+        semver::Version::new(1, 2, 4)
+    );
+    assert_eq!(
+        kaptaind::version::apply(base.clone(), kaptaind::version::Bump::Minor),
+        semver::Version::new(1, 3, 0)
+    );
+    assert_eq!(
+        kaptaind::version::apply(base, kaptaind::version::Bump::Major),
+        semver::Version::new(2, 0, 0)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -274,11 +315,15 @@ fn claim_twelve_language_adapters_in_registry() {
 fn claim_rust_adapter_detects_public_api_additions() {
     let dir = tempdir().unwrap();
     let file = dir.path().join("test.rs");
-    std::fs::write(&file, r#"
+    std::fs::write(
+        &file,
+        r#"
 pub fn existing() {}
 pub fn new_function() {}
 pub struct NewStruct;
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     let adapter = kaptaind::diff::lang::heuristics::RustAdapter;
     let ast = adapter.parse_ast(&file).expect("Rust adapter should parse");
@@ -295,14 +340,20 @@ pub struct NewStruct;
 fn claim_typescript_adapter_detects_exports() {
     let dir = tempdir().unwrap();
     let file = dir.path().join("test.ts");
-    std::fs::write(&file, r#"
+    std::fs::write(
+        &file,
+        r#"
 export function foo() {}
 export interface Bar {}
 export const baz = 1;
-"#).unwrap();
+"#,
+    )
+    .unwrap();
 
     let adapter = kaptaind::diff::lang::heuristics::TypeScriptAdapter;
-    let ast = adapter.parse_ast(&file).expect("TypeScript adapter should parse");
+    let ast = adapter
+        .parse_ast(&file)
+        .expect("TypeScript adapter should parse");
     let api = adapter.extract_api(&ast);
 
     assert!(
@@ -334,13 +385,8 @@ fn claim_staging_all_commits_everything_except_excluded() {
         exclude: vec!["exclude.txt".to_string()],
     };
 
-    kaptaind::commit::orchestrator::commit_with_staging(
-        dir.path(),
-        "test commit",
-        &staging,
-        &[],
-    )
-    .expect("commit should succeed");
+    kaptaind::commit::orchestrator::commit_with_staging(dir.path(), "test commit", &staging, &[])
+        .expect("commit should succeed");
 
     let output = std::process::Command::new("git")
         .arg("-C")
@@ -350,7 +396,10 @@ fn claim_staging_all_commits_everything_except_excluded() {
         .expect("git diff-tree");
     let files = String::from_utf8_lossy(&output.stdout);
     assert!(files.contains("keep.txt"), "keep.txt should be committed");
-    assert!(!files.contains("exclude.txt"), "exclude.txt should be excluded");
+    assert!(
+        !files.contains("exclude.txt"),
+        "exclude.txt should be excluded"
+    );
 }
 
 #[test]
@@ -361,7 +410,11 @@ fn claim_staging_cluster_commits_only_cluster_paths() {
     std::fs::write(dir.path().join("in_cluster.rs"), "a").unwrap();
     std::fs::write(dir.path().join("out_cluster.rs"), "b").unwrap();
     std::fs::write(dir.path().join("VERSION"), "0.1.0").unwrap();
-    std::fs::write(dir.path().join("Cargo.toml"), "[package]\nname = \"test\"\nversion = \"0.1.0\"\n").unwrap();
+    std::fs::write(
+        dir.path().join("Cargo.toml"),
+        "[package]\nname = \"test\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
     git_commit(dir.path(), "init");
 
     std::fs::write(dir.path().join("in_cluster.rs"), "changed").unwrap();
@@ -388,8 +441,14 @@ fn claim_staging_cluster_commits_only_cluster_paths() {
         .output()
         .expect("git diff-tree");
     let files = String::from_utf8_lossy(&output.stdout);
-    assert!(files.contains("in_cluster.rs"), "in_cluster.rs should be committed");
-    assert!(!files.contains("out_cluster.rs"), "out_cluster.rs should not be committed");
+    assert!(
+        files.contains("in_cluster.rs"),
+        "in_cluster.rs should be committed"
+    );
+    assert!(
+        !files.contains("out_cluster.rs"),
+        "out_cluster.rs should not be committed"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -405,7 +464,11 @@ fn claim_version_file_written_and_cargo_toml_mutated() {
     let cargo_path = dir.path().join("Cargo.toml");
 
     std::fs::write(&version_path, "1.2.3").unwrap();
-    std::fs::write(&cargo_path, "[package]\nname = \"test\"\nversion = \"1.2.3\"\n").unwrap();
+    std::fs::write(
+        &cargo_path,
+        "[package]\nname = \"test\"\nversion = \"1.2.3\"\n",
+    )
+    .unwrap();
     git_commit(dir.path(), "init");
 
     // Simulate saving new version
@@ -419,7 +482,10 @@ fn claim_version_file_written_and_cargo_toml_mutated() {
 
     // Verify Cargo.toml mutation logic (simulating what save_version does)
     let cargo_content = std::fs::read_to_string(&cargo_path).unwrap();
-    assert!(cargo_content.contains("1.2.3"), "Cargo.toml should still have old version (we only tested VERSION write here)");
+    assert!(
+        cargo_content.contains("1.2.3"),
+        "Cargo.toml should still have old version (we only tested VERSION write here)"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -456,22 +522,50 @@ fn claim_analysis_artifact_contains_required_fields() {
     });
 
     let artifact_path = analysis_dir.join(format!("{}.json", cluster.id));
-    std::fs::write(&artifact_path, serde_json::to_string_pretty(&artifact).unwrap()).unwrap();
+    std::fs::write(
+        &artifact_path,
+        serde_json::to_string_pretty(&artifact).unwrap(),
+    )
+    .unwrap();
 
     // Verify artifact exists and contains required fields
     let content = std::fs::read_to_string(&artifact_path).unwrap();
     let parsed: serde_json::Value = serde_json::from_str(&content).unwrap();
 
-    assert!(parsed.get("cluster_id").is_some(), "artifact missing cluster_id");
+    assert!(
+        parsed.get("cluster_id").is_some(),
+        "artifact missing cluster_id"
+    );
     assert!(parsed.get("version").is_some(), "artifact missing version");
     assert!(parsed.get("bump").is_some(), "artifact missing bump");
-    assert!(parsed["diff"].get("structural").is_some(), "artifact missing structural score");
-    assert!(parsed["diff"].get("api").is_some(), "artifact missing api score");
-    assert!(parsed["diff"].get("deps").is_some(), "artifact missing deps score");
-    assert!(parsed["diff"].get("runtime").is_some(), "artifact missing runtime score");
-    assert!(parsed["diff"].get("api_breaking").is_some(), "artifact missing api_breaking");
-    assert!(parsed["diff"].get("api_added").is_some(), "artifact missing api_added");
-    assert!(parsed["weight"].get("score").is_some(), "artifact missing weight score");
+    assert!(
+        parsed["diff"].get("structural").is_some(),
+        "artifact missing structural score"
+    );
+    assert!(
+        parsed["diff"].get("api").is_some(),
+        "artifact missing api score"
+    );
+    assert!(
+        parsed["diff"].get("deps").is_some(),
+        "artifact missing deps score"
+    );
+    assert!(
+        parsed["diff"].get("runtime").is_some(),
+        "artifact missing runtime score"
+    );
+    assert!(
+        parsed["diff"].get("api_breaking").is_some(),
+        "artifact missing api_breaking"
+    );
+    assert!(
+        parsed["diff"].get("api_added").is_some(),
+        "artifact missing api_added"
+    );
+    assert!(
+        parsed["weight"].get("score").is_some(),
+        "artifact missing weight score"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -499,10 +593,7 @@ fn claim_default_config_requires_no_external_api() {
         safety: Default::default(),
         batch: Default::default(),
     };
-    assert!(
-        !push.enabled,
-        "default push should be disabled"
-    );
+    assert!(!push.enabled, "default push should be disabled");
 
     // Default notify has no endpoints configured
     let notify: kaptaind::config::loader::NotifyConfig = Default::default();
@@ -535,7 +626,10 @@ async fn claim_test_hook_blocks_commit_when_required_and_failing() {
         kaptaind::daemon::scheduler::TestOutcome::Failed { .. } => {
             // Expected: failing required hook should report failure
         }
-        other => panic!("expected TestOutcome::Failed for required failing hook, got {:?}", other),
+        other => panic!(
+            "expected TestOutcome::Failed for required failing hook, got {:?}",
+            other
+        ),
     }
 }
 

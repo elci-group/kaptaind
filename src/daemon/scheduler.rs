@@ -67,9 +67,8 @@ pub async fn run(
         vacs_engine_clone.process_queue(vacs_rx).await;
     });
 
-    let mut prune_interval = tokio::time::interval(
-        Duration::from_secs(config.prune_interval_minutes * 60)
-    );
+    let mut prune_interval =
+        tokio::time::interval(Duration::from_secs(config.prune_interval_minutes * 60));
     // Skip the immediate first tick so we don't prune right on startup
     prune_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
@@ -125,7 +124,7 @@ pub async fn run(
                     }
                 }
             }
-            _ = tokio::time::sleep(config.cluster.window) => {
+            _ = tokio::time::sleep(config.cluster.flush_after.unwrap_or(config.cluster.window)) => {
                 if let Some(cluster) = cluster_engine.flush() {
                     tracing::info!(cluster_id = %cluster.id, "cluster window expired by timeout");
                     process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
@@ -292,12 +291,19 @@ async fn process_cluster(
 
     let tests_required = config.test.required
         || branch_protection_forces_tests
-        || policy.as_ref().map(|p| p.min_test_coverage).unwrap_or(false);
+        || policy
+            .as_ref()
+            .map(|p| p.min_test_coverage)
+            .unwrap_or(false);
 
     if tests_required && matches!(test_outcome, TestOutcome::Failed { .. }) {
         log_test_failure(&test_outcome);
 
-        if policy.as_ref().map(|p| p.min_test_coverage).unwrap_or(false) {
+        if policy
+            .as_ref()
+            .map(|p| p.min_test_coverage)
+            .unwrap_or(false)
+        {
             let _ = policy::append_audit_log(
                 &config.repo_path,
                 &policy::AuditEntry {
@@ -479,11 +485,24 @@ async fn process_cluster(
         status.status = State::Failed;
         status.last_error = Some(err.to_string());
         write_status(&config.repo_path, status);
-        crate::daemon::notification::notify_error(&config.notify, &err.to_string(), None, config.capabilities.network_webhooks);
+        crate::daemon::notification::notify_error(
+            &config.notify,
+            &err.to_string(),
+            None,
+            config.capabilities.network_webhooks,
+        );
         return;
     }
 
-    if let Err(err) = persist_analysis_artifact(config, &cluster, &diff, &weight, bump, &next, config.air_gapped) {
+    if let Err(err) = persist_analysis_artifact(
+        config,
+        &cluster,
+        &diff,
+        &weight,
+        bump,
+        &next,
+        config.air_gapped,
+    ) {
         tracing::warn!(error = %err, "failed to persist analysis artifact");
     }
 
@@ -566,7 +585,12 @@ async fn process_cluster(
         status.status = State::Failed;
         status.last_error = Some(err.to_string());
         write_status(&config.repo_path, status);
-        crate::daemon::notification::notify_error(&config.notify, &err.to_string(), None, config.capabilities.network_webhooks);
+        crate::daemon::notification::notify_error(
+            &config.notify,
+            &err.to_string(),
+            None,
+            config.capabilities.network_webhooks,
+        );
         return;
     }
 
@@ -674,7 +698,9 @@ async fn process_cluster(
             protect_branches: config.push.safety.protect_branches.clone(),
         };
 
-        if let Err(err) = crate::push::push(&config.repo_path, &push_options, &config.push.retry).await {
+        if let Err(err) =
+            crate::push::push(&config.repo_path, &push_options, &config.push.retry).await
+        {
             tracing::warn!(error = %err, "push failed");
             write_trace_if_active(
                 &config.repo_path,
@@ -688,7 +714,12 @@ async fn process_cluster(
             status.status = State::Failed;
             status.last_error = Some(format!("push failed: {err}"));
             write_status(&config.repo_path, status);
-            crate::daemon::notification::notify_error(&config.notify, &err.to_string(), None, config.capabilities.network_webhooks);
+            crate::daemon::notification::notify_error(
+                &config.notify,
+                &err.to_string(),
+                None,
+                config.capabilities.network_webhooks,
+            );
             return;
         }
 

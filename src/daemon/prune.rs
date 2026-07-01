@@ -41,19 +41,18 @@ pub async fn prune_analysis_artifacts(repo_path: &Path, retention_days: u32) -> 
 
         match tokio::fs::read_to_string(&path).await {
             Ok(content) => {
-                let should_delete = if let Ok(artifact) =
-                    serde_json::from_str::<serde_json::Value>(&content)
-                {
-                    if let Some(ended_at) = artifact.get("ended_at").and_then(|v| v.as_str()) {
-                        chrono::DateTime::parse_from_rfc3339(ended_at)
-                            .map(|dt| dt.with_timezone(&chrono::Utc) <= cutoff)
-                            .unwrap_or(true)
+                let should_delete =
+                    if let Ok(artifact) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let Some(ended_at) = artifact.get("ended_at").and_then(|v| v.as_str()) {
+                            chrono::DateTime::parse_from_rfc3339(ended_at)
+                                .map(|dt| dt.with_timezone(&chrono::Utc) <= cutoff)
+                                .unwrap_or(true)
+                        } else {
+                            true // missing ended_at → delete
+                        }
                     } else {
-                        true // missing ended_at → delete
-                    }
-                } else {
-                    true // unparseable → delete
-                };
+                        true // unparseable → delete
+                    };
 
                 if should_delete {
                     if tokio::fs::remove_file(&path).await.is_ok() {
@@ -87,20 +86,14 @@ mod tests {
         let old = Utc::now() - chrono::Duration::days(10);
         std::fs::write(
             analysis_dir.join("old.json"),
-            format!(
-                r#"{{"ended_at":"{}"}}"#,
-                old.to_rfc3339()
-            ),
+            format!(r#"{{"ended_at":"{}"}}"#, old.to_rfc3339()),
         )
         .unwrap();
 
         let recent = Utc::now() - chrono::Duration::days(1);
         std::fs::write(
             analysis_dir.join("recent.json"),
-            format!(
-                r#"{{"ended_at":"{}"}}"#,
-                recent.to_rfc3339()
-            ),
+            format!(r#"{{"ended_at":"{}"}}"#, recent.to_rfc3339()),
         )
         .unwrap();
 

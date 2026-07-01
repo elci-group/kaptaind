@@ -69,6 +69,8 @@ pub struct ClusterEngine {
     min_window: chrono::Duration,
     max_window: chrono::Duration,
     burst_threshold: usize,
+    /// Maximum number of events/paths before flushing (0 = disabled).
+    max_paths: usize,
 }
 
 impl ClusterEngine {
@@ -83,6 +85,7 @@ impl ClusterEngine {
             min_window: chrono::Duration::seconds(2),
             max_window: chrono::Duration::seconds(30),
             burst_threshold: 10,
+            max_paths: 0,
         }
     }
 
@@ -97,6 +100,7 @@ impl ClusterEngine {
             min_window: chrono::Duration::seconds(config.min_window_secs as i64),
             max_window: chrono::Duration::seconds(config.max_window_secs as i64),
             burst_threshold: config.burst_threshold,
+            max_paths: config.max_paths,
         }
     }
 
@@ -130,6 +134,20 @@ impl ClusterEngine {
         }
     }
 
+    /// Number of unique paths in the current cluster.
+    fn current_path_count(&self) -> usize {
+        self.current
+            .as_ref()
+            .map(|c| {
+                c.events
+                    .iter()
+                    .flat_map(|e| e.paths.iter())
+                    .collect::<std::collections::HashSet<_>>()
+                    .len()
+            })
+            .unwrap_or(0)
+    }
+
     pub fn ingest(&mut self, event: FsEvent) -> Option<Cluster> {
         let now = event.timestamp;
         let window = self.effective_window();
@@ -144,6 +162,12 @@ impl ClusterEngine {
                 if should_merge {
                     cluster.add_event(event);
                     self.last_event = Some(now);
+
+                    if self.max_paths > 0 && self.current_path_count() >= self.max_paths {
+                        self.last_event = None;
+                        return self.current.take();
+                    }
+
                     None
                 } else {
                     let finished = self.current.take();
@@ -200,6 +224,38 @@ mod tests {
         let emitted = engine.ingest(second).expect("expected previous cluster");
         assert_eq!(emitted.events.len(), 1);
         assert!(engine.flush().is_some());
+    }
+
+    #[test]
+    fn flushes_cluster_when_max_paths_reached() {
+        let mut engine = ClusterEngine::new(Duration::from_secs(60));
+        engine.max_paths = 3;
+
+        let base = Utc::now();
+        assert!(engine.ingest(event("src/a.rs", base)).is_none());
+        assert!(engine
+            .ingest(event("src/b.rs", base + ChronoDuration::milliseconds(100)))
+            .is_none());
+        let flushed = engine.ingest(event("src/c.rs", base + ChronoDuration::milliseconds(200)));
+        assert!(flushed.is_some());
+        assert_eq!(flushed.unwrap().events.len(), 3);
+        assert!(engine.flush().is_none());
+    }
+
+    #[test]
+    fn max_paths_zero_does_not_auto_flush() {
+        let mut engine = ClusterEngine::new(Duration::from_secs(60));
+        engine.max_paths = 0;
+
+        let base = Utc::now();
+        assert!(engine.ingest(event("src/a.rs", base)).is_none());
+        assert!(engine
+            .ingest(event("src/b.rs", base + ChronoDuration::milliseconds(100)))
+            .is_none());
+        assert!(engine
+            .ingest(event("src/c.rs", base + ChronoDuration::milliseconds(200)))
+            .is_none());
+        assert_eq!(engine.flush().unwrap().events.len(), 3);
     }
 
     fn event(path: &str, timestamp: chrono::DateTime<Utc>) -> FsEvent {

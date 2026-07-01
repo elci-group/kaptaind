@@ -1124,6 +1124,8 @@ ignore_file = ".kaptainignore"
 
 [cluster]
 window = 5
+# max_paths = 0      # flush cluster after N events (0 = disabled)
+# flush_after = 10   # idle timeout in seconds (defaults to window)
 
 [weights]
 {weights}

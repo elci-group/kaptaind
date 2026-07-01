@@ -43,37 +43,26 @@ pub async fn push(
             .kill_on_drop(true)
             .spawn()
         {
-            Ok(mut child) => {
-                match child.wait().await {
-                    Ok(status) => {
-                        if status.success() {
-                            return Ok(());
-                        }
-                        last_error = Some(anyhow::anyhow!(
-                            "Git push failed with status: {}",
-                            status
-                        ));
+            Ok(mut child) => match child.wait().await {
+                Ok(status) => {
+                    if status.success() {
+                        return Ok(());
                     }
-                    Err(e) => {
-                        last_error = Some(anyhow::anyhow!(
-                            "Failed to wait for git push: {}",
-                            e
-                        ));
-                    }
+                    last_error = Some(anyhow::anyhow!("Git push failed with status: {}", status));
                 }
-            }
+                Err(e) => {
+                    last_error = Some(anyhow::anyhow!("Failed to wait for git push: {}", e));
+                }
+            },
             Err(e) => {
-                last_error = Some(anyhow::anyhow!(
-                    "Failed to execute git command: {}",
-                    e
-                ));
+                last_error = Some(anyhow::anyhow!("Failed to execute git command: {}", e));
             }
         }
 
         if attempt < retry.max_attempts {
             let delay_ms = (retry.initial_delay_ms as f64
                 * retry.backoff_multiplier.powi((attempt - 1) as i32))
-                .min(retry.max_delay_ms as f64) as u64;
+            .min(retry.max_delay_ms as f64) as u64;
             tracing::debug!(
                 "push attempt {} failed, retrying in {}ms",
                 attempt,

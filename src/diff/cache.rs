@@ -136,7 +136,8 @@ impl AstCache {
     pub fn prune(&mut self, repo_root: &Path) {
         let before = self.entries.len();
         self.entries.retain(|path, _| repo_root.join(path).exists());
-        self.access_order.retain(|path| self.entries.contains_key(path));
+        self.access_order
+            .retain(|path| self.entries.contains_key(path));
         while self.entries.len() > self.capacity {
             if let Some(oldest) = self.access_order.pop_front() {
                 self.entries.remove(&oldest);

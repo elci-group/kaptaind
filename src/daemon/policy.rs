@@ -160,7 +160,10 @@ mod tests {
             .args(["commit", "-m", "init"])
             .output();
 
-        assert!(is_branch_protected(dir.path(), &["main".to_string(), "master".to_string()]));
+        assert!(is_branch_protected(
+            dir.path(),
+            &["main".to_string(), "master".to_string()]
+        ));
         assert!(!is_branch_protected(dir.path(), &["develop".to_string()]));
     }
 

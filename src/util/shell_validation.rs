@@ -24,7 +24,10 @@ pub fn validate_shell_command(cmd: &str) -> Result<(), ShellValidationError> {
         });
     }
     // Reject dangerous redirections to system paths
-    let dangerous_redirects = ["> /etc", "> /usr", "> /bin", "> /sbin", "> /lib", "< /etc", "< /usr", "< /bin", "< /sbin", "< /lib"];
+    let dangerous_redirects = [
+        "> /etc", "> /usr", "> /bin", "> /sbin", "> /lib", "< /etc", "< /usr", "< /bin", "< /sbin",
+        "< /lib",
+    ];
     for pat in &dangerous_redirects {
         if cmd.contains(pat) {
             return Err(ShellValidationError {

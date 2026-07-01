@@ -77,7 +77,12 @@ pub fn notify_commit(
 }
 
 /// Send an error notification through all configured channels.
-pub fn notify_error(config: &NotifyConfig, error: &str, context: Option<&str>, webhook_enabled: bool) {
+pub fn notify_error(
+    config: &NotifyConfig,
+    error: &str,
+    context: Option<&str>,
+    webhook_enabled: bool,
+) {
     // Shell command hook
     if let Some(cmd) = &config.on_error {
         let _ = std::process::Command::new("sh")

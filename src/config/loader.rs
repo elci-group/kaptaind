@@ -199,6 +199,12 @@ pub struct ClusterConfig {
     /// Number of events in a window before it is classified as a burst.
     #[serde(default = "default_burst_threshold")]
     pub burst_threshold: usize,
+    /// Maximum number of events/paths in a cluster before flushing (0 = disabled).
+    #[serde(default = "default_max_paths")]
+    pub max_paths: usize,
+    /// Idle timeout after which a cluster is flushed (defaults to `window`).
+    #[serde(default, with = "duration_secs_option")]
+    pub flush_after: Option<Duration>,
 }
 
 fn default_min_window_secs() -> u64 {
@@ -209,6 +215,9 @@ fn default_max_window_secs() -> u64 {
 }
 fn default_burst_threshold() -> usize {
     10
+}
+fn default_max_paths() -> usize {
+    0
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -667,6 +676,8 @@ impl Default for Config {
                 min_window_secs: default_min_window_secs(),
                 max_window_secs: default_max_window_secs(),
                 burst_threshold: default_burst_threshold(),
+                max_paths: default_max_paths(),
+                flush_after: None,
             },
             weights: crate::weight::WeightConfig {
                 s: 0.35,
@@ -843,10 +854,24 @@ mod duration_secs {
     }
 }
 
+mod duration_secs_option {
+    use serde::{Deserialize, Deserializer};
+    use std::time::Duration;
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<Option<Duration>, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let secs = Option::<u64>::deserialize(deserializer)?;
+        Ok(secs.map(Duration::from_secs))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{finalize_config, Config};
     use std::path::PathBuf;
+    use std::time::Duration;
 
     #[test]
     fn finalizes_relative_paths_against_repo_root() {
@@ -994,5 +1019,43 @@ mod tests {
         assert_eq!(config.inference.consensus_models.len(), 3);
         assert!((config.inference.consensus_threshold - 0.7).abs() < f64::EPSILON);
         assert_eq!(config.inference.consensus_min_agreement, 3);
+    }
+
+    #[test]
+    fn cluster_defaults_disable_dynamic_clustering() {
+        let config = Config::default();
+        assert_eq!(config.cluster.max_paths, 0);
+        assert!(config.cluster.flush_after.is_none());
+    }
+
+    #[test]
+    fn cluster_deserializes_dynamic_options() {
+        let toml_str = r#"
+            repo_path = "."
+            [watch]
+            path = "."
+            recursive = true
+            ignore_file = ".kaptainignore"
+            [cluster]
+            window = 5
+            max_paths = 25
+            flush_after = 15
+            [weights]
+            s = 0.35
+            a = 0.30
+            d = 0.20
+            r = 0.15
+            [push]
+            enabled = false
+            branch = "main"
+            [ratelimit]
+            min_commit_interval = 10
+            [test]
+            command = "cargo test"
+            required = true
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.cluster.max_paths, 25);
+        assert_eq!(config.cluster.flush_after, Some(Duration::from_secs(15)));
     }
 }
