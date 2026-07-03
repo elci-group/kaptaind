@@ -27,18 +27,7 @@ impl AdapterRegistry {
 
     pub fn default_registry() -> Self {
         let mut registry = Self::new();
-        registry.register(Box::new(super::heuristics::RustAdapter));
-        registry.register(Box::new(super::heuristics::TypeScriptAdapter));
-        registry.register(Box::new(super::heuristics::JavaScriptAdapter));
-        registry.register(Box::new(super::heuristics::PythonAdapter));
-        registry.register(Box::new(super::heuristics::GoAdapter));
-        registry.register(Box::new(super::heuristics::SwiftAdapter));
-        registry.register(Box::new(super::heuristics::KotlinAdapter));
-        registry.register(Box::new(super::heuristics::VueAdapter));
-        registry.register(Box::new(super::heuristics::SvelteAdapter));
-        registry.register(Box::new(super::heuristics::AstroAdapter));
-        registry.register(Box::new(super::heuristics::ScssAdapter));
-        registry.register(Box::new(super::heuristics::HtmlCssAdapter));
+        super::adapters::register_builtin_adapters(&mut registry);
         registry
     }
 

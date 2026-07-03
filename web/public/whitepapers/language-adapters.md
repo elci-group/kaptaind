@@ -14,7 +14,7 @@ Two test strategies were employed:
 2. **Symbol extraction**: We wrote source files containing public symbols, parsed them with the Rust and TypeScript adapters, and verified that `extract_api` returned the expected public symbols.
 
 ## Test Implementation
-Source: `tests/claims_validation.rs` and `src/diff/lang/heuristics.rs`
+Source: `tests/claims_validation.rs` and `src/diff/lang/adapters/`
 
 ```rust
 fn claim_twelve_language_adapters_in_registry() {

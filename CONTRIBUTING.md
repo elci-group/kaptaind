@@ -59,7 +59,7 @@ cargo test rust_adapter -- --nocapture
 Run tests in a specific module:
 
 ```bash
-cargo test -p kaptaind --lib diff::lang::heuristics
+cargo test -p kaptaind --lib diff::lang::adapters
 ```
 
 ### Building and Testing Locally
@@ -110,7 +110,7 @@ To add support for a new language:
 
 ### 1. Add the Adapter Implementation
 
-Edit `src/diff/lang/heuristics.rs` and create a new struct:
+Create a new file at `src/diff/lang/adapters/my_language.rs` and add a struct:
 
 ```rust
 pub struct MyLanguageAdapter;
@@ -139,17 +139,20 @@ impl LanguageAdapter for MyLanguageAdapter {
 
 ### 2. Register the Adapter
 
-Edit `src/diff/lang/registry.rs` and add to the `resolve()` function:
+Edit `src/diff/lang/adapters/mod.rs` and add your adapter to `register_builtin_adapters`:
 
 ```rust
-if path.extension().map_or(false, |ext| ext == "my_ext") {
-    return Some(Box::new(MyLanguageAdapter));
+pub use my_language::MyLanguageAdapter;
+
+pub fn register_builtin_adapters(registry: &mut AdapterRegistry) {
+    // ... existing adapters ...
+    registry.register(Box::new(MyLanguageAdapter));
 }
 ```
 
 ### 3. Add Tests
 
-In `src/diff/lang/heuristics.rs`, add unit tests for your adapter:
+In `src/diff/lang/adapters/my_language.rs`, add unit tests for your adapter:
 
 ```rust
 #[cfg(test)]

@@ -325,7 +325,7 @@ pub struct NewStruct;
     )
     .unwrap();
 
-    let adapter = kaptaind::diff::lang::heuristics::RustAdapter;
+    let adapter = kaptaind::diff::lang::adapters::RustAdapter;
     let ast = adapter.parse_ast(&file).expect("Rust adapter should parse");
     let api = adapter.extract_api(&ast);
 
@@ -350,7 +350,7 @@ export const baz = 1;
     )
     .unwrap();
 
-    let adapter = kaptaind::diff::lang::heuristics::TypeScriptAdapter;
+    let adapter = kaptaind::diff::lang::adapters::TypeScriptAdapter;
     let ast = adapter
         .parse_ast(&file)
         .expect("TypeScript adapter should parse");

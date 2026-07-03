@@ -2,40 +2,26 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Language {
-    Rust,
-    Go,
-    TypeScript,
-    JavaScript,
-    Python,
-    HtmlCss,
-    Swift,
-    Kotlin,
-    Vue,
-    Svelte,
-    Astro,
-    Scss,
-    /// Handled by an external plugin adapter (JSON stdio protocol).
-    Plugin,
-}
+pub struct Language(pub &'static str);
 
 impl Language {
+    pub const RUST: Language = Language("rust");
+    pub const GO: Language = Language("go");
+    pub const TYPESCRIPT: Language = Language("typescript");
+    pub const JAVASCRIPT: Language = Language("javascript");
+    pub const PYTHON: Language = Language("python");
+    pub const HTML_CSS: Language = Language("htmlcss");
+    pub const SWIFT: Language = Language("swift");
+    pub const KOTLIN: Language = Language("kotlin");
+    pub const VUE: Language = Language("vue");
+    pub const SVELTE: Language = Language("svelte");
+    pub const ASTRO: Language = Language("astro");
+    pub const SCSS: Language = Language("scss");
+    /// Handled by an external plugin adapter (JSON stdio protocol).
+    pub const PLUGIN: Language = Language("plugin");
+
     pub fn as_str(&self) -> &'static str {
-        match self {
-            Language::Rust => "rust",
-            Language::Go => "go",
-            Language::TypeScript => "typescript",
-            Language::JavaScript => "javascript",
-            Language::Python => "python",
-            Language::HtmlCss => "htmlcss",
-            Language::Swift => "swift",
-            Language::Kotlin => "kotlin",
-            Language::Vue => "vue",
-            Language::Svelte => "svelte",
-            Language::Astro => "astro",
-            Language::Scss => "scss",
-            Language::Plugin => "plugin",
-        }
+        self.0
     }
 }
 

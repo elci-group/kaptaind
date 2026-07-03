@@ -54,7 +54,7 @@ impl LanguageAdapter for PluginAdapter {
     }
 
     fn language(&self) -> Language {
-        Language::Plugin
+        Language::PLUGIN
     }
 
     fn detect_files(&self, paths: &[PathBuf]) -> Vec<PathBuf> {

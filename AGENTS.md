@@ -22,9 +22,9 @@
   - `api.rs` — dependency file detection, runtime/web/mobile config detection.
   - `bundle.rs` — opt-in bundle size scoring.
   - `lang/` — language adapter framework:
-    - `adapter.rs` — `Language` enum, `LanguageAdapter` trait, `Symbol`, `AstRepresentation`, `ApiSurface`, `AstDiff`.
+    - `adapter.rs` — `Language` newtype, `LanguageAdapter` trait, `Symbol`, `AstRepresentation`, `ApiSurface`, `AstDiff`.
     - `registry.rs` — `AdapterRegistry` resolves file paths to language adapters.
-    - `heuristics.rs` — concrete adapters: Rust, Go, Swift, Kotlin, TypeScript, JavaScript, Vue, Svelte, Astro, SCSS, HTML/CSS, Python.
+    - `adapters/` — one module per concrete adapter (Rust, Go, Swift, Kotlin, TypeScript, JavaScript, Vue, Svelte, Astro, SCSS, HTML/CSS, Python) plus shared helpers in `common.rs`.
 - `src/weight/` — weighted score calculation (`s*structural + a*api + d*deps + r*runtime + b*bundle`).
 - `src/version/` — semantic bump decision and `semver::Version` mutation.
 - `src/commit/` — git commit orchestration with configurable staging (all/cluster/pattern modes + exclude patterns).
@@ -82,7 +82,7 @@
 ## Scoring and versioning behavior
 - `src/diff/text.rs` computes structural score: `0.5*event_density + 0.35*path_spread + 0.15*churn`.
 - `src/diff/ast.rs` uses the `AdapterRegistry` to resolve language-specific adapters. If no adapter matches, falls back to line-based signature scanning.
-- Language adapters (in `src/diff/lang/heuristics.rs`) detect public API symbols for: Rust, Go, Swift, Kotlin, TypeScript, JavaScript, Vue, Svelte, Astro, SCSS/Sass/Less, HTML/CSS, Python.
+- Language adapters (in `src/diff/lang/adapters/`) detect public API symbols for: Rust, Go, Swift, Kotlin, TypeScript, JavaScript, Vue, Svelte, Astro, SCSS/Sass/Less, HTML/CSS, Python.
 - Scores are normalized by language confidence: Rust/Go/Swift/Kotlin=1.0, TypeScript=0.9, Vue/Svelte/Astro=0.85, Python=0.8, JavaScript=0.7, SCSS=0.5, HTML/CSS=0.4.
 - API surface detection also covers: paths containing `/api/`, `/public/`, `.proto`, `.graphql`, `openapi.yaml/yml`; framework route files (`app/`, `pages/`, `routes/`); design token files (`tailwind.config`, `theme`, `tokens`); CSS custom properties.
 - `src/diff/api.rs` parses dependency manifests from `Cargo.toml`, `package.json`, `requirements.txt`. Recognizes lock files: `Cargo.lock`, `package-lock.json`, `pnpm-lock.yaml`, `yarn.lock`, `bun.lockb`, `poetry.lock`, `Podfile`, `Podfile.lock`, `Package.resolved`, `build.gradle(.kts)`, `settings.gradle(.kts)`, `gradle.lockfile`.
@@ -122,7 +122,7 @@
   - `src/diff/api.rs` — dependency/runtime detection, web/mobile configs
   - `src/diff/ast.rs` — signature detection, route files, design tokens
   - `src/diff/bundle.rs` — bundle scoring, backward compat
-  - `src/diff/lang/heuristics.rs` — all 12 language adapters
+  - `src/diff/lang/adapters/` — all 12 language adapters
   - `src/version/semver.rs`
   - `src/daemon/scheduler.rs`
 - Integration tests in `tests/cli_integration.rs` cover: `status`, `log`, `analyze`, `init` commands.

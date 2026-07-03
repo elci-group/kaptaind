@@ -357,14 +357,14 @@ This means **breaking changes in Rust are weighted more heavily than breaking ch
 
 To add a new language adapter:
 
-1. Create a new adapter in `src/diff/lang/heuristics.rs`
+1. Create a new adapter in `src/diff/lang/adapters/my_language.rs`
 2. Implement the `LanguageAdapter` trait:
    ```rust
    pub trait LanguageAdapter {
        fn parse_ast(&self, path: &Path) -> Result<AstRepresentation>;
    }
    ```
-3. Register in `src/diff/lang/registry.rs`
+3. Register in `src/diff/lang/adapters/mod.rs`
 4. Add tests for your adapter
 5. Update this matrix with the confidence level and detection capabilities
 
