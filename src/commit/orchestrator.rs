@@ -55,9 +55,31 @@ pub fn commit_with_staging(
 
 fn add_paths(repo_path: &Path, paths: &[PathBuf]) -> anyhow::Result<()> {
     for path in paths {
+        let full_path = repo_path.join(path);
+        // Skip transient paths that no longer exist (e.g. git tmp objects).
+        if !full_path.exists() {
+            continue;
+        }
+        // Skip paths ignored by git (e.g. build outputs, caches, .git internals).
+        if is_ignored(repo_path, path) {
+            continue;
+        }
         repo::run_git(repo_path, &["add", "--", &path.to_string_lossy()])?;
     }
     Ok(())
+}
+
+/// Returns true if git considers the path ignored.
+/// `git check-ignore` exits 0 for ignored, 1 for not ignored, 128 on error.
+fn is_ignored(repo_path: &Path, path: &Path) -> bool {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(["check-ignore", "-q", "--"])
+        .arg(path)
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 fn unstage_excluded(repo_path: &Path, excludes: &[String]) -> anyhow::Result<()> {
@@ -167,6 +189,61 @@ mod tests {
 
         let err = commit_with_staging(repo.path(), "nothing", &staging, &[]).unwrap_err();
         assert!(err.to_string().contains("git commit"));
+    }
+
+    #[test]
+    fn cluster_mode_skips_ignored_paths() {
+        let repo = TestRepo::new();
+        repo.write(".gitignore", "ignored/\n");
+        repo.run(&["add", ".gitignore"]);
+        repo.run(&["commit", "-m", "add gitignore"]);
+
+        repo.write("src/a.rs", "changed");
+        repo.write("ignored/b.txt", "changed");
+
+        let staging = StagingConfig {
+            mode: StagingMode::Cluster,
+            include: vec![],
+            exclude: vec![],
+        };
+
+        commit_with_staging(
+            repo.path(),
+            "cluster mode skips ignored",
+            &staging,
+            &[
+                PathBuf::from("src/a.rs"),
+                PathBuf::from("ignored/b.txt"),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(repo.last_commit_files(), vec!["src/a.rs"]);
+    }
+
+    #[test]
+    fn cluster_mode_skips_missing_paths() {
+        let repo = TestRepo::new();
+        repo.write("src/a.rs", "changed");
+
+        let staging = StagingConfig {
+            mode: StagingMode::Cluster,
+            include: vec![],
+            exclude: vec![],
+        };
+
+        commit_with_staging(
+            repo.path(),
+            "cluster mode skips missing",
+            &staging,
+            &[
+                PathBuf::from("src/a.rs"),
+                PathBuf::from("does/not/exist.tmp"),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(repo.last_commit_files(), vec!["src/a.rs"]);
     }
 
     struct TestRepo {
