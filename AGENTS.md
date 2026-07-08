@@ -1,62 +1,70 @@
 # AGENTS.md
 
+> Operator guide for working on `kaptaind`. Read this before changing core behavior, adding a language adapter, or shipping a release.
+
 ## Project overview
-- `kaptaind` is a Rust application (`Cargo.toml`, edition 2021) that watches a repository for filesystem changes, clusters events, analyzes the change set, computes a semantic-version bump, writes `VERSION`, persists analysis artifacts, creates a git commit, and optionally pushes.
+
+`kaptaind` is a Rust application (`Cargo.toml`, edition 2021) that watches a repository for filesystem changes, clusters events, analyzes the change set, computes a semantic-version bump, writes `VERSION`, persists analysis artifacts, creates a git commit, and optionally pushes.
+
 - Entry point: `src/main.rs` initializes tracing, loads config, then starts the daemon runtime.
+- CLI entry point: `src/cli/main.rs` runs `kaptaind-cli` subcommands.
 
 ## Essential commands
+
 - `cargo run` — run the daemon from the repository root.
 - `cargo test` — run the unit and async tests embedded in module files.
 - `cargo build` — build the binary.
 - `cargo run --bin kaptaind-cli -- ship plan` — preview a manual release without side effects.
+- `cargo fmt && cargo clippy --all-targets -- -D warnings` — required before committing.
 
 ## Repository layout
-- `src/main.rs` — startup wiring, daemonization.
-- `src/cli/main.rs` — CLI binary (`kaptaind-cli`) with `status`, `log`, `analyze`, `init`, `aoc`, and `ship` subcommands.
-- `src/config/` — config loading, path normalization, staging/bundle/notify config structs.
-- `src/watcher/` — filesystem event types and notify-based watcher thread.
-- `src/daemon/` — async runtime, scheduler loop, telemetry tracking, health/metrics server (JSON + Prometheus + SSE events), storage management (deckhand), HA leader election (shark), notifications, and audit logging.
-- `src/cluster/` — event clustering by time window.
-- `src/diff/` — scoring across five dimensions:
-  - `text.rs` — structural scoring (event density, path spread, churn).
-  - `ast.rs` — API surface detection with fallback line scanning.
-  - `api.rs` — dependency file detection, runtime/web/mobile config detection.
-  - `bundle.rs` — opt-in bundle size scoring.
-  - `lang/` — language adapter framework:
-    - `adapter.rs` — `Language` newtype, `LanguageAdapter` trait, `Symbol`, `AstRepresentation`, `ApiSurface`, `AstDiff`.
-    - `registry.rs` — `AdapterRegistry` resolves file paths to language adapters.
-    - `adapters/` — one module per concrete adapter (Rust, Go, Swift, Kotlin, Java, TypeScript, JavaScript, Vue, Svelte, Astro, SCSS, HTML/CSS, Python, Ruby, Elixir, PHP, .NET/C#, Dart, Lua, Scala, Clojure, Haskell, Julia, R, Perl, C/C++) plus shared helpers in `common.rs`.
-- `src/weight/` — weighted score calculation (`s*structural + a*api + d*deps + r*runtime + b*bundle`).
-- `src/version/` — semantic bump decision and `semver::Version` mutation.
-- `src/commit/` — git commit orchestration with configurable staging and optional GPG-signed commits.
-- `src/push/` — git push orchestration with retry, safety checks, and required-CI enforcement.
-- `src/git/` — thin repository wrapper.
-- `src/aoc/` — Aim of Change sessions, traces, agent interception, manifests.
-- `src/qualification/` — release qualification gates (stability, streak, cooldown, diff spike).
-- `src/stability/` — per-commit stability scoring and flaky-test detection.
-- `src/release/` — post-commit release pipeline (build, package, distribute, ship stable/nightly, GPG-signed tags/artifacts, SPDX SBOMs, SLSA provenance).
-- `src/rbac/` — role-based access control for CLI commands and daemon startup.
-- `src/schedule/` — cron scheduling helpers for daemon-driven automated releases.
-- `src/trawler/` — intelligent project discovery and bulk initialization.
-- `src/vacs/` — Visual Asset Channel Saturation (change-driven diagrams/charts).
-- `src/angler/` — 🎣 Hook and selective capture system with four capabilities:
-  - `config.rs` — Angler configuration (git hooks, webhooks, selective capture, bait plugins).
-  - `git_hooks.rs` — Client-side git hook management (pre-commit, post-commit, pre-push, etc.).
-  - `webhooks.rs` — Enhanced webhook system with HMAC signatures, retry logic, rate limiting.
-  - `selective.rs` — Pattern-based change filtering with actions (Pass, Block, Quarantine, Tag, Webhook, Execute).
-  - `bait.rs` — External plugin system for lifecycle event hooks.
-  - `mod.rs` — Main AnglerSystem that coordinates all four capabilities.
-- `tests/cli_integration.rs` — integration tests for CLI commands.
-- `web/` — Kaptaind Pro SaaS website (Next.js + Tailwind + NextAuth + Prisma).
+
+| Path | Responsibility |
+|------|----------------|
+| `src/main.rs` | Daemon startup wiring, `--config` handling, tracing init. |
+| `src/cli/main.rs` | CLI binary (`kaptaind-cli`): `status`, `log`, `analyze`, `init`, `aoc`, `ship`, `trawl`. |
+| `src/config/` | Config loading, path normalization, defaults, structs for staging/bundle/notify/etc. |
+| `src/watcher/` | Filesystem event types and notify-based watcher thread. |
+| `src/daemon/` | Async runtime, scheduler loop, telemetry, health/metrics server, storage hygiene (`deckhand`), HA leadership (`shark`), notifications, audit logging. |
+| `src/cluster/` | Event clustering by time window. |
+| `src/diff/` | Scoring across five dimensions: structural (`text.rs`), API surface (`ast.rs`), dependencies/runtime (`api.rs`), bundle size (`bundle.rs`), and the language adapter framework (`lang/`). |
+| `src/diff/lang/` | `adapter.rs` (traits/representation), `registry.rs` (path→adapter resolution), `adapters/` (concrete adapters), `common.rs` (shared helpers). |
+| `src/weight/` | Weighted score calculation: `s*structural + a*api + d*deps + r*runtime + b*bundle`. |
+| `src/version/` | Semantic bump decision and `semver::Version` mutation. |
+| `src/commit/` | Git commit orchestration with configurable staging and optional GPG-signed commits. |
+| `src/push/` | Git push orchestration with retry, safety checks, and required-CI enforcement. |
+| `src/git/` | Thin repository wrapper around `git2`. |
+| `src/aoc/` | Aim of Change sessions, traces, agent interception, manifests. |
+| `src/qualification/` | Release qualification gates (stability, streak, cooldown, diff spike). |
+| `src/stability/` | Per-commit stability scoring and flaky-test detection. |
+| `src/release/` | Post-commit release pipeline: build, package, distribute, ship stable/nightly, GPG-signed tags/artifacts, SPDX SBOMs, SLSA provenance. |
+| `src/rbac/` | Role-based access control for CLI commands and daemon startup. |
+| `src/schedule/` | Cron scheduling helpers for daemon-driven automated releases. |
+| `src/trawler/` | Intelligent project discovery and bulk initialization. |
+| `src/vacs/` | Visual Asset Channel Saturation (change-driven diagrams/charts). |
+| `src/angler/` | Hook and selective capture system: git hooks, webhooks, selective capture, bait plugins. |
+| `tests/cli_integration.rs` | Integration tests for CLI commands. |
+| `web/` | Kaptaind Pro SaaS website (Next.js + Tailwind + NextAuth + Prisma). |
 
 ## Runtime flow
-1. `config::loader::load()` reads `kaptaind.toml` from the current working directory, or falls back to defaults. Includes `StagingConfig`, `BundleConfig`, `NotifyConfig`.
-2. `daemon::runtime::start()` creates a Tokio MPSC channel, starts the watcher thread, and spawns the scheduler task.
-3. `watcher::fs::start()` converts `notify` events into `FsEvent` values and sends them across the channel.
-4. `daemon::scheduler::run()` batches events with `ClusterEngine`, filters ignored paths, rate-limits commits, runs the configured test hook, analyzes the diff (structural + API + deps + runtime + optional bundle), computes weight + bump, writes `VERSION` (+ updates `Cargo.toml`), stores an analysis artifact, commits with configurable staging, optionally pushes, sends notifications, writes AoC traces if a session is active, auto-prunes old artifacts, invokes Angler hooks (pre-commit, post-commit, webhooks, selective capture checks, and bait plugins), evaluates release qualification, and—when `[ship.auto_nightly]`/`[ship.auto_stable]` are enabled—runs automated ship releases on their cron schedules while emitting nautical release/qualification/pulse notifications.
+
+1. **Startup**: `config::loader::load()` reads `kaptaind.toml` (or `--config` path), then `finalize_config()` normalizes all paths relative to the process working directory.
+2. **Watcher spawn**: `daemon::runtime::start()` creates a Tokio MPSC channel and starts the OS watcher thread via `watcher::fs::start()`.
+3. **Event ingestion**: `watcher::fs::start()` converts `notify` events into `FsEvent` values and sends them across the channel. The scheduler receives them on the async runtime.
+4. **Clustering**: `daemon::scheduler::run()` batches events with `ClusterEngine`. Events are grouped while the time delta is strictly less than the configured window.
+5. **Filtering & rate limits**: ignored paths are dropped, and commits are rate-limited by `min_commit_interval`.
+6. **Validation**: the configured test hook runs. A passing hook reduces runtime weight to `0.1`; a failing hook forces it to `1.0`.
+7. **Diff analysis**: structural + API + dependency + runtime + optional bundle scoring are computed.
+8. **Versioning**: `weight::calculator` combines scores, then `version::semver` decides `Major`/`Minor`/`Patch`/`None` and writes `VERSION` (+ updates `Cargo.toml` if present).
+9. **Persistence**: analysis artifacts, telemetry, traces, and bundle state are written under `.kaptaind/`.
+10. **Commit & push**: the scheduler stages files per `StagingConfig`, creates the commit, and pushes if enabled.
+11. **Lifecycle hooks**: Angler hooks (pre-commit, post-commit, webhooks, selective capture, bait plugins) run at the appropriate points.
+12. **Release automation**: qualification gates are evaluated, and—when `[ship.auto_nightly]`/`[ship.auto_stable]` are enabled—automated ship releases run on their cron schedules.
+13. **Notifications**: nautical-themed commit/push/error/start/stop/release/qualification/pulse notifications are emitted via shell hooks, webhooks, and the health server's SSE endpoint.
 
 ## Configuration and on-disk files
-- Main config file: `kaptaind.toml` in the current working directory.
+
+- Main config file: `kaptaind.toml` in the current working directory, or the path passed via `--config`.
 - If no config file exists, defaults come from `src/config/loader.rs`.
 - Important observed defaults:
   - watch path defaults to the current directory.
@@ -80,6 +88,7 @@
   - `.kaptaind/aoc/manifests/<id>.json` — shipped AoC session summaries.
 
 ## Code patterns and conventions
+
 - Module pattern is simple and explicit: each `mod.rs` re-exports the module’s public entry points.
 - Error handling uses `anyhow` for application-level fallible boundaries and `git2::Error` where git operations are returned directly.
 - Logging uses `tracing`; startup uses `tracing_subscriber::fmt::init()`.
@@ -87,7 +96,42 @@
 - Async work is confined to the daemon/scheduler path; filesystem watching is done on a dedicated OS thread and bridged into Tokio via `blocking_send`.
 - Tests live inline in the same source files under `#[cfg(test)]`.
 
+## Common tasks
+
+### Add a new language adapter
+
+1. Create `src/diff/lang/adapters/<lang>.rs` implementing `LanguageAdapter`.
+2. Register it in `src/diff/lang/registry.rs`.
+3. Add unit tests in the adapter module covering public symbols, route files, and design tokens.
+4. Run `cargo test` and `cargo clippy --all-targets -- -D warnings`.
+
+### Change version bump behavior
+
+1. Edit the rules in `src/version/semver.rs`.
+2. Update tests in the same file.
+3. Update `README.md` and `man/kaptaind.1.md` if thresholds or semantics change.
+
+### Add a notification event
+
+1. Add the event variant in `src/notify/` (or the relevant module).
+2. Update the shell/webhook renderers and the SSE payload format.
+3. Document environment variables in `README.md` under the Notifications section.
+
+### Ship a release manually
+
+```bash
+cargo run --bin kaptaind-cli -- ship plan   # dry run
+cargo run --bin kaptaind-cli -- ship run    # execute
+```
+
+### Debug the daemon
+
+```bash
+RUST_LOG=kaptaind=debug cargo run
+```
+
 ## Scoring and versioning behavior
+
 - `src/diff/text.rs` computes structural score: `0.5*event_density + 0.35*path_spread + 0.15*churn`.
 - `src/diff/ast.rs` uses the `AdapterRegistry` to resolve language-specific adapters. If no adapter matches, falls back to line-based signature scanning.
 - Language adapters (in `src/diff/lang/adapters/`) detect public API symbols for: Rust, Go, Swift, Kotlin, TypeScript, JavaScript, Vue, Svelte, Astro, SCSS/Sass/Less, HTML/CSS, Python.
@@ -104,6 +148,7 @@
   - otherwise => `None`
 
 ## Git behavior
+
 - Repo access goes through `git2`.
 - `commit::orchestrator` supports three staging modes via `StagingConfig`:
   - `all` (default): `index.add_all(["*"])` stages everything, then removes `exclude` patterns.
@@ -115,6 +160,7 @@
 - Pushes only happen when `config.push.enabled` is true; the code pushes `refs/heads/<branch>` to `origin`.
 
 ## Ignore and watcher behavior
+
 - Ignore rules are loaded from `.kaptainignore` relative to `repo_path` unless overridden in config.
 - Ignore file behavior is custom, not gitignore-compatible:
   - blank lines and `#` comments are ignored.
@@ -124,6 +170,7 @@
 - Watcher startup is synchronized with a readiness channel; startup failures are surfaced before returning from `watcher::fs::start()`.
 
 ## Testing approach
+
 - Unit tests are colocated in modules:
   - `src/cluster/engine.rs`
   - `src/config/loader.rs` — path normalization, staging config deserialization
@@ -139,6 +186,7 @@
 - The scheduler’s test hook runs commands with `sh -lc <command>` and sets the working directory to `repo_path`.
 
 ## Agent gotchas
+
 - Run commands from the repository root if you want config discovery to find `kaptaind.toml`.
 - `Config::default()` uses the process current directory at runtime; tests or tools that change cwd can affect defaults.
 - Required test hooks block commits on failure; optional hooks do not.
