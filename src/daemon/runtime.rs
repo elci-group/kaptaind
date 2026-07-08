@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::daemon::health::{start_health_server, DaemonEvent, HealthState, Metrics};
 use crate::daemon::notification::{notify_start, notify_stop};
+use crate::daemon::web::{start_web_server, WebState};
 use anyhow::Context;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -116,6 +117,17 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
         shark: shark_runtime.clone(),
     };
     tokio::spawn(start_health_server(config.health_port, health_state));
+
+    // Spawn optional WebUI endpoint
+    if config.web_port != 0 {
+        let web_state = WebState {
+            repo_path: config.repo_path.clone(),
+            metrics: metrics.clone(),
+            event_tx: event_tx.clone(),
+            version: env!("CARGO_PKG_VERSION").to_string(),
+        };
+        tokio::spawn(start_web_server(config.web_port, web_state));
+    }
 
     // Spawn scheduled pruning task
     let repo_path = config.repo_path.clone();

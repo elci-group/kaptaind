@@ -27,7 +27,8 @@ USAGE:\n  \
   kaptaind --daemon     Run as background daemon\n  \
   kaptaind --dock       View watched projects\n  \
   kaptaind --radar      View active projects and event rates\n  \
-  kaptaind --lanes      View service/model load breakdown\n\n\
+  kaptaind --lanes      View service/model load breakdown\n  \
+  kaptaind --web        Start the WebUI dashboard (default port 8080)\n\n\
 ENVIRONMENT:\n  \
   RUST_LOG              Set logging level (debug, info, warn, error)\n  \
   KAPTAIND_CONFIG       Path to kaptaind.toml (default: ./kaptaind.toml)\n\n\
@@ -95,6 +96,19 @@ struct Cli {
     #[arg(long, value_name = "PORT")]
     health_port: Option<u16>,
 
+    /// 🌐 Start the WebUI server alongside the daemon runtime
+    ///
+    /// Serves a single-page dashboard on the configured web port (default 8080)
+    /// with real-time telemetry, commit timelines, 3D graphs, and config editing.
+    #[arg(short = 'w', long)]
+    web: bool,
+
+    /// 🌐 Override the WebUI server port
+    ///
+    /// Must be different from the health server port.
+    #[arg(long, value_name = "PORT")]
+    web_port: Option<u16>,
+
     /// 📁 Path to the kaptaind configuration file
     ///
     /// Overrides the default search path (./kaptaind.toml) and the
@@ -127,6 +141,16 @@ fn main() -> anyhow::Result<()> {
     }
     if let Some(port) = cli.health_port {
         config.health_port = port;
+    }
+    if cli.web || cli.web_port.is_some() {
+        config.web_port = cli.web_port.unwrap_or(8080);
+        if config.web_port == config.health_port {
+            return Err(anyhow::anyhow!(
+                "WebUI port ({}) must be different from health port ({})",
+                config.web_port,
+                config.health_port
+            ));
+        }
     }
 
     if cli.dock {

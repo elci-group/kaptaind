@@ -48,6 +48,12 @@ The daemon's companion tool is **kaptaind-cli**(1).
 **--health-port**=*PORT*
 :   Override the health/metrics server port. Useful when running multiple instances on the same host, for example during a zero-downtime upgrade.
 
+**-w**, **--web**
+:   Start the embedded WebUI dashboard alongside the daemon runtime. The WebUI is served on the port configured by **--web-port** (default 8080).
+
+**--web-port**=*PORT*
+:   Override the WebUI server port. Must be different from **--health-port**.
+
 **-V**, **--version**
 :   Print the version and exit.
 
@@ -105,6 +111,14 @@ Inspect the currently watched project:
 Check operational load before an upgrade:
 
     kaptaind --lanes
+
+Start the daemon with the WebUI dashboard:
+
+    kaptaind --web
+
+Use a custom WebUI port:
+
+    kaptaind --web --web-port 8080 --health-port 9090
 
 # SEE ALSO
 

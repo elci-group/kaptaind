@@ -24,7 +24,7 @@ pub struct CommitContext<'a> {
 }
 
 /// Selects the active provider based on config + env vars.
-fn resolve_provider(config: &InferenceConfig) -> &str {
+pub fn resolve_provider(config: &InferenceConfig) -> &str {
     if config.provider != "auto" {
         return &config.provider;
     }
@@ -42,7 +42,7 @@ fn resolve_provider(config: &InferenceConfig) -> &str {
 }
 
 /// Resolves "auto" model to the provider default.
-fn resolve_model<'a>(config: &'a InferenceConfig, provider: &str) -> &'a str {
+pub fn resolve_model<'a>(config: &'a InferenceConfig, provider: &str) -> &'a str {
     if config.model != "auto" {
         return &config.model;
     }

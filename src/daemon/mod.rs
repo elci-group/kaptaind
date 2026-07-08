@@ -11,3 +11,4 @@ pub mod shutdown;
 pub mod status;
 pub mod telemetry;
 pub mod trace;
+pub mod web;

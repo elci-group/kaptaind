@@ -25,7 +25,7 @@
 | `src/cli/main.rs` | CLI binary (`kaptaind-cli`): `status`, `log`, `analyze`, `init`, `aoc`, `ship`, `trawl`. |
 | `src/config/` | Config loading, path normalization, defaults, structs for staging/bundle/notify/etc. |
 | `src/watcher/` | Filesystem event types and notify-based watcher thread. |
-| `src/daemon/` | Async runtime, scheduler loop, telemetry, health/metrics server, storage hygiene (`deckhand`), HA leadership (`shark`), notifications, audit logging. |
+| `src/daemon/` | Async runtime, scheduler loop, telemetry, health/metrics server, optional WebUI (`web.rs`, `web_ui.html`), storage hygiene (`deckhand`), HA leadership (`shark`), notifications, audit logging. |
 | `src/cluster/` | Event clustering by time window. |
 | `src/diff/` | Scoring across five dimensions: structural (`text.rs`), API surface (`ast.rs`), dependencies/runtime (`api.rs`), bundle size (`bundle.rs`), and the language adapter framework (`lang/`). |
 | `src/diff/lang/` | `adapter.rs` (traits/representation), `registry.rs` (path→adapter resolution), `adapters/` (concrete adapters), `common.rs` (shared helpers). |
@@ -60,7 +60,8 @@
 10. **Commit & push**: the scheduler stages files per `StagingConfig`, creates the commit, and pushes if enabled.
 11. **Lifecycle hooks**: Angler hooks (pre-commit, post-commit, webhooks, selective capture, bait plugins) run at the appropriate points.
 12. **Release automation**: qualification gates are evaluated, and—when `[ship.auto_nightly]`/`[ship.auto_stable]` are enabled—automated ship releases run on their cron schedules.
-13. **Notifications**: nautical-themed commit/push/error/start/stop/release/qualification/pulse notifications are emitted via shell hooks, webhooks, and the health server's SSE endpoint.
+13. **WebUI (opt-in)**: when `--web` is passed, `daemon::runtime::start()` spawns the WebUI server on `--web-port` (default 8080), sharing the same event broadcast channel for live updates.
+14. **Notifications**: nautical-themed commit/push/error/start/stop/release/qualification/pulse notifications are emitted via shell hooks, webhooks, and the health server's SSE endpoint.
 
 ## Configuration and on-disk files
 
@@ -74,6 +75,7 @@
   - minimum commit interval defaults to 10 seconds.
   - test hook defaults to `cargo test` and is required by default.
   - push is disabled by default and targets branch `main` when enabled.
+  - WebUI is disabled by default; `--web` starts it on port 8080.
 - Paths are normalized in `finalize_config()`:
   - `repo_path` is resolved relative to the process working directory.
   - `watch.path` and `watch.ignore_file` are resolved relative to `repo_path`.

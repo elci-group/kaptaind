@@ -585,8 +585,20 @@ async fn process_cluster(
         }
     }
     let output_tokens = msg.len() / 4;
-    let cost_metrics =
-        crate::daemon::telemetry::track_cost(&config.repo_path, input_tokens, output_tokens);
+    let (provider, model) = if config.inference.enabled {
+        let provider = crate::inference::resolve_provider(&config.inference);
+        let model = crate::inference::resolve_model(&config.inference, provider);
+        (provider.to_string(), model.to_string())
+    } else {
+        ("none".to_string(), "none".to_string())
+    };
+    let cost_metrics = crate::daemon::telemetry::track_cost(
+        &config.repo_path,
+        &provider,
+        &model,
+        input_tokens,
+        output_tokens,
+    );
     tracing::info!(
         input_tokens = cost_metrics.input_tokens,
         output_tokens = cost_metrics.output_tokens,

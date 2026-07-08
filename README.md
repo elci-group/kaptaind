@@ -368,6 +368,44 @@ scrape_configs:
     metrics_path: /metrics/prometheus
 ```
 
+## Web Dashboard
+
+Kaptaind ships with an embedded single-page WebUI. Start it with `--web` (default port `8080`); use `--web-port` to change the port. The WebUI port must differ from `--health-port`.
+
+```bash
+kaptaind --web
+kaptaind --web --web-port 8080 --health-port 9090
+```
+
+Open `http://localhost:8080/` to view the dashboard.
+
+### Views
+
+- **Dashboard** — live status cards, current version, aggregate cost, and the latest commit.
+- **Telemetry** — 2D line/bar charts of token usage and cost over time.
+- **Usage** — per-provider and per-model token/cost breakdowns.
+- **Commits** — interactive timeline/list of analysis artifacts with clickable details.
+- **Graphs** — 3D force-directed dependency graph and 3D commit-history graph.
+- **Config** — view and edit `kaptaind.toml` with validation feedback.
+- **Events** — live SSE event log.
+
+### WebUI API endpoints
+
+- `GET /` — embedded WebUI HTML.
+- `GET /api` — OpenAPI-style endpoint listing.
+- `GET /api/status` — current daemon status.
+- `GET /api/telemetry` — aggregate token/cost telemetry.
+- `GET /api/usage` — per-provider and per-model usage.
+- `GET /api/commits?limit=N` — commit history summary (default limit 50).
+- `GET /api/commits/:id` — single analysis artifact.
+- `GET /api/config` — current `kaptaind.toml` raw + parsed JSON.
+- `POST /api/config` — validate and save `kaptaind.toml`.
+- `GET /api/metrics` — daemon metrics counters.
+- `GET /api/events` — SSE stream of daemon events.
+- `GET /api/version` — repository `VERSION` and daemon version.
+- `GET /api/graph/dependencies` — dependency graph data (Cargo.lock / package.json).
+- `GET /api/graph/commits` — commit graph data from git history.
+
 ## Configuration
 
 `kaptaind` looks for an optional configuration file `kaptaind.toml` in the repository root, or at the path supplied via `--config`. If the file is missing, sensible defaults are used.

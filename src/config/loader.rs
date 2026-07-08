@@ -62,6 +62,9 @@ pub struct Config {
     pub air_gapped: bool,
     #[serde(default = "default_health_port")]
     pub health_port: u16,
+    /// Port for the optional WebUI server. 0 means disabled.
+    #[serde(default)]
+    pub web_port: u16,
     #[serde(default)]
     pub capabilities: CapabilitiesConfig,
     #[serde(default)]
@@ -1462,6 +1465,7 @@ impl Default for Config {
             retention_days: default_retention_days(),
             air_gapped: false,
             health_port: default_health_port(),
+            web_port: 0,
             capabilities: CapabilitiesConfig::default(),
             strict_shell_validation: false,
         }
@@ -1476,9 +1480,17 @@ pub fn load() -> anyhow::Result<Config> {
         return Ok(finalize_config(repo_root, Config::default()));
     }
 
-    let content = std::fs::read_to_string(&path)?;
+    load_from_path(&path)
+}
+
+pub fn load_from_path(path: &Path) -> anyhow::Result<Config> {
+    let content = std::fs::read_to_string(path)?;
     let cfg: Config = toml::from_str(&content)?;
-    Ok(finalize_config(repo_root, cfg))
+    let base_dir = path
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    Ok(finalize_config(base_dir, cfg))
 }
 
 fn find_repo_root(start: &Path) -> PathBuf {
