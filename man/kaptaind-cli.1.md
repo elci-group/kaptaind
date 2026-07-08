@@ -471,31 +471,139 @@ Example:
 
 **kaptaind-cli enable-autostart**
 
-Configure kaptaind to start automatically on login or boot. Uses systemd on Linux, launchd on macOS, or shell rc files as a fallback.
-
-Example:
-
-    kaptaind-cli enable-autostart
+Deprecated. Use **kaptaind-cli service install --user** instead.
 
 ## disable-autostart
 
 **kaptaind-cli disable-autostart**
 
-Remove auto-start configuration.
-
-Example:
-
-    kaptaind-cli disable-autostart
+Deprecated. Use **kaptaind-cli service uninstall --user** instead.
 
 ## autostart
 
 **kaptaind-cli autostart**
 
-Launch all registered kaptaind daemons listed in **~/.kaptaind/projects.txt**. Used internally by the auto-start system.
+Launch all enabled kaptaind daemons from the monitor registry. Used internally by the auto-start system; equivalent to **kaptaind-cli monitor resume**.
 
 Example:
 
     kaptaind-cli autostart
+
+## monitor
+
+Manage the project monitor registry.
+
+### monitor add
+
+**kaptaind-cli monitor add** [*PATH*] [**-c** *CONFIG*] [**-p** *PORT*] [**--enabled** *BOOL*]
+
+Register a project for monitoring. *PATH* defaults to the current directory. If
+no config is supplied, **kaptaind.toml** in the project root is assumed. If no
+port is supplied, the next free health port starting at 3000 is assigned.
+
+**-c**, **--config**=*CONFIG*
+:   Absolute or relative path to **kaptaind.toml**.
+
+**-p**, **--port**=*PORT*
+:   Health server port for this project.
+
+**--enabled**=*BOOL*
+:   Enable or disable monitoring for this project. Default: **true**.
+
+Example:
+
+    kaptaind-cli monitor add ~/projects/my-app --port 3001
+
+### monitor remove
+
+**kaptaind-cli monitor remove** *PATH*
+
+Remove a project from the monitor registry.
+
+Example:
+
+    kaptaind-cli monitor remove ~/projects/my-app
+
+### monitor list
+
+**kaptaind-cli monitor list**
+
+List all registered projects with path, config, enabled state, health port, and
+last active timestamp.
+
+Example:
+
+    kaptaind-cli monitor list
+
+### monitor enable / disable
+
+**kaptaind-cli monitor enable** *PATH*
+
+**kaptaind-cli monitor disable** *PATH*
+
+Enable or disable a registered project. Disabled projects are skipped by
+**monitor resume**.
+
+Example:
+
+    kaptaind-cli monitor disable ~/projects/my-app
+
+### monitor resume
+
+**kaptaind-cli monitor resume**
+
+Start a daemon for every enabled project that is not already running. A project
+is considered running when its **.kaptaind/daemon.pid** file points to a live
+process. Each daemon is spawned with its stored config and health port.
+
+Example:
+
+    kaptaind-cli monitor resume
+
+## service
+
+Install, uninstall, or inspect the user/system service that resumes monitored
+projects on login or boot.
+
+### service install
+
+**kaptaind-cli service install** (**--user** | **--system**)
+
+Install a systemd user service (Linux), LaunchAgent (macOS), or shell autostart
+fallback that runs **kaptaind-cli monitor resume**. The system variant writes to
+**/etc/systemd/system/kaptaind.service** and requires root.
+
+**--user**
+:   Install for the current user.
+
+**--system**
+:   Install system-wide (requires root).
+
+Examples:
+
+    kaptaind-cli service install --user
+    sudo kaptaind-cli service install --system
+
+### service uninstall
+
+**kaptaind-cli service uninstall** (**--user** | **--system**)
+
+Remove the installed service.
+
+Examples:
+
+    kaptaind-cli service uninstall --user
+    sudo kaptaind-cli service uninstall --system
+
+### service status
+
+**kaptaind-cli service status** (**--user** | **--system**)
+
+Report whether the service file is installed and enabled.
+
+Examples:
+
+    kaptaind-cli service status --user
 
 # FILES
 
@@ -508,8 +616,8 @@ Example:
 *.kaptaind/*
 :   Runtime directory for analysis artifacts, status, telemetry, traces, and manifests.
 
-*~/.kaptaind/projects.txt*
-:   List of registered projects for **autostart**.
+*~/.config/kaptaind/monitored.json*
+:   JSON registry of monitored projects for **monitor resume** and auto-start.
 
 # ENVIRONMENT
 

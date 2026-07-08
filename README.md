@@ -263,6 +263,62 @@ You can also use special `kaptaind` flags to see system indices:
 
 ![Kaptaind System Indices](views.gif)
 
+## Monitor & Auto-Start
+
+Kaptaind keeps a JSON registry at `~/.config/kaptaind/monitored.json` of every
+project you want to watch across logins. Each entry stores the absolute project
+path, the absolute config path, an `enabled` flag, a dedicated `health_port`, and
+the `last_active` timestamp. Using a per-project health port means you can run
+multiple daemons on the same host without port collisions.
+
+Register the current project:
+
+```bash
+kaptaind-cli monitor add
+```
+
+Register a specific project and assign its health port explicitly:
+
+```bash
+kaptaind-cli monitor add ~/projects/my-app --port 3001
+```
+
+List registered projects:
+
+```bash
+kaptaind-cli monitor list
+```
+
+Resume all enabled projects that are not already running:
+
+```bash
+kaptaind-cli monitor resume
+```
+
+Disable or re-enable a project:
+
+```bash
+kaptaind-cli monitor disable ~/projects/my-app
+kaptaind-cli monitor enable ~/projects/my-app
+```
+
+Install a user systemd service that resumes monitored projects on login:
+
+```bash
+kaptaind-cli service install --user
+```
+
+A system-wide service is also available (requires root):
+
+```bash
+sudo kaptaind-cli service install --system
+```
+
+When the daemon starts successfully, it updates the registry entry's
+`last_active` timestamp. On the next login, the installed service runs
+`kaptaind-cli monitor resume`, which starts a `kaptaind --daemon` instance for
+each enabled project, using each project's stored config and health port.
+
 ### Background Architecture & Daemon Lifecycle
 
 Kaptaind operates entirely in the background, minimizing developer friction while maintaining deep contextual awareness of codebase changes. Here is how the internal architecture flows:

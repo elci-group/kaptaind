@@ -320,34 +320,7 @@ fn initialize_project(project: &DiscoveredProject) -> anyhow::Result<()> {
 
 /// Register a project for auto-start monitoring
 fn register_project(path: &Path) -> anyhow::Result<()> {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| anyhow::anyhow!("Could not determine home directory"))?;
-
-    let kaptaind_dir = Path::new(&home).join(".kaptaind");
-    std::fs::create_dir_all(&kaptaind_dir)?;
-
-    let projects_file = kaptaind_dir.join("projects.txt");
-    let path_str = path.display().to_string();
-
-    // Check if already registered
-    if projects_file.exists() {
-        let content = std::fs::read_to_string(&projects_file)?;
-        if content.lines().any(|l| l.trim() == path_str) {
-            return Ok(()); // Already registered
-        }
-    }
-
-    // Append to projects file
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&projects_file)?;
-
-    use std::io::Write;
-    writeln!(file, "{}", path_str)?;
-
-    Ok(())
+    crate::monitor::add(path, None, None, Some(true))
 }
 
 /// Generate kaptaind.toml content for a project type

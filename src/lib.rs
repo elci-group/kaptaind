@@ -9,6 +9,7 @@ pub mod diff;
 pub mod git;
 pub mod inference;
 pub mod installer;
+pub mod monitor;
 pub mod push;
 pub mod qualification;
 pub mod rbac;

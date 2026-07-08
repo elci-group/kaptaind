@@ -110,6 +110,9 @@ fn main() -> anyhow::Result<()> {
     }
     let mut config = kaptaind::config::loader::load()?;
 
+    // Track this project as active in the monitor registry.
+    let _ = kaptaind::monitor::touch_last_active(&config.repo_path);
+
     if let Some(mode) = cli.shark_mode {
         config.shark.enabled = true;
         config.shark.mode = match mode.to_lowercase().as_str() {

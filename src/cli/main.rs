@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use colored::*;
 mod analyze;
 mod autostart;
+mod monitor;
 mod table;
 use analyze::handle_analyze;
 use autostart::{handle_disable_autostart, handle_enable_autostart};
@@ -369,6 +370,54 @@ Usage:
 Examples:
     kaptaind-cli autostart"#)]
     Autostart,
+
+    /// 📋 Monitor registered projects and resume daemons
+    #[command(
+        subcommand,
+        long_about = r#"Purpose:
+    Register, list, enable, disable, and resume monitoring for kaptaind
+    projects. The registry lives at ~/.config/kaptaind/monitored.json.
+
+Usage:
+    kaptaind-cli monitor <SUBCOMMAND>
+
+Subcommands:
+    add      Register a project for monitoring
+    remove   Unregister a project
+    list     Show all registered projects
+    enable   Enable monitoring for a project
+    disable  Disable monitoring for a project
+    resume   Start daemons for all enabled, not-running projects
+
+Examples:
+    kaptaind-cli monitor add
+    kaptaind-cli monitor add /path/to/repo --port 3001
+    kaptaind-cli monitor list
+    kaptaind-cli monitor resume"#
+    )]
+    Monitor(MonitorCommand),
+
+    /// ⚙️ Install or manage the kaptaind system/user service
+    #[command(
+        subcommand,
+        long_about = r#"Purpose:
+    Install, uninstall, or check the status of the systemd/LaunchAgent
+    service that resumes monitored kaptaind projects on login or boot.
+
+Usage:
+    kaptaind-cli service <SUBCOMMAND>
+
+Subcommands:
+    install    --user | --system
+    uninstall  --user | --system
+    status     --user | --system
+
+Examples:
+    kaptaind-cli service install --user
+    kaptaind-cli service install --system
+    kaptaind-cli service status --user"#
+    )]
+    Service(ServiceCommand),
 
     /// 🔍 View and manage AoC traces
     #[command(
@@ -927,6 +976,208 @@ Examples:
 }
 
 #[derive(Subcommand)]
+enum MonitorCommand {
+    /// ➕ Register a project for monitoring
+    #[command(long_about = r#"Purpose:
+    Add a project to the monitor registry. Paths are resolved to absolute
+    form. If no config is given, <project>/kaptaind.toml is assumed. If no
+    port is given, the next free health port starting at 3000 is assigned.
+
+Usage:
+    kaptaind-cli monitor add [PATH] [OPTIONS]
+
+Arguments:
+    [PATH]    Project path (default: current directory).
+
+Options:
+    -c, --config <PATH>     Path to kaptaind.toml.
+    -p, --port <PORT>       Health server port for this project.
+        --enabled <BOOL>    Enable or disable monitoring (default: true).
+
+Examples:
+    kaptaind-cli monitor add
+    kaptaind-cli monitor add ~/projects/my-app --port 3001
+    kaptaind-cli monitor add /path/to/repo --config /path/to/repo/kaptaind.toml --enabled false"#)]
+    Add {
+        /// Project path (default: current directory).
+        #[arg(value_name = "PATH")]
+        path: Option<PathBuf>,
+
+        /// Path to kaptaind.toml.
+        #[arg(short, long, value_name = "PATH")]
+        config: Option<PathBuf>,
+
+        /// Health server port for this project.
+        #[arg(short, long, value_name = "PORT")]
+        port: Option<u16>,
+
+        /// Enable or disable monitoring.
+        #[arg(long, value_name = "BOOL")]
+        enabled: Option<bool>,
+    },
+
+    /// ➖ Unregister a project
+    #[command(long_about = r#"Purpose:
+    Remove a project from the monitor registry by path.
+
+Usage:
+    kaptaind-cli monitor remove <PATH>
+
+Arguments:
+    <PATH>    Project path.
+
+Examples:
+    kaptaind-cli monitor remove /path/to/repo
+    kaptaind-cli monitor remove ."#)]
+    Remove {
+        /// Project path.
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+    },
+
+    /// 📋 List registered projects
+    #[command(long_about = r#"Purpose:
+    Display all projects in the monitor registry, including their config
+    path, enabled status, health port, and last active timestamp.
+
+Usage:
+    kaptaind-cli monitor list
+
+Examples:
+    kaptaind-cli monitor list"#)]
+    List,
+
+    /// ▶️ Enable monitoring for a project
+    #[command(long_about = r#"Purpose:
+    Mark a registered project as enabled so it is resumed on login.
+
+Usage:
+    kaptaind-cli monitor enable <PATH>
+
+Arguments:
+    <PATH>    Project path.
+
+Examples:
+    kaptaind-cli monitor enable /path/to/repo"#)]
+    Enable {
+        /// Project path.
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+    },
+
+    /// ⏸️ Disable monitoring for a project
+    #[command(long_about = r#"Purpose:
+    Mark a registered project as disabled so it is skipped on resume.
+
+Usage:
+    kaptaind-cli monitor disable <PATH>
+
+Arguments:
+    <PATH>    Project path.
+
+Examples:
+    kaptaind-cli monitor disable /path/to/repo"#)]
+    Disable {
+        /// Project path.
+        #[arg(value_name = "PATH")]
+        path: PathBuf,
+    },
+
+    /// 🚀 Start daemons for all enabled, not-running projects
+    #[command(long_about = r#"Purpose:
+    Iterate over enabled projects in the registry and start a kaptaind
+    daemon for each one that is not already running. Already-running
+    projects are detected via their .kaptaind/daemon.pid file.
+
+Usage:
+    kaptaind-cli monitor resume
+
+Examples:
+    kaptaind-cli monitor resume"#)]
+    Resume,
+}
+
+#[derive(Subcommand)]
+enum ServiceCommand {
+    /// 🔧 Install the user or system service
+    #[command(long_about = r#"Purpose:
+    Install a systemd user service (Linux), LaunchAgent (macOS), or shell
+    autostart fallback that runs `kaptaind-cli monitor resume` on login.
+    The system variant writes to /etc/systemd/system and requires root.
+
+Usage:
+    kaptaind-cli service install --user
+    kaptaind-cli service install --system
+
+Options:
+        --user      Install for the current user.
+        --system    Install system-wide (requires root on Linux/macOS).
+
+Examples:
+    kaptaind-cli service install --user
+    sudo kaptaind-cli service install --system"#)]
+    Install {
+        /// Install for the current user.
+        #[arg(long)]
+        user: bool,
+
+        /// Install system-wide.
+        #[arg(long)]
+        system: bool,
+    },
+
+    /// 🗑️ Remove the user or system service
+    #[command(long_about = r#"Purpose:
+    Remove the installed systemd service, LaunchAgent, or shell autostart
+    entry.
+
+Usage:
+    kaptaind-cli service uninstall --user
+    kaptaind-cli service uninstall --system
+
+Options:
+        --user      Remove the user service.
+        --system    Remove the system service (requires root).
+
+Examples:
+    kaptaind-cli service uninstall --user
+    sudo kaptaind-cli service uninstall --system"#)]
+    Uninstall {
+        /// Remove the user service.
+        #[arg(long)]
+        user: bool,
+
+        /// Remove the system service.
+        #[arg(long)]
+        system: bool,
+    },
+
+    /// ℹ️ Check whether the service is installed
+    #[command(long_about = r#"Purpose:
+    Report whether the user or system service file is present and enabled.
+
+Usage:
+    kaptaind-cli service status --user
+    kaptaind-cli service status --system
+
+Options:
+        --user      Check the user service.
+        --system    Check the system service.
+
+Examples:
+    kaptaind-cli service status --user"#)]
+    Status {
+        /// Check the user service.
+        #[arg(long)]
+        user: bool,
+
+        /// Check the system service.
+        #[arg(long)]
+        system: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum AocCommand {
     /// 🎯 Start a new Aim of Change session
     #[command(long_about = r#"Purpose:
@@ -1151,6 +1402,12 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Autostart => {
             handle_autostart()?;
+        }
+        Commands::Monitor(monitor_cmd) => {
+            handle_monitor(monitor_cmd)?;
+        }
+        Commands::Service(service_cmd) => {
+            handle_service(service_cmd)?;
         }
         Commands::Trace(trace_cmd) => {
             handle_trace(&config, trace_cmd)?;
@@ -2169,34 +2426,8 @@ fn handle_init(config: &Config) -> anyhow::Result<()> {
         format!("{:?}", project).bold().magenta()
     );
 
-    // Register project for autostart
-    if let Ok(home) = std::env::var("HOME") {
-        let kaptaind_dir = std::path::Path::new(&home).join(".kaptaind");
-        let _ = fs::create_dir_all(&kaptaind_dir);
-        let projects_file = kaptaind_dir.join("projects.txt");
-
-        let path_str = root.display().to_string();
-        let mut add = true;
-
-        if projects_file.exists() {
-            if let Ok(content) = fs::read_to_string(&projects_file) {
-                if content.lines().any(|l| l.trim() == path_str) {
-                    add = false;
-                }
-            }
-        }
-
-        if add {
-            if let Ok(mut file) = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&projects_file)
-            {
-                use std::io::Write;
-                let _ = writeln!(file, "{}", path_str);
-            }
-        }
-    }
+    // Register project for autostart/monitoring
+    let _ = kaptaind::monitor::add(root, None, None, Some(true));
 
     Ok(())
 }
@@ -2891,31 +3122,80 @@ fn handle_ci_hint(config: &Config, format: &str) -> anyhow::Result<()> {
 }
 
 fn handle_autostart() -> anyhow::Result<()> {
-    let home = std::env::var("HOME")?;
-    let projects_file = format!("{}/.kaptaind/projects.txt", home);
+    monitor::resume()
+}
 
-    if !std::path::Path::new(&projects_file).exists() {
-        return Ok(());
-    }
-
-    let contents = std::fs::read_to_string(&projects_file)?;
-    for line in contents.lines() {
-        let path = line.trim();
-        if path.is_empty() {
-            continue;
+fn handle_monitor(cmd: &MonitorCommand) -> anyhow::Result<()> {
+    match cmd {
+        MonitorCommand::Add {
+            path,
+            config,
+            port,
+            enabled,
+        } => {
+            let project_path = path
+                .clone()
+                .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+            monitor::add(&project_path, config.as_deref(), *port, *enabled)?;
+            println!(
+                "{} {} {}",
+                "✅".green(),
+                "Registered".green(),
+                project_path.display().to_string().blue()
+            );
         }
-
-        let repo_path = std::path::PathBuf::from(path);
-        if repo_path.join("kaptaind.toml").exists() {
-            println!("Starting kaptaind for {}", path);
-            std::process::Command::new("kaptaind")
-                .arg("--daemon")
-                .current_dir(repo_path)
-                .spawn()
-                .ok();
+        MonitorCommand::Remove { path } => {
+            if monitor::remove(path)? {
+                println!(
+                    "{} {} {}",
+                    "✅".green(),
+                    "Removed".green(),
+                    path.display().to_string().blue()
+                );
+            } else {
+                anyhow::bail!("Project not registered: {}", path.display());
+            }
+        }
+        MonitorCommand::List => {
+            monitor::list()?;
+        }
+        MonitorCommand::Enable { path } => {
+            monitor::set_enabled(path, true)?;
+            println!(
+                "{} {} {}",
+                "✅".green(),
+                "Enabled".green(),
+                path.display().to_string().blue()
+            );
+        }
+        MonitorCommand::Disable { path } => {
+            monitor::set_enabled(path, false)?;
+            println!(
+                "{} {} {}",
+                "✅".green(),
+                "Disabled".green(),
+                path.display().to_string().blue()
+            );
+        }
+        MonitorCommand::Resume => {
+            monitor::resume()?;
         }
     }
+    Ok(())
+}
 
+fn handle_service(cmd: &ServiceCommand) -> anyhow::Result<()> {
+    match cmd {
+        ServiceCommand::Install { user, system } => {
+            monitor::install_service(*user, *system)?;
+        }
+        ServiceCommand::Uninstall { user, system } => {
+            monitor::uninstall_service(*user, *system)?;
+        }
+        ServiceCommand::Status { user, system } => {
+            monitor::service_status(*user, *system)?;
+        }
+    }
     Ok(())
 }
 
