@@ -99,7 +99,7 @@ pub fn list_manifests(repo_path: &Path) -> anyhow::Result<Vec<AocManifest>> {
     }
 
     // Sort by created_at descending (newest first)
-    manifests.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    manifests.sort_by_key(|b| std::cmp::Reverse(b.created_at));
     Ok(manifests)
 }
 

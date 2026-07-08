@@ -199,11 +199,11 @@ mod tests {
 
     #[test]
     fn jaccard_identical() {
-        let a: HashSet<String> = vec!["oauth", "provider"]
+        let a: HashSet<String> = ["oauth", "provider"]
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let b: HashSet<String> = vec!["oauth", "provider"]
+        let b: HashSet<String> = ["oauth", "provider"]
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -212,11 +212,11 @@ mod tests {
 
     #[test]
     fn jaccard_disjoint() {
-        let a: HashSet<String> = vec!["oauth", "provider"]
+        let a: HashSet<String> = ["oauth", "provider"]
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let b: HashSet<String> = vec!["auth", "middleware"]
+        let b: HashSet<String> = ["auth", "middleware"]
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -230,11 +230,11 @@ mod tests {
         // intersection: {oauth}
         // union: {oauth, provider, middleware}
         // jaccard: 1/3 ≈ 0.333
-        let a: HashSet<String> = vec!["oauth", "provider"]
+        let a: HashSet<String> = ["oauth", "provider"]
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let b: HashSet<String> = vec!["oauth", "middleware"]
+        let b: HashSet<String> = ["oauth", "middleware"]
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -251,7 +251,7 @@ mod tests {
 
     #[test]
     fn mean_similarity_empty_others() {
-        let tokens: HashSet<String> = vec!["oauth", "provider"]
+        let tokens: HashSet<String> = ["oauth", "provider"]
             .iter()
             .map(|s| s.to_string())
             .collect();
@@ -265,11 +265,11 @@ mod tests {
         // other: {oauth, middleware}
         // jaccard: 1/3
         // mean: 1/3
-        let tokens: HashSet<String> = vec!["oauth", "provider"]
+        let tokens: HashSet<String> = ["oauth", "provider"]
             .iter()
             .map(|s| s.to_string())
             .collect();
-        let others: Vec<HashSet<String>> = vec![vec!["oauth", "middleware"]
+        let others: Vec<HashSet<String>> = vec![["oauth", "middleware"]
             .iter()
             .map(|s| s.to_string())
             .collect()];

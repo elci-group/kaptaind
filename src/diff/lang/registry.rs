@@ -6,6 +6,12 @@ pub struct AdapterRegistry {
     adapters: Vec<Box<dyn LanguageAdapter>>,
 }
 
+impl Default for AdapterRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AdapterRegistry {
     pub fn new() -> Self {
         Self {

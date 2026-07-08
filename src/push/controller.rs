@@ -15,6 +15,15 @@ pub async fn push(
     options: &PushOptions,
     retry: &crate::config::loader::RetryConfig,
 ) -> anyhow::Result<()> {
+    push_with_audit(repo_path, options, retry, "push").await
+}
+
+async fn push_with_audit(
+    repo_path: &Path,
+    options: &PushOptions,
+    retry: &crate::config::loader::RetryConfig,
+    actor: &str,
+) -> anyhow::Result<()> {
     if options
         .protect_branches
         .iter()
@@ -32,28 +41,41 @@ pub async fn push(
     for attempt in 1..=retry.max_attempts {
         let mut command = Command::new("git");
         command.current_dir(repo_path).arg("push");
-
         if options.dry_run {
             command.arg("--dry-run");
         }
-
-        match command
+        let output = command
             .arg(&options.remote)
             .arg(&refspec)
             .kill_on_drop(true)
-            .spawn()
-        {
-            Ok(mut child) => match child.wait().await {
-                Ok(status) => {
-                    if status.success() {
-                        return Ok(());
+            .output()
+            .await;
+
+        match output {
+            Ok(output) => {
+                let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                if output.status.success() {
+                    crate::audit::log_push(
+                        repo_path,
+                        actor,
+                        "",
+                        &options.branch,
+                        &options.remote,
+                        true,
+                        None,
+                    );
+                    return Ok(());
+                }
+                last_error = Some(anyhow::anyhow!(
+                    "Git push failed with status: {}{}",
+                    output.status,
+                    if stderr.is_empty() {
+                        String::new()
+                    } else {
+                        format!(": {}", stderr)
                     }
-                    last_error = Some(anyhow::anyhow!("Git push failed with status: {}", status));
-                }
-                Err(e) => {
-                    last_error = Some(anyhow::anyhow!("Failed to wait for git push: {}", e));
-                }
-            },
+                ));
+            }
             Err(e) => {
                 last_error = Some(anyhow::anyhow!("Failed to execute git command: {}", e));
             }
@@ -72,7 +94,17 @@ pub async fn push(
         }
     }
 
-    Err(last_error.unwrap_or_else(|| {
+    let err = last_error.unwrap_or_else(|| {
         anyhow::anyhow!("Git push failed after {} attempts", retry.max_attempts)
-    }))
+    });
+    crate::audit::log_push(
+        repo_path,
+        actor,
+        "",
+        &options.branch,
+        &options.remote,
+        false,
+        Some(&err.to_string()),
+    );
+    Err(err)
 }

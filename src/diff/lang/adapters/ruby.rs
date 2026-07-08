@@ -44,10 +44,7 @@ impl LanguageAdapter for RubyAdapter {
                         kind: "class".to_string(),
                     });
                 } else if let Some(rest) = trimmed.strip_prefix("def ") {
-                    let name = rest
-                        .split(|c: char| c == '(' || c == ' ' || c == ';')
-                        .next()
-                        .unwrap_or(rest);
+                    let name = rest.split(['(', ' ', ';']).next().unwrap_or(rest);
                     symbols.push(Symbol {
                         name: name.to_string(),
                         kind: "method".to_string(),

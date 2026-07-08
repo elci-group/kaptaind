@@ -598,13 +598,13 @@ mod tests {
         };
 
         let d0 = calculate_backoff(0, &config);
-        assert!(d0 >= 750 && d0 <= 1250); // ~1000ms with jitter
+        assert!((750..=1250).contains(&d0)); // ~1000ms with jitter
 
         let d1 = calculate_backoff(1, &config);
-        assert!(d1 >= 1500 && d1 <= 2500); // ~2000ms with jitter
+        assert!((1500..=2500).contains(&d1)); // ~2000ms with jitter
 
         let d2 = calculate_backoff(2, &config);
-        assert!(d2 >= 3000 && d2 <= 5000); // ~4000ms with jitter
+        assert!((3000..=5000).contains(&d2)); // ~4000ms with jitter
     }
 
     #[test]

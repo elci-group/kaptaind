@@ -187,16 +187,15 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
 
     // Wait for scheduler with a hard timeout
     let shutdown_timeout = Duration::from_secs(30);
-    if !scheduler.is_finished() {
-        if tokio::time::timeout(shutdown_timeout, &mut scheduler)
+    if !scheduler.is_finished()
+        && tokio::time::timeout(shutdown_timeout, &mut scheduler)
             .await
             .is_err()
-        {
-            tracing::error!(
-                "scheduler shutdown timeout ({:?}), forcing exit",
-                shutdown_timeout
-            );
-        }
+    {
+        tracing::error!(
+            "scheduler shutdown timeout ({:?}), forcing exit",
+            shutdown_timeout
+        );
     }
 
     tokio::task::spawn_blocking(move || crate::watcher::fs::join(watcher_handle))

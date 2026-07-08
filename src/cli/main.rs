@@ -16,7 +16,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(
     name = "kaptaind-cli",
-    version = "0.1.0",
+    version = env!("CARGO_PKG_VERSION"),
     author = "Elci Group <kaptaind@example.com>",
     about = "CLI companion to kaptaind daemon for inspection and management",
     long_about = "kaptaind-cli provides visibility into the daemon's state and offers one-off \
@@ -73,6 +73,15 @@ enum Commands {
     ///
     /// Usage: kaptaind-cli status
     Status,
+
+    /// ✅ Validate kaptaind.toml and report configuration errors
+    ///
+    /// Performs a post-load validation pass that checks cross-field constraints
+    /// such as timeout > 0, shark TTL >= 3x heartbeat, and air-gapped consistency.
+    /// Exits with a non-zero code if validation fails.
+    ///
+    /// Usage: kaptaind-cli config validate
+    Validate,
 
     /// 📜 View recent automated commits and analysis decisions
     ///
@@ -268,13 +277,21 @@ enum Commands {
     /// and publishes to package managers and app stores.
     ///
     /// Examples:
+    ///
     ///   kaptaind-cli ship plan                    # Preview what would ship
+    ///
     ///   kaptaind-cli ship run                     # Execute the ship pipeline
+    ///
     ///   kaptaind-cli ship run --force             # Skip qualification gates
+    ///
     ///   kaptaind-cli ship stable                  # Ship a stable release
+    ///
     ///   kaptaind-cli ship stable --force          # Skip qualification gates
+    ///
     ///   kaptaind-cli ship nightly                 # Ship a nightly prerelease
+    ///
     ///   kaptaind-cli ship nightly --no-force      # Enforce qualification gates
+    ///
     ///   kaptaind-cli ship status                  # Show last ship run
     #[command(subcommand)]
     Ship(ShipCommand),
@@ -409,11 +426,14 @@ enum ShipCommand {
         #[arg(long, default_value = "text")]
         format: String,
     },
-    /// 📊 Show the last ship run
+    /// 📊 Show the last ship run and scheduled auto-releases
     Status {
         /// Output format: text (default) or json
         #[arg(long, default_value = "text")]
         format: String,
+        /// Include next scheduled auto-nightly and auto-stable fire times
+        #[arg(long)]
+        auto: bool,
     },
 }
 
@@ -467,8 +487,11 @@ enum AocCommand {
     /// When shipped, it's archived to .kaptaind/aoc/manifests/<id>.json
     ///
     /// Examples:
+    ///
     ///   kaptaind-cli aoc start "feature: authentication flow"
+    ///
     ///   kaptaind-cli aoc start "refactor: database layer"
+    ///
     ///   kaptaind-cli aoc start "fix: memory leaks"
     Start {
         /// User-friendly name for this session (required)
@@ -509,11 +532,15 @@ enum AocCommand {
     /// Great for audit trails in regulated environments.
     ///
     /// Examples:
+    ///
     ///   kaptaind-cli aoc intercept -- npm test
+    ///
     ///   kaptaind-cli aoc intercept --model claude-3-5-sonnet -- cargo test
+    ///
     ///   kaptaind-cli aoc intercept --intent \"refactor auth\" -- npm test
     ///
     /// Usage in scripts:
+    ///
     ///   if kaptaind-cli aoc intercept --model my-model -- ./my_test.sh; then
     ///     echo "Tests passed, changes are safe"
     ///   fi
@@ -549,7 +576,9 @@ enum AocCommand {
     /// - Test results
     ///
     /// Examples:
+    ///
     ///   kaptaind-cli aoc log                  # Last 10 sessions (default)
+    ///
     ///   kaptaind-cli aoc log --limit 50       # Last 50 sessions
     Log {
         /// Number of sessions to display (default: 10)
@@ -613,6 +642,15 @@ async fn main() -> anyhow::Result<()> {
         Commands::Status => {
             handle_status(&config)?;
         }
+        Commands::Validate => match config.validate() {
+            Ok(()) => {
+                println!("{} Configuration is valid", "✅".green());
+            }
+            Err(err) => {
+                eprintln!("{} {}", "❌".red(), err);
+                std::process::exit(1);
+            }
+        },
         Commands::Log { limit } => {
             handle_log(&config, *limit)?;
         }
@@ -987,7 +1025,7 @@ async fn handle_ship(config: &Config, cmd: &ShipCommand) -> anyhow::Result<()> {
             format,
             ..
         } => (targets, channels, parse_ship_format(format)),
-        ShipCommand::Status { format } => {
+        ShipCommand::Status { format, .. } => {
             (&empty_targets, &empty_channels, parse_ship_format(format))
         }
     };
@@ -1067,7 +1105,10 @@ async fn handle_ship(config: &Config, cmd: &ShipCommand) -> anyhow::Result<()> {
             };
             kaptaind::release::ship::run_nightly(config, opts).await?;
         }
-        ShipCommand::Status { .. } => {
+        ShipCommand::Status { auto, .. } => {
+            if *auto {
+                kaptaind::release::ship::print_auto_ship_status(config, format)?;
+            }
             kaptaind::release::ship::print_ship_status(&config.repo_path, format)?;
         }
     }
@@ -1495,7 +1536,7 @@ fn handle_aoc_intercept(
         id,
         timestamp: start_time,
         model: model.clone(),
-        input: intent.map(|s| serde_json::Value::String(s)),
+        input: intent.map(serde_json::Value::String),
         output: Some(serde_json::Value::String(format!(
             "exit code: {:?}",
             status.code()
@@ -2227,9 +2268,8 @@ fn handle_dashboard(config: &Config) -> anyhow::Result<()> {
 fn stability_bar(score: f64) -> String {
     let filled = (score * 20.0).round() as usize;
     let empty = 20usize.saturating_sub(filled);
-    let bar: String = std::iter::repeat('█')
-        .take(filled)
-        .chain(std::iter::repeat('░').take(empty))
+    let bar: String = std::iter::repeat_n('█', filled)
+        .chain(std::iter::repeat_n('░', empty))
         .collect();
     format!("[{}]", bar)
 }
@@ -2250,7 +2290,7 @@ fn handle_ci_hint(config: &Config, format: &str) -> anyhow::Result<()> {
     let current_score = stability.as_ref().map(|s| s.score).unwrap_or(0.0);
     let pass_streak = stability
         .as_ref()
-        .map(|s| kaptaind::stability::engine::pass_streak(s))
+        .map(kaptaind::stability::engine::pass_streak)
         .unwrap_or(0);
     let threshold = config.qualification.stability_threshold;
     let min_streak = config.qualification.min_pass_streak;

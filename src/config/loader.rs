@@ -13,6 +13,8 @@ pub struct Config {
     pub ratelimit: RateLimitConfig,
     pub test: TestConfig,
     #[serde(default)]
+    pub audit: AuditConfig,
+    #[serde(default)]
     pub notify: NotifyConfig,
     #[serde(default)]
     pub bundle: BundleConfig,
@@ -66,7 +68,7 @@ pub struct Config {
 // Build config
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct BuildConfig {
     /// Shell command to run (e.g. `"cargo build --release"`). No build step
     /// when absent.
@@ -79,12 +81,39 @@ pub struct BuildConfig {
     pub timeout_secs: u64,
 }
 
+impl Default for BuildConfig {
+    fn default() -> Self {
+        Self {
+            command: None,
+            artifact_path: default_artifact_path(),
+            timeout_secs: default_build_timeout_secs(),
+        }
+    }
+}
+
 fn default_artifact_path() -> String {
     "target/release/kaptaind".to_string()
 }
 
 fn default_build_timeout_secs() -> u64 {
     600 // 10 minutes
+}
+
+// ---------------------------------------------------------------------------
+// Audit config
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AuditConfig {
+    /// Whether to write structured audit logs to `.kaptaind/audit.jsonl`.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
+impl Default for AuditConfig {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -206,6 +235,10 @@ pub struct ShipConfig {
     pub nightly: ShipKindConfig,
     #[serde(default)]
     pub stable: ShipKindConfig,
+    #[serde(default)]
+    pub auto_nightly: ShipAutoConfig,
+    #[serde(default)]
+    pub auto_stable: ShipAutoConfig,
 }
 
 impl Default for ShipConfig {
@@ -217,6 +250,8 @@ impl Default for ShipConfig {
             require_qualification: true,
             nightly: ShipKindConfig::default(),
             stable: ShipKindConfig::default(),
+            auto_nightly: ShipAutoConfig::default(),
+            auto_stable: ShipAutoConfig::default(),
         }
     }
 }
@@ -249,6 +284,46 @@ pub struct ShipKindConfig {
     /// Number of nightly releases to retain (only applies to `ship nightly`).
     #[serde(default)]
     pub retain_count: Option<usize>,
+}
+
+/// Daemon-driven automatic release schedule for a given ship kind.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ShipAutoConfig {
+    /// Enable automated releases on the configured schedule.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Standard 5-field cron expression (e.g. "0 2 * * *").
+    #[serde(default = "default_auto_ship_schedule")]
+    pub schedule: String,
+    /// Timezone interpretation: "local" or "utc".
+    #[serde(default = "default_auto_ship_timezone")]
+    pub cron_timezone: String,
+    /// Whether to require qualification before auto-releasing.
+    #[serde(default = "default_auto_ship_require_qualification")]
+    pub require_qualification: bool,
+}
+
+fn default_auto_ship_schedule() -> String {
+    "0 2 * * *".to_string()
+}
+
+fn default_auto_ship_timezone() -> String {
+    "local".to_string()
+}
+
+fn default_auto_ship_require_qualification() -> bool {
+    true
+}
+
+impl Default for ShipAutoConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            schedule: default_auto_ship_schedule(),
+            cron_timezone: default_auto_ship_timezone(),
+            require_qualification: default_auto_ship_require_qualification(),
+        }
+    }
 }
 
 impl Default for ShipKindConfig {
@@ -566,10 +641,23 @@ pub struct NotifyConfig {
     pub on_push: Option<String>,
     pub on_start: Option<String>,
     pub on_shutdown: Option<String>,
+    #[serde(default)]
+    pub on_release: Option<String>,
+    #[serde(default)]
+    pub on_qualification: Option<String>,
+    #[serde(default)]
+    pub on_pulse: Option<String>,
     pub webhook_url: Option<String>,
     /// Use nautical-themed emoji and phrasing for notifications.
     #[serde(default = "default_true")]
     pub nautical_theme: bool,
+    /// Minimum seconds between duplicate event notifications (0 = no rate limit).
+    #[serde(default = "default_notify_rate_limit_seconds")]
+    pub rate_limit_seconds: u64,
+}
+
+fn default_notify_rate_limit_seconds() -> u64 {
+    5
 }
 
 impl Default for NotifyConfig {
@@ -580,8 +668,12 @@ impl Default for NotifyConfig {
             on_push: None,
             on_start: None,
             on_shutdown: None,
+            on_release: None,
+            on_qualification: None,
+            on_pulse: None,
             webhook_url: None,
             nautical_theme: true,
+            rate_limit_seconds: default_notify_rate_limit_seconds(),
         }
     }
 }
@@ -611,21 +703,16 @@ fn default_output_dir() -> String {
     "dist".to_string()
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StagingMode {
     /// Stage all modified files (current behavior, default)
+    #[default]
     All,
     /// Only stage files that were part of the detected cluster
     Cluster,
     /// Stage files matching include patterns, skip exclude patterns
     Pattern,
-}
-
-impl Default for StagingMode {
-    fn default() -> Self {
-        StagingMode::All
-    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -908,10 +995,11 @@ impl Default for DeckhandConfig {
 
 /// `[shark]` block in `kaptaind.toml`.
 /// Configures crash-only dual-instance leadership with a file-based arbiter.
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SharkMode {
     /// Attempt to become leader if no healthy leader exists (default).
+    #[default]
     Auto,
     /// Force leadership attempt on startup.
     Leader,
@@ -919,12 +1007,6 @@ pub enum SharkMode {
     Standby,
     /// Monitor only; never take over.
     Observer,
-}
-
-impl Default for SharkMode {
-    fn default() -> Self {
-        SharkMode::Auto
-    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1007,6 +1089,76 @@ fn default_instance_id() -> String {
     format!("{}@{}", pid, host)
 }
 
+impl Config {
+    /// Validate cross-field constraints and invariants.
+    pub fn validate(&self) -> anyhow::Result<()> {
+        if self.inference.timeout_secs == 0 {
+            anyhow::bail!("inference.timeout_secs must be greater than 0");
+        }
+        if self.build.timeout_secs == 0 {
+            anyhow::bail!("build.timeout_secs must be greater than 0");
+        }
+        if self.health_port == 0 {
+            anyhow::bail!("health_port must be greater than 0");
+        }
+
+        if self.shark.enabled {
+            let heartbeat = self.shark.heartbeat_interval_ms;
+            let ttl = self.shark.lease_ttl_ms;
+            if ttl < heartbeat.saturating_mul(3) {
+                anyhow::bail!(
+                    "shark.lease_ttl_ms ({}) must be at least 3x heartbeat_interval_ms ({})",
+                    ttl,
+                    heartbeat
+                );
+            }
+        }
+
+        if self.air_gapped
+            && (self.capabilities.network_push
+                || self.capabilities.network_webhooks
+                || self.capabilities.network_inference)
+        {
+            anyhow::bail!(
+                "air_gapped=true is incompatible with network_push, network_webhooks, or network_inference capabilities"
+            );
+        }
+
+        if self.ship.enabled {
+            if self.ship.auto_nightly.enabled {
+                crate::schedule::validate_schedule(&self.ship.auto_nightly.schedule)
+                    .map_err(|e| anyhow::anyhow!("ship.auto_nightly.schedule is invalid: {}", e))?;
+                if !matches!(
+                    self.ship
+                        .auto_nightly
+                        .cron_timezone
+                        .to_ascii_lowercase()
+                        .as_str(),
+                    "local" | "utc"
+                ) {
+                    anyhow::bail!("ship.auto_nightly.cron_timezone must be 'local' or 'utc'");
+                }
+            }
+            if self.ship.auto_stable.enabled {
+                crate::schedule::validate_schedule(&self.ship.auto_stable.schedule)
+                    .map_err(|e| anyhow::anyhow!("ship.auto_stable.schedule is invalid: {}", e))?;
+                if !matches!(
+                    self.ship
+                        .auto_stable
+                        .cron_timezone
+                        .to_ascii_lowercase()
+                        .as_str(),
+                    "local" | "utc"
+                ) {
+                    anyhow::bail!("ship.auto_stable.cron_timezone must be 'local' or 'utc'");
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 impl Default for Config {
     fn default() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -1050,6 +1202,7 @@ impl Default for Config {
                 command: Some("cargo test".to_string()),
                 required: true,
             },
+            audit: AuditConfig::default(),
             notify: NotifyConfig::default(),
             bundle: BundleConfig::default(),
             staging: StagingConfig::default(),
@@ -1218,7 +1371,7 @@ mod duration_secs_option {
 
 #[cfg(test)]
 mod tests {
-    use super::{finalize_config, Config};
+    use super::{finalize_config, CapabilitiesConfig, Config};
     use std::path::PathBuf;
     use std::time::Duration;
 
@@ -1583,5 +1736,127 @@ mod tests {
         assert_eq!(config.ship.channels.package_managers[0].kind, "homebrew");
         assert_eq!(config.ship.channels.app_stores.len(), 1);
         assert!(config.ship.channels.app_stores[0].draft);
+    }
+
+    #[test]
+    fn validate_accepts_default_config() {
+        let config = Config::default();
+        let result = config.validate();
+        assert!(
+            result.is_ok(),
+            "default config should validate: {:?}",
+            result
+        );
+    }
+
+    #[test]
+    fn validate_rejects_zero_inference_timeout() {
+        let mut config = Config::default();
+        config.inference.timeout_secs = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_insufficient_shark_ttl() {
+        let mut config = Config::default();
+        config.shark.enabled = true;
+        config.shark.heartbeat_interval_ms = 1000;
+        config.shark.lease_ttl_ms = 2000;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_air_gapped_with_network_capabilities() {
+        let config = Config {
+            air_gapped: true,
+            capabilities: CapabilitiesConfig {
+                network_push: true,
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn ship_auto_deserializes_from_toml() {
+        let toml_str = r#"
+            repo_path = "."
+            [watch]
+            path = "."
+            recursive = true
+            ignore_file = ".kaptainignore"
+            [cluster]
+            window = 5
+            [weights]
+            s = 0.35
+            a = 0.30
+            d = 0.20
+            r = 0.15
+            [push]
+            enabled = false
+            branch = "main"
+            [ratelimit]
+            min_commit_interval = 10
+            [test]
+            command = "cargo test"
+            required = true
+            [ship]
+            enabled = true
+            [ship.auto_nightly]
+            enabled = true
+            schedule = "0 3 * * *"
+            cron_timezone = "utc"
+            require_qualification = false
+            [ship.auto_stable]
+            enabled = true
+            schedule = "0 9 * * 1"
+            cron_timezone = "local"
+            require_qualification = true
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.ship.auto_nightly.enabled);
+        assert_eq!(config.ship.auto_nightly.schedule, "0 3 * * *");
+        assert_eq!(config.ship.auto_nightly.cron_timezone, "utc");
+        assert!(!config.ship.auto_nightly.require_qualification);
+        assert!(config.ship.auto_stable.enabled);
+        assert_eq!(config.ship.auto_stable.schedule, "0 9 * * 1");
+        assert_eq!(config.ship.auto_stable.cron_timezone, "local");
+        assert!(config.ship.auto_stable.require_qualification);
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_invalid_auto_ship_schedule() {
+        let config = Config {
+            ship: super::ShipConfig {
+                enabled: true,
+                auto_nightly: super::ShipAutoConfig {
+                    enabled: true,
+                    schedule: "not a cron".to_string(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_invalid_auto_ship_timezone() {
+        let config = Config {
+            ship: super::ShipConfig {
+                enabled: true,
+                auto_stable: super::ShipAutoConfig {
+                    enabled: true,
+                    cron_timezone: "mars".to_string(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+        assert!(config.validate().is_err());
     }
 }

@@ -11,6 +11,12 @@ pub struct ScoredConcept {
 
 pub struct ScoringEngine {}
 
+impl Default for ScoringEngine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ScoringEngine {
     pub fn new() -> Self {
         Self {}

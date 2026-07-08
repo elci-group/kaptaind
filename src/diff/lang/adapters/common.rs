@@ -14,7 +14,7 @@ pub fn read_lines_safe(file: &Path) -> anyhow::Result<impl Iterator<Item = Strin
     }
     let f = File::open(file)?;
     let reader = BufReader::new(f);
-    Ok(reader.lines().filter_map(Result::ok))
+    Ok(reader.lines().map_while(Result::ok))
 }
 
 pub fn calculate_hash<T: Hash>(t: &T) -> u64 {

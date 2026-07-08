@@ -146,7 +146,7 @@ impl SelectiveEngine {
         }
 
         // Sort by priority (highest first)
-        compiled_rules.sort_by(|a, b| b.priority.cmp(&a.priority));
+        compiled_rules.sort_by_key(|b| std::cmp::Reverse(b.priority));
 
         info!(
             "Selective engine initialized with {} rules",
@@ -282,7 +282,7 @@ impl SelectiveEngine {
         self.compiled_rules.push(compiled);
         // Re-sort by priority
         self.compiled_rules
-            .sort_by(|a, b| b.priority.cmp(&a.priority));
+            .sort_by_key(|b| std::cmp::Reverse(b.priority));
         Ok(())
     }
 

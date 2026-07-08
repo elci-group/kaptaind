@@ -5,7 +5,6 @@
 //! one or more testable claims.
 
 use kaptaind::diff::lang::LanguageAdapter;
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 

@@ -2,6 +2,7 @@ use crate::config::loader::{BuildConfig, Config, ShipConfig, ShipKindConfig};
 use crate::qualification::engine::{evaluate, QualificationResult};
 use crate::release::index::{append_ship_index, load_index, load_ship_index};
 use crate::release::packager;
+use crate::schedule::next_fire_after;
 use anyhow::{anyhow, Context};
 use colored::*;
 use sha2::{Digest, Sha256};
@@ -20,7 +21,7 @@ pub enum ShipKind {
 }
 
 impl ShipKind {
-    fn as_str(&self) -> &'static str {
+    pub fn as_str(&self) -> &'static str {
         match self {
             ShipKind::Manual => "manual",
             ShipKind::Stable => "stable",
@@ -392,6 +393,15 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
         }
     }
 
+    crate::audit::log_release(
+        &config.repo_path,
+        "kaptaind-cli",
+        &version,
+        opts.kind.as_str(),
+        &distributed,
+        true,
+    );
+
     if opts.format == OutputFormat::Json {
         let summary = serde_json::json!({
             "version": version,
@@ -499,6 +509,92 @@ pub fn print_ship_status(repo_path: &Path, format: OutputFormat) -> anyhow::Resu
         println!("{} {}", "ℹ️".blue(), "No ship history found.".blue());
     }
     Ok(())
+}
+
+/// Print scheduled auto-release status.
+pub fn print_auto_ship_status(config: &Config, format: OutputFormat) -> anyhow::Result<()> {
+    let now = chrono::Utc::now();
+    let nightly_next = config
+        .ship
+        .auto_nightly
+        .enabled
+        .then(|| {
+            next_fire_after(
+                now,
+                &config.ship.auto_nightly.schedule,
+                &config.ship.auto_nightly.cron_timezone,
+            )
+        })
+        .flatten();
+    let stable_next = config
+        .ship
+        .auto_stable
+        .enabled
+        .then(|| {
+            next_fire_after(
+                now,
+                &config.ship.auto_stable.schedule,
+                &config.ship.auto_stable.cron_timezone,
+            )
+        })
+        .flatten();
+
+    if format == OutputFormat::Json {
+        let json = serde_json::json!({
+            "auto_nightly": {
+                "enabled": config.ship.auto_nightly.enabled,
+                "schedule": config.ship.auto_nightly.schedule,
+                "cron_timezone": config.ship.auto_nightly.cron_timezone,
+                "next_fire": nightly_next.map(|dt| dt.to_rfc3339()),
+                "require_qualification": config.ship.auto_nightly.require_qualification,
+            },
+            "auto_stable": {
+                "enabled": config.ship.auto_stable.enabled,
+                "schedule": config.ship.auto_stable.schedule,
+                "cron_timezone": config.ship.auto_stable.cron_timezone,
+                "next_fire": stable_next.map(|dt| dt.to_rfc3339()),
+                "require_qualification": config.ship.auto_stable.require_qualification,
+            }
+        });
+        println!("{}", serde_json::to_string_pretty(&json)?);
+    } else {
+        println!("{} {}", "🗓️".cyan(), "Auto-ship schedule".bold().cyan());
+        print_auto_kind_status("Nightly", &config.ship.auto_nightly, nightly_next);
+        print_auto_kind_status("Stable", &config.ship.auto_stable, stable_next);
+    }
+    Ok(())
+}
+
+fn print_auto_kind_status(
+    label: &str,
+    cfg: &crate::config::loader::ShipAutoConfig,
+    next_fire: Option<chrono::DateTime<chrono::Utc>>,
+) {
+    let status = if cfg.enabled {
+        "enabled".green()
+    } else {
+        "disabled".bright_black()
+    };
+    println!("   {}: {}", label.yellow(), status);
+    if cfg.enabled {
+        println!(
+            "      Schedule:  {} ({})",
+            cfg.schedule.yellow(),
+            cfg.cron_timezone.yellow()
+        );
+        let next_str = next_fire
+            .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+            .unwrap_or_else(|| "unable to compute".to_string());
+        println!("      Next fire: {}", next_str.yellow());
+        println!(
+            "      Qualification gate: {}",
+            if cfg.require_qualification {
+                "required".green()
+            } else {
+                "skipped".yellow()
+            }
+        );
+    }
 }
 
 fn read_version(repo_path: &Path) -> anyhow::Result<String> {
@@ -939,7 +1035,7 @@ fn write_last_ship(
     Ok(())
 }
 
-fn kind_config<'a>(ship: &'a ShipConfig, kind: ShipKind) -> &'a ShipKindConfig {
+fn kind_config(ship: &ShipConfig, kind: ShipKind) -> &ShipKindConfig {
     match kind {
         ShipKind::Stable => &ship.stable,
         ShipKind::Nightly => &ship.nightly,
@@ -1155,7 +1251,7 @@ fn generate_stable_release_notes(repo_path: &Path, version: &str) -> String {
         .iter()
         .filter(|e| e.kind == "stable")
         .map(|e| e.version.as_str())
-        .last();
+        .next_back();
 
     let range = previous.map(|prev| format!("v{}..HEAD", prev));
     let mut cmd = std::process::Command::new("git");

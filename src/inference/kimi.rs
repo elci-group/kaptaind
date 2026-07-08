@@ -166,7 +166,7 @@ fn resolve_api_key(endpoint: KimiEndpoint) -> Option<String> {
 }
 
 /// Resolve model name, falling back to endpoint default if needed
-fn resolve_model<'a>(config: &'a InferenceConfig, endpoint: KimiEndpoint) -> &'a str {
+fn resolve_model(config: &InferenceConfig, endpoint: KimiEndpoint) -> &str {
     if !config.model.is_empty() && config.model != "auto" {
         return &config.model;
     }
@@ -418,8 +418,10 @@ mod tests {
             started_at: chrono::Utc::now(),
             ended_at: chrono::Utc::now(),
         };
-        let mut diff = DiffAnalysis::default();
-        diff.api_added = true;
+        let diff = DiffAnalysis {
+            api_added: true,
+            ..Default::default()
+        };
         let weight = WeightResult {
             score: 0.5,
             api_breaking: false,

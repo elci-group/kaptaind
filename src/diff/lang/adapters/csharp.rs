@@ -82,12 +82,9 @@ impl LanguageAdapter for CsharpAdapter {
 
 fn type_keyword(line: &str) -> Option<&'static str> {
     let tokens: Vec<&str> = line.split_whitespace().collect();
-    for kw in ["class", "interface", "struct", "enum"] {
-        if tokens.contains(&kw) {
-            return Some(kw);
-        }
-    }
-    None
+    ["class", "interface", "struct", "enum"]
+        .into_iter()
+        .find(|&kw| tokens.contains(&kw))
 }
 
 fn extract_type_name(line: &str, keyword: &str) -> Option<String> {
@@ -96,7 +93,7 @@ fn extract_type_name(line: &str, keyword: &str) -> Option<String> {
         if token == keyword {
             let name_token = tokens.next()?;
             let end =
-                name_token.find(|c: char| c == '<' || c == ':' || c == '{' || c == '(' || c == ';');
+                name_token.find(['<', ':', '{', '(', ';']);
             let name = match end {
                 Some(i) => &name_token[..i],
                 None => name_token,

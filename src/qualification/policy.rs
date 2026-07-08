@@ -65,9 +65,9 @@ pub(crate) mod duration_string {
         S: Serializer,
     {
         let secs = d.as_secs();
-        if secs % 3600 == 0 {
+        if secs.is_multiple_of(3600) {
             s.serialize_str(&format!("{}h", secs / 3600))
-        } else if secs % 60 == 0 {
+        } else if secs.is_multiple_of(60) {
             s.serialize_str(&format!("{}m", secs / 60))
         } else {
             s.serialize_str(&format!("{}s", secs))
@@ -103,7 +103,7 @@ pub(crate) mod duration_string {
                 .map(|n| Duration::from_secs(n * 60));
         }
         if let Some(v) = s.strip_suffix('s') {
-            return v.trim().parse::<u64>().ok().map(|n| Duration::from_secs(n));
+            return v.trim().parse::<u64>().ok().map(Duration::from_secs);
         }
         // Plain number → seconds
         s.trim().parse::<u64>().ok().map(Duration::from_secs)

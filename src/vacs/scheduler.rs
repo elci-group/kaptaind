@@ -132,7 +132,7 @@ impl Scheduler {
 
         for (i, file) in files.iter().enumerate() {
             let y = 50 + i * 60;
-            let short_name = escape_xml(file.split('/').last().unwrap_or(file));
+            let short_name = escape_xml(file.split('/').next_back().unwrap_or(file));
 
             nodes += "<rect x=\"150\" y=\"";
             nodes += &y.to_string();
@@ -201,7 +201,7 @@ impl Scheduler {
             let angle = (i as f64 / files.len().min(6) as f64) * 2.0 * std::f64::consts::PI;
             let x = center_x as f64 + radius as f64 * angle.cos();
             let y = center_y as f64 + radius as f64 * angle.sin();
-            let short_name = escape_xml(&truncate(file.split('/').last().unwrap_or(file), 10));
+            let short_name = escape_xml(&truncate(file.split('/').next_back().unwrap_or(file), 10));
 
             components += "<circle cx=\"";
             components += &x.to_string();
@@ -258,7 +258,7 @@ impl Scheduler {
     }
 
     fn generate_state_diagram(&self, _scored: &ScoredConcept) -> String {
-        let states = vec!["Initial", "Processing", "Complete", "Error"];
+        let states = ["Initial", "Processing", "Complete", "Error"];
         let width = 120;
         let gap = 40;
         let total_width = states.len() * width + (states.len() - 1) * gap;
@@ -329,7 +329,7 @@ impl Scheduler {
         let files = &scored.concept.source_refs.files;
         let endpoints: Vec<_> = files
             .iter()
-            .filter_map(|f| f.split('/').last())
+            .filter_map(|f| f.split('/').next_back())
             .map(|f| f.strip_suffix(".rs").unwrap_or(f))
             .collect();
 

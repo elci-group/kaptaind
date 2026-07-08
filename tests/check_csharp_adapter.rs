@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod diff {
     pub mod lang {
         pub mod adapter {

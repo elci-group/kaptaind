@@ -10,6 +10,7 @@ use crate::daemon::status::write_status;
 use crate::daemon::trace::write_trace_if_active;
 use crate::diff::DiffAnalysis;
 use crate::git::repo::Repo;
+use crate::release::ship::{run_nightly, run_stable, OutputFormat, ShipKind, ShipOptions};
 use crate::version::Bump;
 use crate::watcher::FsEvent;
 use chrono::{DateTime, Utc};
@@ -71,6 +72,17 @@ pub async fn run(
         tokio::time::interval(Duration::from_secs(config.prune_interval_minutes * 60));
     // Skip the immediate first tick so we don't prune right on startup
     prune_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    let mut ship_check_interval = tokio::time::interval(Duration::from_secs(60));
+    ship_check_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+
+    let mut pulse_interval = tokio::time::interval(Duration::from_secs(900));
+    pulse_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+    let daemon_start_time = Utc::now();
+    let mut ship_nightly_next_fire: Option<DateTime<Utc>> = None;
+    let mut ship_stable_next_fire: Option<DateTime<Utc>> = None;
+    let ship_running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
     let mut cluster_engine = ClusterEngine::new_from_config(&config.cluster);
     let mut repo = match Repo::open(&config.repo_path) {
@@ -145,6 +157,29 @@ pub async fn run(
                     }
                 });
             }
+            _ = ship_check_interval.tick() => {
+                let now = Utc::now();
+                maybe_run_auto_ship(
+                    &config,
+                    now,
+                    &mut ship_nightly_next_fire,
+                    &mut ship_stable_next_fire,
+                    &ship_running,
+                    &mut tasks,
+                );
+            }
+            _ = pulse_interval.tick() => {
+                let uptime = Utc::now().signed_duration_since(daemon_start_time).num_seconds().max(0) as u64;
+                let clusters = metrics.clusters_processed.load(Ordering::Relaxed) as u64;
+                let version = status.last_version.clone().unwrap_or_else(|| "unknown".to_string());
+                crate::daemon::notification::notify_pulse(
+                    &config.notify,
+                    uptime,
+                    clusters,
+                    &version,
+                    config.capabilities.network_webhooks,
+                );
+            }
             _ = shutdown.wait() => {
                 tracing::info!("shutdown signal received, draining tasks");
                 status.status = State::Stopping;
@@ -167,6 +202,7 @@ pub async fn run(
     tracing::info!("scheduler shutdown complete");
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn process_cluster(
     repo: &mut Repo,
     config: &Config,
@@ -596,6 +632,16 @@ async fn process_cluster(
 
     metrics.commits_made.fetch_add(1, Ordering::Relaxed);
 
+    crate::audit::log_commit(
+        &config.repo_path,
+        &config.shark_instance_id(),
+        &next.to_string(),
+        &format!("{bump:?}"),
+        weight.score as f64,
+        &cluster.id.to_string(),
+        cluster_paths.len(),
+    );
+
     broadcast_event(
         &event_tx,
         "commit_succeeded",
@@ -795,6 +841,10 @@ async fn process_cluster(
     write_status(&config.repo_path, status);
 
     // Fire VACS event
+    let aoc_id = crate::aoc::session::load_active(&config.repo_path)
+        .ok()
+        .flatten()
+        .map(|s| s.id);
     let vacs_event = crate::vacs::VacsEvent {
         event_type: "commit.created".to_string(),
         timestamp: now,
@@ -805,11 +855,13 @@ async fn process_cluster(
                 .filter_map(|p| p.to_str().map(|s| s.to_string()))
                 .collect(),
             diff_summary: msg.clone(),
-            aoc_id: None, // TODO: Extract from session if active
+            aoc_id,
             complexity_score: weight.score as f64,
         },
     };
-    let _ = vacs_engine.ingest(vacs_event).await;
+    if let Err(err) = vacs_engine.ingest(vacs_event).await {
+        tracing::warn!(error = %err, "failed to ingest VACS event");
+    }
 
     // Spawn post-commit qualification and release pipeline (non-blocking)
     if config.qualification.enabled {
@@ -920,6 +972,147 @@ async fn auto_ship_aoc(repo_path: &Path, session: &crate::aoc::AocSession) -> an
     Ok(())
 }
 
+fn maybe_run_auto_ship(
+    config: &Config,
+    now: DateTime<Utc>,
+    nightly_next_fire: &mut Option<DateTime<Utc>>,
+    stable_next_fire: &mut Option<DateTime<Utc>>,
+    ship_running: &std::sync::Arc<std::sync::atomic::AtomicBool>,
+    tasks: &mut JoinSet<()>,
+) {
+    if !config.ship.enabled || ship_running.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
+
+    if config.ship.auto_nightly.enabled {
+        if nightly_next_fire.is_none() {
+            *nightly_next_fire = crate::schedule::next_fire_after(
+                now,
+                &config.ship.auto_nightly.schedule,
+                &config.ship.auto_nightly.cron_timezone,
+            );
+            tracing::info!(
+                next_fire = ?nightly_next_fire,
+                schedule = %config.ship.auto_nightly.schedule,
+                "computed first auto-nightly fire time"
+            );
+        }
+        if nightly_next_fire.is_some_and(|fire| now >= fire) {
+            let config_clone = config.clone();
+            let running = ship_running.clone();
+            tasks.spawn(async move {
+                running.store(true, std::sync::atomic::Ordering::Relaxed);
+                spawn_auto_ship(&config_clone, ShipKind::Nightly).await;
+                running.store(false, std::sync::atomic::Ordering::Relaxed);
+            });
+            *nightly_next_fire = crate::schedule::next_fire_after(
+                now,
+                &config.ship.auto_nightly.schedule,
+                &config.ship.auto_nightly.cron_timezone,
+            );
+        }
+    }
+
+    if config.ship.auto_stable.enabled {
+        if stable_next_fire.is_none() {
+            *stable_next_fire = crate::schedule::next_fire_after(
+                now,
+                &config.ship.auto_stable.schedule,
+                &config.ship.auto_stable.cron_timezone,
+            );
+            tracing::info!(
+                next_fire = ?stable_next_fire,
+                schedule = %config.ship.auto_stable.schedule,
+                "computed first auto-stable fire time"
+            );
+        }
+        if stable_next_fire.is_some_and(|fire| now >= fire) {
+            let config_clone = config.clone();
+            let running = ship_running.clone();
+            tasks.spawn(async move {
+                running.store(true, std::sync::atomic::Ordering::Relaxed);
+                spawn_auto_ship(&config_clone, ShipKind::Stable).await;
+                running.store(false, std::sync::atomic::Ordering::Relaxed);
+            });
+            *stable_next_fire = crate::schedule::next_fire_after(
+                now,
+                &config.ship.auto_stable.schedule,
+                &config.ship.auto_stable.cron_timezone,
+            );
+        }
+    }
+}
+
+async fn spawn_auto_ship(config: &Config, kind: ShipKind) {
+    let auto_cfg = match kind {
+        ShipKind::Nightly => &config.ship.auto_nightly,
+        ShipKind::Stable => &config.ship.auto_stable,
+        ShipKind::Manual => return,
+    };
+
+    let require_qualification = auto_cfg.require_qualification;
+    let opts = ShipOptions {
+        kind,
+        require_qualification,
+        format: OutputFormat::Json,
+        ..ShipOptions::default()
+    };
+
+    let kind_str = kind.as_str();
+    tracing::info!(kind = kind_str, "starting automated ship release");
+
+    let result = match kind {
+        ShipKind::Nightly => run_nightly(config, opts).await,
+        ShipKind::Stable => run_stable(config, opts).await,
+        ShipKind::Manual => unreachable!(),
+    };
+
+    match result {
+        Ok(ship_result) => {
+            tracing::info!(
+                kind = kind_str,
+                version = %ship_result.version,
+                artifacts = ship_result.artifacts.len(),
+                channels = ?ship_result.distributed,
+                "automated ship release succeeded"
+            );
+            crate::audit::log_release(
+                &config.repo_path,
+                "daemon-auto",
+                &ship_result.version,
+                kind_str,
+                &ship_result.distributed,
+                true,
+            );
+            crate::daemon::notification::notify_release_success(
+                &config.notify,
+                &ship_result.version,
+                kind_str,
+                &ship_result.distributed,
+                config.capabilities.network_webhooks,
+            );
+        }
+        Err(err) => {
+            tracing::error!(kind = kind_str, error = %err, "automated ship release failed");
+            crate::audit::log_release(
+                &config.repo_path,
+                "daemon-auto",
+                "unknown",
+                kind_str,
+                &[],
+                false,
+            );
+            crate::daemon::notification::notify_release_failure(
+                &config.notify,
+                "unknown",
+                kind_str,
+                &err.to_string(),
+                config.capabilities.network_webhooks,
+            );
+        }
+    }
+}
+
 async fn prune_directory(dir_path: &Path, max_items: usize) {
     if !dir_path.exists() || !dir_path.is_dir() {
         return;
@@ -945,7 +1138,7 @@ async fn prune_directory(dir_path: &Path, max_items: usize) {
     }
 
     // Sort by modified time, newest first
-    files.sort_by(|a, b| b.1.cmp(&a.1));
+    files.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     // Delete everything after max_items
     for (path, _) in files.into_iter().skip(max_items) {

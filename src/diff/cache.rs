@@ -132,6 +132,11 @@ impl AstCache {
         self.entries.len()
     }
 
+    /// Whether the cache contains no entries.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     /// Evict entries for files that no longer exist relative to repo_root.
     pub fn prune(&mut self, repo_root: &Path) {
         let before = self.entries.len();
@@ -280,8 +285,10 @@ mod tests {
 
     #[test]
     fn cache_respects_capacity() {
-        let mut cache = AstCache::default();
-        cache.capacity = 2;
+        let mut cache = AstCache {
+            capacity: 2,
+            ..Default::default()
+        };
         let ast = AstRepresentation::default();
         cache.put("a.rs", "h1", &ast);
         cache.put("b.rs", "h2", &ast);

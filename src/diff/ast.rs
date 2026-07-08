@@ -273,7 +273,7 @@ fn extract_signatures_fallback(path: &Path) -> HashSet<String> {
     let reader = BufReader::new(file);
     reader
         .lines()
-        .filter_map(Result::ok)
+        .map_while(Result::ok)
         .map(|s| s.trim().to_string())
         .filter_map(|s| signature_from_line(&s))
         .collect()
@@ -672,7 +672,7 @@ pub fn public_fn() {}
         let mut cache = crate::diff::cache::AstCache::default();
         let a1 = super::api_score_with_cache(&cluster, dir.path(), &mut cache);
         assert_eq!(a1.cache_hits, 0);
-        assert!(cache.len() > 0);
+        assert!(!cache.is_empty());
 
         // Second call with same file: should hit cache
         let a2 = super::api_score_with_cache(&cluster, dir.path(), &mut cache);

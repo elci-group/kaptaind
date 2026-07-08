@@ -120,7 +120,7 @@ impl GitHookManager {
         }
 
         // Install custom hooks
-        for (name, _) in &self.config.custom {
+        for name in self.config.custom.keys() {
             self.install_hook_script(name)?;
         }
 
@@ -155,7 +155,7 @@ impl GitHookManager {
             }
         }
 
-        for (name, _) in &self.config.custom {
+        for name in self.config.custom.keys() {
             let hook_path = self.hooks_dir.join(name);
             if hook_path.exists() && self.is_kaptaind_managed(&hook_path)? {
                 std::fs::remove_file(&hook_path)?;
@@ -200,7 +200,7 @@ impl GitHookManager {
             }
         }
 
-        self.run_hook_command(hook_name, &config, args).await
+        self.run_hook_command(hook_name, config, args).await
     }
 
     /// Run pre-commit hooks.

@@ -11,7 +11,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 /// Top-level Angler configuration.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct AnglerConfig {
     /// Git hooks configuration
     #[serde(default)]
@@ -28,17 +28,6 @@ pub struct AnglerConfig {
     /// Bait plugin system configuration
     #[serde(default)]
     pub bait: BaitConfig,
-}
-
-impl Default for AnglerConfig {
-    fn default() -> Self {
-        Self {
-            git_hooks: GitHooksConfig::default(),
-            webhooks: WebhooksConfig::default(),
-            selective: SelectiveConfig::default(),
-            bait: BaitConfig::default(),
-        }
-    }
 }
 
 // =============================================================================
@@ -141,7 +130,7 @@ pub struct HookConfig {
 // =============================================================================
 
 /// Enhanced webhook system configuration.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct WebhooksConfig {
     /// Enable enhanced webhooks
     #[serde(default)]
@@ -158,17 +147,6 @@ pub struct WebhooksConfig {
     /// Signature verification settings
     #[serde(default)]
     pub signature: SignatureConfig,
-}
-
-impl Default for WebhooksConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            endpoints: Vec::new(),
-            default_retry: RetryConfig::default(),
-            signature: SignatureConfig::default(),
-        }
-    }
 }
 
 /// Individual webhook endpoint configuration.

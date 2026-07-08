@@ -116,10 +116,28 @@ mode = "auto"
 # require_qualification = false
 # release_notes = true
 # retain_count = 7
+#
+# Automated daemon-driven release trains. When enabled, the scheduler will run
+# the ship pipeline on the configured cron schedule, log to audit, and send
+# nautical release notifications.
+# [ship.auto_nightly]
+# enabled = false
+# schedule = "0 2 * * *"      # min hour day month weekday
+# cron_timezone = "local"     # "local" or "utc"
+# require_qualification = false
+#
+# [ship.auto_stable]
+# enabled = false
+# schedule = "0 9 * * 1"      # e.g. 09:00 every Monday
+# cron_timezone = "local"
+# require_qualification = true
 
 [notify]
 # Toggle the nautical emoji theme for all notification renderers.
 nautical_theme = true
+
+# Minimum seconds between duplicate event notifications. Set to 0 to disable.
+rate_limit_seconds = 5
 
 # Shell hooks are executed with `sh -c`. Available env vars depend on the event:
 #   Commit:     KAPTAIND_EVENT=commit, KAPTAIND_VERSION, KAPTAIND_SCORE, KAPTAIND_MSG, KAPTAIND_FILES
@@ -134,3 +152,7 @@ nautical_theme = true
 
 # Generic Discord or Slack webhook for commit/push/error/start/stop events.
 # webhook_url = "https://discord.com/api/webhooks/..."
+
+# Structured audit logging for compliance and incident response
+# [audit]
+# enabled = true

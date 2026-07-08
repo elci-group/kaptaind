@@ -206,6 +206,12 @@ pub struct ConceptExtractor {
     history: std::sync::Mutex<Vec<(String, ConceptType)>>,
 }
 
+impl Default for ConceptExtractor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConceptExtractor {
     pub fn new() -> Self {
         Self {
@@ -245,7 +251,7 @@ impl ConceptExtractor {
                 continue;
             }
 
-            let concept = self.create_concept(event, concept_type, &type_files, &files);
+            let concept = self.create_concept(event, concept_type, &type_files, files);
 
             concepts.push(concept);
         }

@@ -15,7 +15,7 @@
 - `src/cli/main.rs` — CLI binary (`kaptaind-cli`) with `status`, `log`, `analyze`, `init`, `aoc`, and `ship` subcommands.
 - `src/config/` — config loading, path normalization, staging/bundle/notify config structs.
 - `src/watcher/` — filesystem event types and notify-based watcher thread.
-- `src/daemon/` — async runtime, scheduler loop, telemetry tracking.
+- `src/daemon/` — async runtime, scheduler loop, telemetry tracking, health server, storage management (deckhand), HA leader election (shark), notifications, and audit logging.
 - `src/cluster/` — event clustering by time window.
 - `src/diff/` — scoring across five dimensions:
   - `text.rs` — structural scoring (event density, path spread, churn).
@@ -25,13 +25,19 @@
   - `lang/` — language adapter framework:
     - `adapter.rs` — `Language` newtype, `LanguageAdapter` trait, `Symbol`, `AstRepresentation`, `ApiSurface`, `AstDiff`.
     - `registry.rs` — `AdapterRegistry` resolves file paths to language adapters.
-    - `adapters/` — one module per concrete adapter (Rust, Go, Swift, Kotlin, TypeScript, JavaScript, Vue, Svelte, Astro, SCSS, HTML/CSS, Python) plus shared helpers in `common.rs`.
+    - `adapters/` — one module per concrete adapter (Rust, Go, Swift, Kotlin, Java, TypeScript, JavaScript, Vue, Svelte, Astro, SCSS, HTML/CSS, Python, Ruby, Elixir, PHP, .NET/C#, Dart, Lua, Scala, Clojure, Haskell, Julia, R, Perl, C/C++) plus shared helpers in `common.rs`.
 - `src/weight/` — weighted score calculation (`s*structural + a*api + d*deps + r*runtime + b*bundle`).
 - `src/version/` — semantic bump decision and `semver::Version` mutation.
 - `src/commit/` — git commit orchestration with configurable staging (all/cluster/pattern modes + exclude patterns).
 - `src/push/` — git push orchestration.
 - `src/git/` — thin repository wrapper.
 - `src/aoc/` — Aim of Change sessions, traces, agent interception, manifests.
+- `src/qualification/` — release qualification gates (stability, streak, cooldown, diff spike).
+- `src/stability/` — per-commit stability scoring.
+- `src/release/` — post-commit release pipeline (build, package, distribute, ship stable/nightly).
+- `src/schedule/` — cron scheduling helpers for daemon-driven automated releases.
+- `src/trawler/` — intelligent project discovery and bulk initialization.
+- `src/vacs/` — Visual Asset Channel Saturation (change-driven diagrams/charts).
 - `src/angler/` — 🎣 Hook and selective capture system with four capabilities:
   - `config.rs` — Angler configuration (git hooks, webhooks, selective capture, bait plugins).
   - `git_hooks.rs` — Client-side git hook management (pre-commit, post-commit, pre-push, etc.).
@@ -46,7 +52,7 @@
 1. `config::loader::load()` reads `kaptaind.toml` from the current working directory, or falls back to defaults. Includes `StagingConfig`, `BundleConfig`, `NotifyConfig`.
 2. `daemon::runtime::start()` creates a Tokio MPSC channel, starts the watcher thread, and spawns the scheduler task.
 3. `watcher::fs::start()` converts `notify` events into `FsEvent` values and sends them across the channel.
-4. `daemon::scheduler::run()` batches events with `ClusterEngine`, filters ignored paths, rate-limits commits, runs the configured test hook, analyzes the diff (structural + API + deps + runtime + optional bundle), computes weight + bump, writes `VERSION` (+ updates `Cargo.toml`), stores an analysis artifact, commits with configurable staging, optionally pushes, sends notifications, writes AoC traces if a session is active, auto-prunes old artifacts, and invokes Angler hooks (pre-commit, post-commit, webhooks, selective capture checks, and bait plugins) at appropriate lifecycle points.
+4. `daemon::scheduler::run()` batches events with `ClusterEngine`, filters ignored paths, rate-limits commits, runs the configured test hook, analyzes the diff (structural + API + deps + runtime + optional bundle), computes weight + bump, writes `VERSION` (+ updates `Cargo.toml`), stores an analysis artifact, commits with configurable staging, optionally pushes, sends notifications, writes AoC traces if a session is active, auto-prunes old artifacts, invokes Angler hooks (pre-commit, post-commit, webhooks, selective capture checks, and bait plugins), evaluates release qualification, and—when `[ship.auto_nightly]`/`[ship.auto_stable]` are enabled—runs automated ship releases on their cron schedules while emitting nautical release/qualification/pulse notifications.
 
 ## Configuration and on-disk files
 - Main config file: `kaptaind.toml` in the current working directory.

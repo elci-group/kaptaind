@@ -45,7 +45,8 @@ impl LanguageVersion {
 pub fn detect_all(cache: &mut VersionCache, repo_path: &Path) -> HashMap<String, LanguageVersion> {
     let mut map = HashMap::new();
 
-    let detectors: &[(&str, fn(&Path) -> Option<LanguageVersion>)] = &[
+    type DetectorFn = fn(&Path) -> Option<LanguageVersion>;
+    let detectors: &[(&str, DetectorFn)] = &[
         ("rust", detect_rust),
         ("go", detect_go),
         ("python", detect_python),
@@ -150,7 +151,7 @@ fn detect_python(repo_path: &Path) -> Option<LanguageVersion> {
     if let Ok(content) = std::fs::read_to_string(repo_path.join("setup.cfg")) {
         for line in content.lines() {
             if let Some(rest) = line.trim().strip_prefix("python_requires") {
-                let ver = rest.trim_start_matches(|c: char| c == '=' || c == ' ' || c == '>');
+                let ver = rest.trim_start_matches(['=', ' ', '>']);
                 if !ver.is_empty() {
                     return Some(LanguageVersion {
                         version: normalise_python_version(ver.trim()),

@@ -196,8 +196,10 @@ mod tests {
             started_at: chrono::Utc::now(),
             ended_at: chrono::Utc::now(),
         };
-        let mut diff = DiffAnalysis::default();
-        diff.api_added = true;
+        let diff = DiffAnalysis {
+            api_added: true,
+            ..Default::default()
+        };
         let weight = WeightResult {
             score: 0.5,
             api_breaking: false,

@@ -178,6 +178,7 @@ kaptaind-cli ship nightly             # Ship a nightly prerelease
 kaptaind-cli ship nightly --no-force  # Enforce qualification gates
 kaptaind-cli ship nightly --dry-run   # Preview the nightly version
 kaptaind-cli ship status              # Show the last ship run
+kaptaind-cli ship status --auto       # Show last run + next auto-ship fires
 kaptaind-cli ship status --format json
 ```
 
@@ -188,10 +189,13 @@ from commits since the previous stable release. `nightly` computes a prerelease
 version such as `0.1.2-nightly.20260707.abc1234`, marks the GitHub release as a
 prerelease, skips qualification gates by default, refuses to ship the same
 date+commit twice (unless `--force` is used), and can automatically prune old
-builds via `retain_count` in `[ship.nightly]`. Configure per-kind targets,
-channels, draft/prerelease flags, tag-pushing behavior, and retention under
-`[ship.stable]` and `[ship.nightly]` in `kaptaind.toml`. Schedule them with
-`cron` or your CI provider for fully automated release trains.
+builds via `retain_count` in `[ship.nightly]`.
+
+The daemon can also run these releases automatically on a cron schedule via
+`[ship.auto_nightly]` and `[ship.auto_stable]`. When enabled, the scheduler
+computes the next fire time, runs the ship pipeline, logs to the audit log, and
+sends nautical release notifications. Use `kaptaind-cli ship status --auto` to
+preview the next scheduled fires.
 
 ![Kaptaind Analyze and Log Demo](analyze_and_log.gif)
 
@@ -281,6 +285,9 @@ min_score_for_inference = 0.0  # Skip LLM when score is below this threshold (sa
 # Toggle the nautical emoji theme used by desktop and webhook renderers.
 nautical_theme = true
 
+# Minimum seconds between duplicate event notifications. Set to 0 to disable.
+rate_limit_seconds = 5
+
 # Shell hooks are executed with `sh -c`. Available env vars depend on the event:
 #   Commit:     KAPTAIND_EVENT=commit, KAPTAIND_VERSION, KAPTAIND_SCORE, KAPTAIND_MSG, KAPTAIND_FILES
 #   Push:       KAPTAIND_EVENT=push_success|push_failure, KAPTAIND_VERSION, KAPTAIND_BRANCH, KAPTAIND_REMOTE, KAPTAIND_ERROR
@@ -294,6 +301,10 @@ nautical_theme = true
 
 # Generic Discord or Slack webhook for commit/push/error/start/stop events.
 # webhook_url = "https://discord.com/api/webhooks/..."
+
+# Structured audit logging for compliance and incident response
+# [audit]
+# enabled = true
 
 # Configurable version bump thresholds (defaults shown)
 # [version_thresholds]
@@ -330,6 +341,120 @@ nautical_theme = true
 # mode = "all"               # "all" (default), "cluster" (only changed files), or "pattern"
 # include = ["src/**"]       # Glob patterns to include (only used in "pattern" mode)
 # exclude = ["*.log", ".env*"] # Glob patterns to always exclude from commits
+
+# [version_thresholds]
+# minor = 0.6   # Score above this triggers a Minor bump
+# patch = 0.1   # Score above this triggers a Patch bump
+
+# Capability flags for air-gapped / locked-down environments
+# [capabilities]
+# network_push = true        # Allow git push
+# network_webhooks = true    # Allow webhook delivery
+# network_inference = true   # Allow LLM API calls
+# bundle_scoring = true      # Allow running the bundle build command
+# external_plugins = true    # Allow external plugin adapters and bait plugins
+
+# Automatic codebase discovery (used by `kaptaind-cli trawl` and daemon startup)
+# [trawl]
+# auto_trawl = false
+# max_depth = 3
+# skip_initialized = true
+# require_git = false
+# auto_register = true
+# project_types = []         # e.g. ["rust", "node", "python"]; empty = all
+# interval_secs = 0          # 0 = run only on startup
+
+# Automated storage hygiene for Cargo/Node caches and build artifacts
+# [deckhand]
+# enabled = false
+# interval_minutes = 360
+# sweep_keep_days = 30
+# clean_profiles = ["debug"]
+# clean_older_than_days = 14
+# dry_run = false
+# min_free_percent = 10      # Skip cleaning if free space is above this %
+
+# High-availability / zero-downtime upgrade leadership
+# [shark]
+# enabled = false
+# arbiter_path = ".kaptaind/shark"
+# heartbeat_interval_ms = 1000
+# heartbeat_timeout_ms = 5000
+# lease_ttl_ms = 10000
+# upgrade_handoff_timeout_ms = 30000
+# mode = "auto"              # "auto", "leader", "standby", "observer"
+
+# Visual Asset Channel Saturation (change summarization assets)
+# [vacs]
+# enabled = false
+# mode = "balanced"
+# allowed_assets = ["diagram", "chart"]
+# video_enabled = false
+# max_jobs_per_hour = 5
+
+# Release binary / installer / distribution pipeline
+# [ship]
+# enabled = false
+# targets = [
+#   "x86_64-unknown-linux-gnu",
+#   "aarch64-unknown-linux-gnu",
+#   "x86_64-apple-darwin",
+#   "aarch64-apple-darwin",
+#   "x86_64-pc-windows-msvc",
+# ]
+# require_qualification = true
+#
+# [ship.installers]
+# shell = false
+# tauri = false
+#
+# [[ship.package_managers]]
+# kind = "homebrew"
+# tap = "github.com/elci-group/homebrew-tap"
+# formula_name = "kaptaind"
+# token_env = "HOMEBREW_GITHUB_API_TOKEN"
+#
+# [[ship.app_stores]]
+# kind = "github-releases"
+# draft = false
+# prerelease = false
+# token_env = "GITHUB_TOKEN"
+#
+# [ship.stable]
+# targets = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]
+# channels = ["binaries", "github-releases"]
+# push_tag = true
+# require_qualification = true
+# release_notes = true
+#
+# [ship.nightly]
+# targets = ["x86_64-unknown-linux-gnu"]
+# channels = ["binaries", "github-releases"]
+# draft = true
+# push_tag = false
+# require_qualification = false
+# release_notes = true
+# retain_count = 7
+#
+# [ship.auto_nightly]
+# enabled = false
+# schedule = "0 2 * * *"      # 5-field cron: min hour day month weekday
+# cron_timezone = "local"     # "local" or "utc"
+# require_qualification = false
+#
+# [ship.auto_stable]
+# enabled = false
+# schedule = "0 9 * * 1"      # e.g. 09:00 every Monday
+# cron_timezone = "local"
+# require_qualification = true
+
+# Kimi-specific inference options (in addition to the generic [inference] block)
+# [inference]
+# kimi_endpoint = "global"      # "global", "china", "coding", or omit for auto
+# kimi_base_url = "..."         # Optional override
+# kimi_model = "kimi-k2.5"
+# kimi_thinking = false
+# kimi_extended_context = false
 ```
 
 ### .kaptainignore

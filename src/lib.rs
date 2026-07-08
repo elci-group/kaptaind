@@ -1,5 +1,6 @@
 pub mod angler;
 pub mod aoc;
+pub mod audit;
 pub mod cluster;
 pub mod commit;
 pub mod config;
@@ -11,6 +12,7 @@ pub mod installer;
 pub mod push;
 pub mod qualification;
 pub mod release;
+pub mod schedule;
 pub mod stability;
 pub mod trawler;
 pub mod util;

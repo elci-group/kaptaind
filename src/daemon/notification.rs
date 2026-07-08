@@ -2,12 +2,18 @@
 //!
 //! Supports:
 //! - Native desktop notifications via notify-rust (when feature enabled)
-//! - Shell command hooks (`on_commit`, `on_error`, `on_push`, `on_start`, `on_shutdown`)
+//! - Shell command hooks (`on_commit`, `on_error`, `on_push`, `on_start`, `on_shutdown`, `on_release`, `on_qualification`, `on_pulse`)
 //! - Webhook notifications (Discord, Slack, generic)
 //! - Status bar integration via status.json
 //! - A beautified nautical theme with emoji and maritime phrasing
 
 use crate::config::loader::NotifyConfig;
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::Instant;
+
+/// Last-notification timestamps per event name, used for deduplication/rate limiting.
+static LAST_SENT: Mutex<Option<HashMap<String, Instant>>> = Mutex::new(None);
 
 /// Desktop notification priority.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +51,26 @@ pub enum NotificationEvent<'a> {
     MonitorStop {
         repo_path: &'a str,
     },
+    ReleaseSuccess {
+        version: &'a str,
+        kind: &'a str,
+        channels: &'a [String],
+    },
+    ReleaseFailure {
+        version: &'a str,
+        kind: &'a str,
+        error: &'a str,
+    },
+    Qualification {
+        version: &'a str,
+        passed: bool,
+        reason: Option<&'a str>,
+    },
+    Pulse {
+        uptime_secs: u64,
+        clusters: u64,
+        last_version: &'a str,
+    },
 }
 
 impl NotificationEvent<'_> {
@@ -56,6 +82,10 @@ impl NotificationEvent<'_> {
             NotificationEvent::Error { .. } => "error",
             NotificationEvent::MonitorStart { .. } => "start",
             NotificationEvent::MonitorStop { .. } => "stop",
+            NotificationEvent::ReleaseSuccess { .. } => "release_success",
+            NotificationEvent::ReleaseFailure { .. } => "release_failure",
+            NotificationEvent::Qualification { .. } => "qualification",
+            NotificationEvent::Pulse { .. } => "pulse",
         }
     }
 
@@ -68,6 +98,11 @@ impl NotificationEvent<'_> {
             NotificationEvent::Error { .. } => config.on_error.as_ref(),
             NotificationEvent::MonitorStart { .. } => config.on_start.as_ref(),
             NotificationEvent::MonitorStop { .. } => config.on_shutdown.as_ref(),
+            NotificationEvent::ReleaseSuccess { .. } | NotificationEvent::ReleaseFailure { .. } => {
+                config.on_release.as_ref()
+            }
+            NotificationEvent::Qualification { .. } => config.on_qualification.as_ref(),
+            NotificationEvent::Pulse { .. } => config.on_pulse.as_ref(),
         }
     }
 }
@@ -82,6 +117,11 @@ struct RenderedNotification {
 
 /// Send a notification for any supported event through all configured channels.
 pub fn notify(config: &NotifyConfig, event: NotificationEvent<'_>, webhook_enabled: bool) {
+    if is_rate_limited(config.rate_limit_seconds, event.event_name()) {
+        tracing::debug!(event = event.event_name(), "notification rate-limited");
+        return;
+    }
+
     let rendered = render(&event, config.nautical_theme);
 
     // Shell command hook.
@@ -113,6 +153,28 @@ pub fn notify(config: &NotifyConfig, event: NotificationEvent<'_>, webhook_enabl
             });
         }
     }
+}
+
+fn is_rate_limited(limit_seconds: u64, event_name: &str) -> bool {
+    if limit_seconds == 0 {
+        return false;
+    }
+    let now = Instant::now();
+    let mut guard = LAST_SENT.lock().unwrap_or_else(|e| e.into_inner());
+    let map = guard.get_or_insert_with(HashMap::new);
+    if let Some(last) = map.get(event_name) {
+        if now.duration_since(*last).as_secs() < limit_seconds {
+            return true;
+        }
+    }
+    map.insert(event_name.to_string(), now);
+    false
+}
+
+#[cfg(test)]
+fn reset_rate_limiter() {
+    let mut guard = LAST_SENT.lock().unwrap_or_else(|e| e.into_inner());
+    *guard = None;
 }
 
 fn inject_env(command: &mut std::process::Command, event: &NotificationEvent<'_>) {
@@ -158,6 +220,46 @@ fn inject_env(command: &mut std::process::Command, event: &NotificationEvent<'_>
         NotificationEvent::MonitorStart { repo_path }
         | NotificationEvent::MonitorStop { repo_path } => {
             command.env("KAPTAIND_REPO_PATH", *repo_path);
+        }
+        NotificationEvent::ReleaseSuccess {
+            version,
+            kind,
+            channels,
+        } => {
+            command
+                .env("KAPTAIND_VERSION", *version)
+                .env("KAPTAIND_RELEASE_KIND", *kind)
+                .env("KAPTAIND_CHANNELS", channels.join(","));
+        }
+        NotificationEvent::ReleaseFailure {
+            version,
+            kind,
+            error,
+        } => {
+            command
+                .env("KAPTAIND_VERSION", *version)
+                .env("KAPTAIND_RELEASE_KIND", *kind)
+                .env("KAPTAIND_ERROR", *error);
+        }
+        NotificationEvent::Qualification {
+            version,
+            passed,
+            reason,
+        } => {
+            command
+                .env("KAPTAIND_VERSION", *version)
+                .env("KAPTAIND_QUALIFIED", if *passed { "true" } else { "false" })
+                .env("KAPTAIND_QUALIFY_REASON", reason.unwrap_or(""));
+        }
+        NotificationEvent::Pulse {
+            uptime_secs,
+            clusters,
+            last_version,
+        } => {
+            command
+                .env("KAPTAIND_UPTIME_SECS", uptime_secs.to_string())
+                .env("KAPTAIND_CLUSTERS", clusters.to_string())
+                .env("KAPTAIND_VERSION", *last_version);
         }
     }
 }
@@ -283,6 +385,99 @@ fn render_nautical(event: &NotificationEvent<'_>) -> RenderedNotification {
                 priority: Priority::Low,
             }
         }
+        NotificationEvent::ReleaseSuccess {
+            version,
+            kind,
+            channels,
+        } => {
+            let title = format!("🚢 Fleet launched — v{} ({})", version, kind);
+            let channels_txt = channels.join(", ");
+            let body = format!("Broadcast to: {}", channels_txt);
+            let webhook = format!(
+                "🚢 **Fleet launched** — `v{}` ({})
+**Channels:** {}",
+                version, kind, channels_txt
+            );
+            RenderedNotification {
+                title,
+                body,
+                webhook,
+                priority: Priority::Normal,
+            }
+        }
+        NotificationEvent::ReleaseFailure {
+            version,
+            kind,
+            error,
+        } => {
+            let title = format!("🆘 Fleet ran aground — v{} ({})", version, kind);
+            let body = truncate(error, 200).to_string();
+            let webhook = format!(
+                "🆘 **Fleet ran aground** — `v{}` ({})
+```\n{}\n```",
+                version,
+                kind,
+                truncate(error, 3500)
+            );
+            RenderedNotification {
+                title,
+                body,
+                webhook,
+                priority: Priority::High,
+            }
+        }
+        NotificationEvent::Qualification {
+            version,
+            passed,
+            reason,
+        } => {
+            let (title, priority) = if *passed {
+                (format!("✅ Clear skies for v{}", version), Priority::Normal)
+            } else {
+                (format!("⛈️ Storm ahead for v{}", version), Priority::High)
+            };
+            let body = reason.map(|r| truncate(r, 200)).unwrap_or_default();
+            let webhook = format!(
+                "{} **{}** for `v{}`{}",
+                if *passed { "✅" } else { "⛈️" },
+                if *passed {
+                    "Clear skies"
+                } else {
+                    "Storm ahead"
+                },
+                version,
+                reason
+                    .map(|r| format!("\n```\n{}\n```", truncate(r, 3500)))
+                    .unwrap_or_default()
+            );
+            RenderedNotification {
+                title,
+                body,
+                webhook,
+                priority,
+            }
+        }
+        NotificationEvent::Pulse {
+            uptime_secs,
+            clusters,
+            last_version,
+        } => {
+            let title = format!("⚓ Still on watch — v{}", last_version);
+            let body = format!(
+                "Uptime: {}s | Clusters processed: {}",
+                uptime_secs, clusters
+            );
+            let webhook = format!(
+                "⚓ **Still on watch** — `v{}`\nUptime: `{}s` | Clusters: `{}`",
+                last_version, uptime_secs, clusters
+            );
+            RenderedNotification {
+                title,
+                body,
+                webhook,
+                priority: Priority::Low,
+            }
+        }
     }
 }
 
@@ -399,6 +594,99 @@ fn render_plain(event: &NotificationEvent<'_>) -> RenderedNotification {
                 priority: Priority::Low,
             }
         }
+        NotificationEvent::ReleaseSuccess {
+            version,
+            kind,
+            channels,
+        } => {
+            let title = format!("Released {} v{}", kind, version);
+            let channels_txt = channels.join(", ");
+            let body = format!("Published to: {}", channels_txt);
+            let webhook = format!(
+                "**Released** `{}` v{}\n**Channels:** {}",
+                kind, version, channels_txt
+            );
+            RenderedNotification {
+                title,
+                body,
+                webhook,
+                priority: Priority::Normal,
+            }
+        }
+        NotificationEvent::ReleaseFailure {
+            version,
+            kind,
+            error,
+        } => {
+            let title = format!("Release failed for {} v{}", kind, version);
+            let body = truncate(error, 200).to_string();
+            let webhook = format!(
+                "**Release failed** for `{}` v{}\n```\n{}\n```",
+                kind,
+                version,
+                truncate(error, 3500)
+            );
+            RenderedNotification {
+                title,
+                body,
+                webhook,
+                priority: Priority::High,
+            }
+        }
+        NotificationEvent::Qualification {
+            version,
+            passed,
+            reason,
+        } => {
+            let (title, priority) = if *passed {
+                (
+                    format!("Qualified v{} for release", version),
+                    Priority::Normal,
+                )
+            } else {
+                (format!("v{} failed qualification", version), Priority::High)
+            };
+            let body = reason.map(|r| truncate(r, 200)).unwrap_or_default();
+            let webhook = format!(
+                "**{}** for `v{}`{}",
+                if *passed {
+                    "Qualified for release"
+                } else {
+                    "Failed qualification"
+                },
+                version,
+                reason
+                    .map(|r| format!("\n```\n{}\n```", truncate(r, 3500)))
+                    .unwrap_or_default()
+            );
+            RenderedNotification {
+                title,
+                body,
+                webhook,
+                priority,
+            }
+        }
+        NotificationEvent::Pulse {
+            uptime_secs,
+            clusters,
+            last_version,
+        } => {
+            let title = format!("Kaptaind pulse — v{}", last_version);
+            let body = format!(
+                "Uptime: {}s | Clusters processed: {}",
+                uptime_secs, clusters
+            );
+            let webhook = format!(
+                "**Kaptaind pulse** — `v{}`\nUptime: `{}s` | Clusters: `{}`",
+                last_version, uptime_secs, clusters
+            );
+            RenderedNotification {
+                title,
+                body,
+                webhook,
+                priority: Priority::Low,
+            }
+        }
     }
 }
 
@@ -492,6 +780,82 @@ pub fn notify_stop(config: &NotifyConfig, repo_path: &std::path::Path, webhook_e
         config,
         NotificationEvent::MonitorStop {
             repo_path: &repo_path.display().to_string(),
+        },
+        webhook_enabled,
+    );
+}
+
+/// Send a release-success notification.
+pub fn notify_release_success(
+    config: &NotifyConfig,
+    version: &str,
+    kind: &str,
+    channels: &[String],
+    webhook_enabled: bool,
+) {
+    notify(
+        config,
+        NotificationEvent::ReleaseSuccess {
+            version,
+            kind,
+            channels,
+        },
+        webhook_enabled,
+    );
+}
+
+/// Send a release-failure notification.
+pub fn notify_release_failure(
+    config: &NotifyConfig,
+    version: &str,
+    kind: &str,
+    error: &str,
+    webhook_enabled: bool,
+) {
+    notify(
+        config,
+        NotificationEvent::ReleaseFailure {
+            version,
+            kind,
+            error,
+        },
+        webhook_enabled,
+    );
+}
+
+/// Send a qualification notification.
+pub fn notify_qualification(
+    config: &NotifyConfig,
+    version: &str,
+    passed: bool,
+    reason: Option<&str>,
+    webhook_enabled: bool,
+) {
+    notify(
+        config,
+        NotificationEvent::Qualification {
+            version,
+            passed,
+            reason,
+        },
+        webhook_enabled,
+    );
+}
+
+/// Send a pulse/heartbeat notification.
+pub fn notify_pulse(
+    config: &NotifyConfig,
+    uptime_secs: u64,
+    clusters: u64,
+    last_version: &str,
+    webhook_enabled: bool,
+) {
+    notify(
+        config,
+        NotificationEvent::Pulse {
+            uptime_secs,
+            clusters,
+            last_version,
         },
         webhook_enabled,
     );
@@ -613,5 +977,101 @@ mod tests {
             true,
         );
         assert!(rendered.title.contains("Ahoy"));
+    }
+
+    #[test]
+    fn rate_limiter_allows_first_event() {
+        reset_rate_limiter();
+        assert!(!is_rate_limited(5, "allows_first"));
+    }
+
+    #[test]
+    fn rate_limiter_blocks_duplicate_within_window() {
+        reset_rate_limiter();
+        assert!(!is_rate_limited(5, "blocks_duplicate"));
+        assert!(is_rate_limited(5, "blocks_duplicate"));
+    }
+
+    #[test]
+    fn rate_limiter_disabled_when_zero() {
+        reset_rate_limiter();
+        assert!(!is_rate_limited(0, "disabled"));
+        assert!(!is_rate_limited(0, "disabled"));
+    }
+
+    #[test]
+    fn nautical_release_success_mentions_fleet_launched() {
+        let rendered = render(
+            &NotificationEvent::ReleaseSuccess {
+                version: "1.2.3",
+                kind: "stable",
+                channels: &["github".to_string(), "homebrew".to_string()],
+            },
+            true,
+        );
+        assert!(rendered.title.contains("Fleet launched"));
+        assert!(rendered.title.contains("v1.2.3"));
+        assert!(rendered.title.contains("stable"));
+        assert!(rendered.body.contains("github"));
+    }
+
+    #[test]
+    fn nautical_release_failure_mentions_fleet_ran_aground() {
+        let rendered = render(
+            &NotificationEvent::ReleaseFailure {
+                version: "1.2.3",
+                kind: "nightly",
+                error: "upload timed out",
+            },
+            true,
+        );
+        assert!(rendered.title.contains("Fleet ran aground"));
+        assert!(rendered.title.contains("nightly"));
+        assert_eq!(rendered.priority, Priority::High);
+    }
+
+    #[test]
+    fn nautical_qualification_passed_clear_skies() {
+        let rendered = render(
+            &NotificationEvent::Qualification {
+                version: "1.2.3",
+                passed: true,
+                reason: Some("all gates green"),
+            },
+            true,
+        );
+        assert!(rendered.title.contains("Clear skies"));
+        assert!(rendered.body.contains("all gates green"));
+        assert_eq!(rendered.priority, Priority::Normal);
+    }
+
+    #[test]
+    fn nautical_qualification_failed_storm_ahead() {
+        let rendered = render(
+            &NotificationEvent::Qualification {
+                version: "1.2.3",
+                passed: false,
+                reason: Some("streak too low"),
+            },
+            true,
+        );
+        assert!(rendered.title.contains("Storm ahead"));
+        assert_eq!(rendered.priority, Priority::High);
+    }
+
+    #[test]
+    fn nautical_pulse_still_on_watch() {
+        let rendered = render(
+            &NotificationEvent::Pulse {
+                uptime_secs: 123,
+                clusters: 7,
+                last_version: "1.2.3",
+            },
+            true,
+        );
+        assert!(rendered.title.contains("Still on watch"));
+        assert!(rendered.title.contains("v1.2.3"));
+        assert!(rendered.body.contains("123"));
+        assert!(rendered.body.contains("7"));
     }
 }

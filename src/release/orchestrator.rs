@@ -14,6 +14,7 @@ pub use crate::release::index::{ReleaseIndex, ReleaseIndexEntry};
 ///   2. Update stability score (with parse confidence penalty)
 ///   3. Evaluate qualification
 ///   4. If qualified and intent ≠ None: package + distribute
+#[allow(clippy::too_many_arguments)]
 pub async fn post_commit(
     repo_path: &Path,
     config: &Config,
@@ -94,9 +95,39 @@ pub async fn post_commit(
     match &qual {
         QualificationResult::Qualified => {
             tracing::info!(stability = stability.score, "qualification passed");
+            crate::audit::log_qualification(
+                repo_path,
+                "daemon",
+                version,
+                stability.score,
+                "success",
+                None,
+            );
+            crate::daemon::notification::notify_qualification(
+                &config.notify,
+                version,
+                true,
+                None,
+                config.capabilities.network_webhooks,
+            );
         }
         QualificationResult::Rejected(reason) => {
             tracing::debug!(reason = %reason, "qualification rejected");
+            crate::audit::log_qualification(
+                repo_path,
+                "daemon",
+                version,
+                stability.score,
+                "rejected",
+                Some(reason.to_string()),
+            );
+            crate::daemon::notification::notify_qualification(
+                &config.notify,
+                version,
+                false,
+                Some(&reason.to_string()),
+                config.capabilities.network_webhooks,
+            );
             return;
         }
     }
@@ -152,6 +183,14 @@ pub async fn post_commit(
                 version = version,
                 checksum = pkg.manifest.checksum,
                 "release packaged"
+            );
+            crate::audit::log_release(
+                repo_path,
+                "daemon",
+                version,
+                &format!("{:?}", intent).to_lowercase(),
+                &[],
+                true,
             );
 
             let distribute_result = tokio::select! {

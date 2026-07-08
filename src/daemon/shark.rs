@@ -134,6 +134,7 @@ impl FileArbiter {
         // Ensure the lock file exists; holding the lock does not require it to be non-empty.
         let _ = std::fs::OpenOptions::new()
             .create(true)
+            .truncate(true)
             .write(true)
             .open(&lock_path)?;
         Ok(Self {
@@ -168,6 +169,7 @@ impl FileArbiter {
     {
         let file = std::fs::OpenOptions::new()
             .create(true)
+            .truncate(true)
             .write(true)
             .open(&self.lock_path)
             .with_context(|| format!("failed to open lock file {}", self.lock_path.display()))?;
