@@ -401,20 +401,23 @@ Examples:
     #[command(
         subcommand,
         long_about = r#"Purpose:
-    Install, uninstall, or check the status of the systemd/LaunchAgent
-    service that resumes monitored kaptaind projects on login or boot.
+    Install, uninstall, check status, or install the notification icon for
+    the systemd/LaunchAgent service that resumes monitored kaptaind projects
+    on login or boot.
 
 Usage:
     kaptaind-cli service <SUBCOMMAND>
 
 Subcommands:
-    install    --user | --system
-    uninstall  --user | --system
-    status     --user | --system
+    install        --user | --system
+    uninstall      --user | --system
+    install-icon   --user | --system
+    status         --user | --system
 
 Examples:
     kaptaind-cli service install --user
     kaptaind-cli service install --system
+    kaptaind-cli service install-icon --user
     kaptaind-cli service status --user"#
     )]
     Service(ServiceCommand),
@@ -1148,6 +1151,34 @@ Examples:
         user: bool,
 
         /// Remove the system service.
+        #[arg(long)]
+        system: bool,
+    },
+
+    /// 🎨 Install the kaptaind logo into the icon theme
+    #[command(long_about = r#"Purpose:
+    Install the kaptaind logo into the Freedesktop icon theme so notifications
+    and desktop launchers can display it by name. The user variant installs to
+    ~/.local/share/icons; the system variant installs to /usr/share/icons and
+    requires root.
+
+Usage:
+    kaptaind-cli service install-icon --user
+    kaptaind-cli service install-icon --system
+
+Options:
+        --user      Install for the current user.
+        --system    Install system-wide (requires root on Linux).
+
+Examples:
+    kaptaind-cli service install-icon --user
+    sudo kaptaind-cli service install-icon --system"#)]
+    InstallIcon {
+        /// Install for the current user.
+        #[arg(long)]
+        user: bool,
+
+        /// Install system-wide.
         #[arg(long)]
         system: bool,
     },
@@ -3191,6 +3222,16 @@ fn handle_service(cmd: &ServiceCommand) -> anyhow::Result<()> {
         }
         ServiceCommand::Uninstall { user, system } => {
             monitor::uninstall_service(*user, *system)?;
+        }
+        ServiceCommand::InstallIcon { user, system } => {
+            let target = kaptaind::icon::install_icon(*user, *system)?;
+            println!(
+                "{} {} {}",
+                "✓".green(),
+                "Logo installed to".green(),
+                target.display().to_string().blue()
+            );
+            println!("  Notifications and launchers can now reference the icon by name: kaptaind");
         }
         ServiceCommand::Status { user, system } => {
             monitor::service_status(*user, *system)?;

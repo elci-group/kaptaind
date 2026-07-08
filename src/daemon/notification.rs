@@ -905,7 +905,7 @@ pub fn notify_flaky_tests(config: &NotifyConfig, tests: &[String], webhook_enabl
     );
 }
 
-/// Send a native desktop notification.
+/// Send a native desktop notification with the kaptaind logo.
 #[cfg(feature = "notifications")]
 fn send_desktop_notification(title: &str, body: &str, priority: Priority) -> anyhow::Result<()> {
     use notify_rust::{Notification, Timeout, Urgency};
@@ -916,10 +916,14 @@ fn send_desktop_notification(title: &str, body: &str, priority: Priority) -> any
         Priority::High => Urgency::Critical,
     };
 
+    let icon = crate::icon::ensure_cached_notification_icon()
+        .map(|p| p.to_string_lossy().to_string())
+        .unwrap_or_else(|_| "kaptaind".to_string());
+
     Notification::new()
         .summary(title)
         .body(body)
-        .icon("kaptaind") // May need to be installed system-wide
+        .icon(&icon)
         .timeout(Timeout::Milliseconds(10000))
         .urgency(urgency)
         .show()?;

@@ -595,6 +595,31 @@ Examples:
     kaptaind-cli service uninstall --user
     sudo kaptaind-cli service uninstall --system
 
+### service install-icon
+
+**kaptaind-cli service install-icon** (**--user** | **--system**)
+
+Install the kaptaind logo into the Freedesktop icon theme so notifications and
+desktop launchers can display it by name. The user variant writes to
+**~/.local/share/icons/hicolor/256x256/apps/kaptaind.png**; the system variant
+writes to **/usr/share/icons/hicolor/256x256/apps/kaptaind.png** and requires
+root.
+
+The logo is also embedded in the binary and automatically extracted to the
+user cache for native notifications, so this command is only needed if you
+want the icon available system-wide.
+
+**--user**
+:   Install for the current user.
+
+**--system**
+:   Install system-wide (requires root).
+
+Examples:
+
+    kaptaind-cli service install-icon --user
+    sudo kaptaind-cli service install-icon --system
+
 ### service status
 
 **kaptaind-cli service status** (**--user** | **--system**)

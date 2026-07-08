@@ -7,6 +7,7 @@ pub mod config;
 pub mod daemon;
 pub mod diff;
 pub mod git;
+pub mod icon;
 pub mod inference;
 pub mod installer;
 pub mod monitor;

@@ -59,7 +59,7 @@ It eliminates manual version bumping and subjective commit messages by replacing
 - **Visual Asset Channel Saturation (VACS):** A capacity-aware background generation system that converts surplus inference capacity into high-value visual/documentation assets (like diagrams and architecture maps) linked directly to code changes. VACS operates opportunistically and surfaces assets in the CLI.
 - **Multi-Provider Inference Routing:** Intelligently routes commit message generation to the best available inference provider. Automatically detects and prioritizes: **Anthropic Claude** → **OpenAI GPT-4o** → **Local Ollama** fallback. No API keys needed; works offline with Ollama.
 - **Commit Validation Modes:** Choose between **Fast Mode** (single provider, lowest latency) or **Consensus Mode** (multiple local models with semantic cross-comparison, lowest hallucination risk). Developer-selected via config.
-- **Nautical Notifications:** Real-time commit, push, start/stop, and error alerts through native desktop notifications, configurable shell hooks, and Discord/Slack webhooks. Optional nautical theme renders maritime emoji titles like "⚓ Ahoy!" and "🚢 Ship's log updated".
+- **Nautical Notifications:** Real-time commit, push, start/stop, and error alerts through native desktop notifications, configurable shell hooks, and Discord/Slack webhooks. The kaptaind logo is embedded and displayed automatically; install it system-wide with `kaptaind-cli service install-icon --user`. Optional nautical theme renders maritime emoji titles like "⚓ Ahoy!" and "🚢 Ship's log updated".
 - **🎣 Angler Hook & Selective Capture System:** A comprehensive four-part system for advanced automation:
   - *Git Hooks Integration:* Manage client-side git hooks (pre-commit, post-commit, pre-push, etc.) with configurable commands, timeouts, and file pattern matching.
   - *Enhanced Webhooks:* Send HTTP webhooks with HMAC signature verification, exponential backoff retries, rate limiting, and event filtering.
@@ -469,6 +469,15 @@ rate_limit_seconds = 5
 
 # [audit]
 # enabled = true
+```
+
+#### Notification logo
+
+When kaptaind is built with the `notifications` feature, the logo is embedded in the binary and automatically extracted to `~/.cache/kaptaind/kaptaind-logo-notification.png` for each native notification. To install the icon into the Freedesktop theme so other launchers can reference it by name:
+
+```bash
+kaptaind-cli service install-icon --user      # ~/.local/share/icons
+sudo kaptaind-cli service install-icon --system # /usr/share/icons
 ```
 
 ### Staging
