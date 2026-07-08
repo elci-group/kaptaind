@@ -46,5 +46,73 @@ exclude = [
   "dist/**",
   "target/**",
   ".kaptaind/**",
-  
+
 ]
+
+[deckhand]
+enabled = false
+interval_minutes = 360
+sweep_keep_days = 30
+clean_profiles = ["debug"]
+# clean_older_than_days = 14
+dry_run = false
+min_free_percent = 10
+
+[shark]
+enabled = false
+arbiter_path = ".kaptaind/shark"
+heartbeat_interval_ms = 1000
+heartbeat_timeout_ms = 5000
+lease_ttl_ms = 10000
+# instance_id = "kaptaind-a"
+upgrade_handoff_timeout_ms = 30000
+mode = "auto"
+
+# [ship]
+# enabled = false
+# targets = [
+#   "x86_64-unknown-linux-gnu",
+#   "aarch64-unknown-linux-gnu",
+#   "x86_64-apple-darwin",
+#   "aarch64-apple-darwin",
+#   "x86_64-pc-windows-msvc",
+# ]
+# require_qualification = true
+#
+# [ship.installers]
+# shell = false
+# tauri = false
+#
+# [[ship.package_managers]]
+# kind = "homebrew"
+# tap = "github.com/elci-group/homebrew-tap"
+# formula_name = "kaptaind"
+# token_env = "HOMEBREW_GITHUB_API_TOKEN"
+#
+# [[ship.app_stores]]
+# kind = "github-releases"
+# draft = false
+# prerelease = false
+# token_env = "GITHUB_TOKEN"
+#
+# Stable release overrides. Publishes a non-prerelease GitHub release, tags the
+# repo as `v{VERSION}`, and generates release notes from commits since the
+# previous stable release.
+# [ship.stable]
+# targets = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]
+# channels = ["binaries", "github-releases"]
+# push_tag = true
+# require_qualification = true
+# release_notes = true
+#
+# Nightly release overrides. Publishes a prerelease with a version like
+# `0.1.2-nightly.20260707.abc1234`, skips qualification gates by default, and
+# skips re-shipping the same date+commit unless `--force` is used.
+# [ship.nightly]
+# targets = ["x86_64-unknown-linux-gnu"]
+# channels = ["binaries", "github-releases"]
+# draft = true
+# push_tag = false
+# require_qualification = false
+# release_notes = true
+# retain_count = 7

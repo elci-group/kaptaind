@@ -29,6 +29,8 @@ pub struct Config {
     #[serde(default)]
     pub distribution: DistributionConfig,
     #[serde(default)]
+    pub ship: ShipConfig,
+    #[serde(default)]
     pub version_thresholds: VersionThresholdConfig,
     #[serde(default)]
     pub plugins: PluginsConfig,
@@ -38,6 +40,10 @@ pub struct Config {
     pub trawl: TrawlConfig,
     #[serde(default)]
     pub angler: AnglerConfig,
+    #[serde(default)]
+    pub deckhand: DeckhandConfig,
+    #[serde(default)]
+    pub shark: SharkConfig,
     #[serde(default)]
     pub repo_path: PathBuf,
     #[serde(default)]
@@ -174,6 +180,163 @@ pub struct SecurityDistConfig {
     pub encrypt: bool,
     #[serde(default)]
     pub sign: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Ship config
+// ---------------------------------------------------------------------------
+
+/// `[ship]` block in `kaptaind.toml`.
+///
+/// Configures the `kaptaind-cli ship` command: which targets to build,
+/// which installers to produce, and which package managers / app stores
+/// to publish to.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ShipConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_ship_targets")]
+    pub targets: Vec<String>,
+    #[serde(flatten)]
+    pub channels: ShipChannelsConfig,
+    /// When true, `ship` enforces the daemon `[qualification]` gates.
+    #[serde(default = "default_true")]
+    pub require_qualification: bool,
+    #[serde(default)]
+    pub nightly: ShipKindConfig,
+    #[serde(default)]
+    pub stable: ShipKindConfig,
+}
+
+impl Default for ShipConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            targets: default_ship_targets(),
+            channels: ShipChannelsConfig::default(),
+            require_qualification: true,
+            nightly: ShipKindConfig::default(),
+            stable: ShipKindConfig::default(),
+        }
+    }
+}
+
+/// Per-release-kind overrides for `kaptaind-cli ship stable` and
+/// `kaptaind-cli ship nightly`.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ShipKindConfig {
+    /// Override target triples for this release kind.
+    #[serde(default)]
+    pub targets: Option<Vec<String>>,
+    /// Override distribution channels for this release kind.
+    #[serde(default)]
+    pub channels: Option<Vec<String>>,
+    /// Publish as a draft release.
+    #[serde(default)]
+    pub draft: bool,
+    /// Mark release as prerelease.
+    #[serde(default)]
+    pub prerelease: bool,
+    /// Create and optionally push a git tag for this release.
+    #[serde(default)]
+    pub push_tag: bool,
+    /// Override the global `require_qualification` setting for this kind.
+    #[serde(default)]
+    pub require_qualification: Option<bool>,
+    /// Generate release notes for GitHub releases.
+    #[serde(default = "default_true")]
+    pub release_notes: bool,
+    /// Number of nightly releases to retain (only applies to `ship nightly`).
+    #[serde(default)]
+    pub retain_count: Option<usize>,
+}
+
+impl Default for ShipKindConfig {
+    fn default() -> Self {
+        Self {
+            targets: None,
+            channels: None,
+            draft: false,
+            prerelease: false,
+            push_tag: false,
+            require_qualification: None,
+            release_notes: true,
+            retain_count: None,
+        }
+    }
+}
+
+fn default_ship_targets() -> Vec<String> {
+    vec![
+        "x86_64-unknown-linux-gnu".to_string(),
+        "aarch64-unknown-linux-gnu".to_string(),
+        "x86_64-apple-darwin".to_string(),
+        "aarch64-apple-darwin".to_string(),
+        "x86_64-pc-windows-msvc".to_string(),
+    ]
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ShipChannelsConfig {
+    /// Produce per-target binary tarballs.
+    #[serde(default = "default_true")]
+    pub binaries: bool,
+    #[serde(default)]
+    pub installers: ShipInstallersConfig,
+    #[serde(default)]
+    pub package_managers: Vec<ShipPackageManagerConfig>,
+    #[serde(default)]
+    pub app_stores: Vec<ShipAppStoreConfig>,
+}
+
+impl Default for ShipChannelsConfig {
+    fn default() -> Self {
+        Self {
+            binaries: true,
+            installers: ShipInstallersConfig::default(),
+            package_managers: Vec::new(),
+            app_stores: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ShipInstallersConfig {
+    /// Bundle `install.sh` with all target binaries.
+    #[serde(default)]
+    pub shell: bool,
+    /// Build Tauri desktop bundles from `apps/desktop`.
+    #[serde(default)]
+    pub tauri: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ShipPackageManagerConfig {
+    pub kind: String,
+    /// Homebrew tap repo path or URL (e.g. `github.com/elci-group/homebrew-tap`).
+    pub tap: Option<String>,
+    /// Formula name to generate.
+    #[serde(default = "default_formula_name")]
+    pub formula_name: String,
+    /// Environment variable holding an auth token, if any.
+    pub token_env: Option<String>,
+}
+
+fn default_formula_name() -> String {
+    "kaptaind".to_string()
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ShipAppStoreConfig {
+    pub kind: String,
+    /// Publish as a draft release.
+    #[serde(default)]
+    pub draft: bool,
+    /// Mark release as prerelease.
+    #[serde(default)]
+    pub prerelease: bool,
+    /// Environment variable holding an auth token, if any.
+    pub token_env: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -661,6 +824,169 @@ impl Default for TrawlConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Storage management (deckhand) config
+// ---------------------------------------------------------------------------
+
+/// `[deckhand]` block in `kaptaind.toml`.
+/// Configures automatic Cargo workspace storage hygiene.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DeckhandConfig {
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+    #[serde(default = "default_deckhand_interval_minutes")]
+    pub interval_minutes: u64,
+    #[serde(default = "default_deckhand_sweep_keep_days")]
+    pub sweep_keep_days: u64,
+    #[serde(default = "default_deckhand_clean_profiles")]
+    pub clean_profiles: Vec<String>,
+    #[serde(default)]
+    pub clean_older_than_days: Option<u64>,
+    #[serde(default = "default_false")]
+    pub dry_run: bool,
+    #[serde(default = "default_deckhand_min_free_percent")]
+    pub min_free_percent: u64,
+}
+
+fn default_deckhand_interval_minutes() -> u64 {
+    360
+}
+
+fn default_deckhand_sweep_keep_days() -> u64 {
+    30
+}
+
+fn default_deckhand_clean_profiles() -> Vec<String> {
+    vec!["debug".to_string()]
+}
+
+fn default_deckhand_min_free_percent() -> u64 {
+    10
+}
+
+fn default_false() -> bool {
+    false
+}
+
+impl Default for DeckhandConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            interval_minutes: default_deckhand_interval_minutes(),
+            sweep_keep_days: default_deckhand_sweep_keep_days(),
+            clean_profiles: default_deckhand_clean_profiles(),
+            clean_older_than_days: None,
+            dry_run: false,
+            min_free_percent: default_deckhand_min_free_percent(),
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shark Stating (high availability / zero-downtime upgrades) config
+// ---------------------------------------------------------------------------
+
+/// `[shark]` block in `kaptaind.toml`.
+/// Configures crash-only dual-instance leadership with a file-based arbiter.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SharkMode {
+    /// Attempt to become leader if no healthy leader exists (default).
+    Auto,
+    /// Force leadership attempt on startup.
+    Leader,
+    /// Never attempt leadership; remain standby/observer.
+    Standby,
+    /// Monitor only; never take over.
+    Observer,
+}
+
+impl Default for SharkMode {
+    fn default() -> Self {
+        SharkMode::Auto
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct SharkConfig {
+    #[serde(default = "default_false")]
+    pub enabled: bool,
+    #[serde(default = "default_shark_arbiter_path")]
+    pub arbiter_path: PathBuf,
+    #[serde(default = "default_shark_heartbeat_interval_ms")]
+    pub heartbeat_interval_ms: u64,
+    #[serde(default = "default_shark_heartbeat_timeout_ms")]
+    pub heartbeat_timeout_ms: u64,
+    #[serde(default = "default_shark_lease_ttl_ms")]
+    pub lease_ttl_ms: u64,
+    #[serde(default)]
+    pub instance_id: Option<String>,
+    #[serde(default = "default_shark_upgrade_handoff_timeout_ms")]
+    pub upgrade_handoff_timeout_ms: u64,
+    #[serde(default)]
+    pub mode: SharkMode,
+}
+
+fn default_shark_arbiter_path() -> PathBuf {
+    PathBuf::from(".kaptaind/shark")
+}
+
+fn default_shark_heartbeat_interval_ms() -> u64 {
+    1000
+}
+
+fn default_shark_heartbeat_timeout_ms() -> u64 {
+    5000
+}
+
+fn default_shark_lease_ttl_ms() -> u64 {
+    10000
+}
+
+fn default_shark_upgrade_handoff_timeout_ms() -> u64 {
+    30000
+}
+
+impl Default for SharkConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            arbiter_path: default_shark_arbiter_path(),
+            heartbeat_interval_ms: default_shark_heartbeat_interval_ms(),
+            heartbeat_timeout_ms: default_shark_heartbeat_timeout_ms(),
+            lease_ttl_ms: default_shark_lease_ttl_ms(),
+            instance_id: None,
+            upgrade_handoff_timeout_ms: default_shark_upgrade_handoff_timeout_ms(),
+            mode: SharkMode::default(),
+        }
+    }
+}
+
+impl Config {
+    /// Resolve the shark arbiter path relative to the repo root.
+    pub fn shark_arbiter_path(&self) -> PathBuf {
+        if self.shark.arbiter_path.is_absolute() {
+            self.shark.arbiter_path.clone()
+        } else {
+            self.repo_path.join(&self.shark.arbiter_path)
+        }
+    }
+
+    /// Stable identifier for this kaptaind instance.
+    pub fn shark_instance_id(&self) -> String {
+        self.shark
+            .instance_id
+            .clone()
+            .unwrap_or_else(default_instance_id)
+    }
+}
+
+fn default_instance_id() -> String {
+    let pid = std::process::id();
+    let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "localhost".to_string());
+    format!("{}@{}", pid, host)
+}
+
 impl Default for Config {
     fn default() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
@@ -712,11 +1038,14 @@ impl Default for Config {
             build: BuildConfig::default(),
             release: ReleaseConfig::default(),
             distribution: DistributionConfig::default(),
+            ship: ShipConfig::default(),
             version_thresholds: VersionThresholdConfig::default(),
             plugins: PluginsConfig::default(),
             vacs: VacsConfig::default(),
             trawl: TrawlConfig::default(),
             angler: AnglerConfig::default(),
+            deckhand: DeckhandConfig::default(),
+            shark: SharkConfig::default(),
             repo_path: cwd,
             policy_id: None,
             prune_interval_minutes: default_prune_interval_minutes(),
@@ -1057,5 +1386,182 @@ mod tests {
         let config: Config = toml::from_str(toml_str).unwrap();
         assert_eq!(config.cluster.max_paths, 25);
         assert_eq!(config.cluster.flush_after, Some(Duration::from_secs(15)));
+    }
+
+    #[test]
+    fn deckhand_defaults_are_conservative() {
+        let config = Config::default();
+        assert!(!config.deckhand.enabled);
+        assert_eq!(config.deckhand.interval_minutes, 360);
+        assert_eq!(config.deckhand.sweep_keep_days, 30);
+        assert_eq!(config.deckhand.clean_profiles, vec!["debug"]);
+        assert!(config.deckhand.clean_older_than_days.is_none());
+        assert!(!config.deckhand.dry_run);
+        assert_eq!(config.deckhand.min_free_percent, 10);
+    }
+
+    #[test]
+    fn deckhand_deserializes_from_toml() {
+        let toml_str = r#"
+            repo_path = "."
+            [watch]
+            path = "."
+            recursive = true
+            ignore_file = ".kaptainignore"
+            [cluster]
+            window = 5
+            [weights]
+            s = 0.35
+            a = 0.30
+            d = 0.20
+            r = 0.15
+            [push]
+            enabled = false
+            branch = "main"
+            [ratelimit]
+            min_commit_interval = 10
+            [test]
+            command = "cargo test"
+            required = true
+            [deckhand]
+            enabled = true
+            interval_minutes = 120
+            sweep_keep_days = 7
+            clean_profiles = ["debug", "release"]
+            clean_older_than_days = 14
+            dry_run = true
+            min_free_percent = 5
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.deckhand.enabled);
+        assert_eq!(config.deckhand.interval_minutes, 120);
+        assert_eq!(config.deckhand.sweep_keep_days, 7);
+        assert_eq!(
+            config.deckhand.clean_profiles,
+            vec!["debug".to_string(), "release".to_string()]
+        );
+        assert_eq!(config.deckhand.clean_older_than_days, Some(14));
+        assert!(config.deckhand.dry_run);
+        assert_eq!(config.deckhand.min_free_percent, 5);
+    }
+
+    #[test]
+    fn shark_defaults_are_conservative() {
+        let config = Config::default();
+        assert!(!config.shark.enabled);
+        assert_eq!(config.shark.arbiter_path, PathBuf::from(".kaptaind/shark"));
+        assert_eq!(config.shark.heartbeat_interval_ms, 1000);
+        assert_eq!(config.shark.heartbeat_timeout_ms, 5000);
+        assert_eq!(config.shark.lease_ttl_ms, 10000);
+        assert!(config.shark.instance_id.is_none());
+        assert_eq!(config.shark.upgrade_handoff_timeout_ms, 30000);
+        assert!(matches!(config.shark.mode, super::SharkMode::Auto));
+    }
+
+    #[test]
+    fn shark_deserializes_from_toml() {
+        let toml_str = r#"
+            repo_path = "."
+            [watch]
+            path = "."
+            recursive = true
+            ignore_file = ".kaptainignore"
+            [cluster]
+            window = 5
+            [weights]
+            s = 0.35
+            a = 0.30
+            d = 0.20
+            r = 0.15
+            [push]
+            enabled = false
+            branch = "main"
+            [ratelimit]
+            min_commit_interval = 10
+            [test]
+            command = "cargo test"
+            required = true
+            [shark]
+            enabled = true
+            arbiter_path = "/tmp/shark"
+            heartbeat_interval_ms = 500
+            heartbeat_timeout_ms = 2000
+            lease_ttl_ms = 4000
+            instance_id = "instance-a"
+            upgrade_handoff_timeout_ms = 60000
+            mode = "standby"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.shark.enabled);
+        assert_eq!(config.shark.arbiter_path, PathBuf::from("/tmp/shark"));
+        assert_eq!(config.shark.heartbeat_interval_ms, 500);
+        assert_eq!(config.shark.heartbeat_timeout_ms, 2000);
+        assert_eq!(config.shark.lease_ttl_ms, 4000);
+        assert_eq!(config.shark.instance_id, Some("instance-a".to_string()));
+        assert_eq!(config.shark.upgrade_handoff_timeout_ms, 60000);
+        assert!(matches!(config.shark.mode, super::SharkMode::Standby));
+    }
+
+    #[test]
+    fn ship_defaults_are_sensible() {
+        let config = Config::default();
+        assert!(!config.ship.enabled);
+        assert!(config.ship.require_qualification);
+        assert_eq!(config.ship.targets.len(), 5);
+        assert!(config.ship.channels.binaries);
+        assert!(!config.ship.channels.installers.shell);
+        assert!(!config.ship.channels.installers.tauri);
+        assert!(config.ship.channels.package_managers.is_empty());
+        assert!(config.ship.channels.app_stores.is_empty());
+    }
+
+    #[test]
+    fn ship_deserializes_from_toml() {
+        let toml_str = r#"
+            repo_path = "."
+            [watch]
+            path = "."
+            recursive = true
+            ignore_file = ".kaptainignore"
+            [cluster]
+            window = 5
+            [weights]
+            s = 0.35
+            a = 0.30
+            d = 0.20
+            r = 0.15
+            [push]
+            enabled = false
+            branch = "main"
+            [ratelimit]
+            min_commit_interval = 10
+            [test]
+            command = "cargo test"
+            required = true
+            [ship]
+            enabled = true
+            targets = ["x86_64-unknown-linux-gnu"]
+            require_qualification = false
+            [ship.installers]
+            shell = true
+            tauri = false
+            [[ship.package_managers]]
+            kind = "homebrew"
+            formula_name = "kaptaind"
+            [[ship.app_stores]]
+            kind = "github-releases"
+            draft = true
+            prerelease = false
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.ship.enabled);
+        assert!(!config.ship.require_qualification);
+        assert_eq!(config.ship.targets, vec!["x86_64-unknown-linux-gnu"]);
+        assert!(config.ship.channels.installers.shell);
+        assert!(!config.ship.channels.installers.tauri);
+        assert_eq!(config.ship.channels.package_managers.len(), 1);
+        assert_eq!(config.ship.channels.package_managers[0].kind, "homebrew");
+        assert_eq!(config.ship.channels.app_stores.len(), 1);
+        assert!(config.ship.channels.app_stores[0].draft);
     }
 }

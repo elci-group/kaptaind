@@ -235,6 +235,68 @@ fn init_git(path: &std::path::Path) {
     }
 }
 
+#[test]
+fn test_ship_plan_dry_run() {
+    let dir = tempdir().expect("temp dir");
+    let config = r#"
+repo_path = "."
+
+[watch]
+path = "."
+recursive = true
+ignore_file = ".kaptainignore"
+
+[cluster]
+window = 5
+
+[weights]
+s = 0.35
+a = 0.3
+d = 0.2
+r = 0.15
+
+[push]
+enabled = false
+branch = "main"
+
+[ratelimit]
+min_commit_interval = 10
+
+[test]
+command = "echo test"
+required = false
+
+[ship]
+enabled = true
+
+[ship.installers]
+shell = true
+"#;
+    std::fs::write(dir.path().join("kaptaind.toml"), config).unwrap();
+    std::fs::write(dir.path().join("VERSION"), "1.2.3").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .args(["ship", "plan"])
+        .output()
+        .expect("run command");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Command failed with stderr: {}",
+        stderr
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Kaptaind Ship"));
+    assert!(stdout.contains("1.2.3"));
+    assert!(stdout.contains("Dry-run plan complete"));
+
+    // Ensure no artifacts were produced in dry-run mode.
+    let ship_dir = dir.path().join(".kaptaind").join("ship");
+    assert!(!ship_dir.exists() || ship_dir.read_dir().unwrap().next().is_none());
+}
+
 fn git(path: &std::path::Path, args: &[&str]) {
     let output = Command::new("git")
         .arg("-C")
@@ -248,4 +310,115 @@ fn git(path: &std::path::Path, args: &[&str]) {
         args.join(" "),
         String::from_utf8_lossy(&output.stderr)
     );
+}
+
+fn ship_config() -> &'static str {
+    r#"
+repo_path = "."
+
+[watch]
+path = "."
+recursive = true
+ignore_file = ".kaptainignore"
+
+[cluster]
+window = 5
+
+[weights]
+s = 0.35
+a = 0.3
+d = 0.2
+r = 0.15
+
+[push]
+enabled = false
+branch = "main"
+
+[ratelimit]
+min_commit_interval = 10
+
+[test]
+command = "echo test"
+required = false
+
+[ship]
+enabled = true
+
+[ship.installers]
+shell = true
+"#
+}
+
+#[test]
+fn test_ship_stable_dry_run() {
+    let dir = tempdir().expect("temp dir");
+    std::fs::write(dir.path().join("kaptaind.toml"), ship_config()).unwrap();
+    std::fs::write(dir.path().join("VERSION"), "4.5.6").unwrap();
+    init_git(dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .args(["ship", "stable", "--dry-run", "--channels", "binaries"])
+        .output()
+        .expect("run command");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Command failed with stderr: {}",
+        stderr
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Kaptaind Ship"));
+    assert!(stdout.contains("4.5.6"));
+    assert!(stdout.contains("stable"));
+    assert!(stdout.contains("Dry-run plan complete"));
+}
+
+#[test]
+fn test_ship_nightly_dry_run_uses_prerelease_version() {
+    let dir = tempdir().expect("temp dir");
+    std::fs::write(dir.path().join("kaptaind.toml"), ship_config()).unwrap();
+    std::fs::write(dir.path().join("VERSION"), "4.5.6").unwrap();
+    init_git(dir.path());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .args(["ship", "nightly", "--dry-run", "--channels", "binaries"])
+        .output()
+        .expect("run command");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Command failed with stderr: {}",
+        stderr
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Kaptaind Ship"));
+    assert!(stdout.contains("nightly"));
+    assert!(stdout.contains("4.5.6-nightly."));
+    assert!(stdout.contains("Dry-run plan complete"));
+}
+
+#[test]
+fn test_ship_status_json_when_empty() {
+    let dir = tempdir().expect("temp dir");
+    std::fs::write(dir.path().join("kaptaind.toml"), ship_config()).unwrap();
+    std::fs::write(dir.path().join("VERSION"), "1.0.0").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .args(["ship", "status", "--format", "json"])
+        .output()
+        .expect("run command");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "Command failed with stderr: {}",
+        stderr
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(stdout.trim(), "null");
 }

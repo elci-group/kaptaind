@@ -164,7 +164,33 @@ kaptaind-cli dashboard
 kaptaind-cli ci-hint                  # plain text
 kaptaind-cli ci-hint --format json    # machine-readable JSON
 kaptaind-cli ci-hint --format github  # GitHub Actions annotations + set-output
+
+# Ship release binaries, installers, and distribution channels
+kaptaind-cli ship plan                # Preview what would ship
+kaptaind-cli ship plan --format json  # Machine-readable dry-run plan
+kaptaind-cli ship run                 # Execute the ship pipeline
+kaptaind-cli ship run --force         # Skip qualification gates
+kaptaind-cli ship stable              # Ship a stable release from VERSION
+kaptaind-cli ship stable --force      # Skip qualification gates
+kaptaind-cli ship stable --dry-run    # Preview the stable release
+kaptaind-cli ship nightly             # Ship a nightly prerelease
+kaptaind-cli ship nightly --no-force  # Enforce qualification gates
+kaptaind-cli ship nightly --dry-run   # Preview the nightly version
+kaptaind-cli ship status              # Show the last ship run
+kaptaind-cli ship status --format json
 ```
+
+The `ship stable` and `ship nightly` commands automate release versioning and
+publishing semantics. `stable` uses the current `VERSION`, creates a `v{VERSION}`
+git tag, publishes a non-prerelease GitHub release, and generates release notes
+from commits since the previous stable release. `nightly` computes a prerelease
+version such as `0.1.2-nightly.20260707.abc1234`, marks the GitHub release as a
+prerelease, skips qualification gates by default, refuses to ship the same
+date+commit twice (unless `--force` is used), and can automatically prune old
+builds via `retain_count` in `[ship.nightly]`. Configure per-kind targets,
+channels, draft/prerelease flags, tag-pushing behavior, and retention under
+`[ship.stable]` and `[ship.nightly]` in `kaptaind.toml`. Schedule them with
+`cron` or your CI provider for fully automated release trains.
 
 ![Kaptaind Analyze and Log Demo](analyze_and_log.gif)
 

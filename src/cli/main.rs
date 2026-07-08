@@ -1,3 +1,4 @@
+use anyhow::Context;
 use chrono::{DateTime, Utc};
 use clap::{Parser, Subcommand};
 use colored::*;
@@ -8,6 +9,7 @@ use analyze::handle_analyze;
 use autostart::{handle_disable_autostart, handle_enable_autostart};
 use kaptaind::config::loader::{self, Config};
 use kaptaind::daemon::scheduler::AnalysisArtifact;
+use kaptaind::daemon::shark::Arbiter;
 use std::fs;
 use std::path::PathBuf;
 
@@ -26,6 +28,7 @@ COMMANDS:\n  \
   dashboard           Live dashboard: stability, releases, recent analyses\n  \
   ci-hint             Release/hold recommendation for CI/CD pipelines\n  \
   aoc                 Manage Aim of Change sessions (multi-commit grouping)\n  \
+  ship                Build release binaries, installers, and distribute\n  \
   init                Initialize kaptaind config for a project\n\n\
 EXAMPLES:\n  \
   kaptaind-cli status                     # Check daemon health\n  \
@@ -34,6 +37,7 @@ EXAMPLES:\n  \
   kaptaind-cli dashboard                  # Live terminal dashboard\n  \
   kaptaind-cli ci-hint --format json      # JSON output for CI\n  \
   kaptaind-cli aoc start \"feature: auth\"  # Begin a feature session\n  \
+  kaptaind-cli ship plan                  # Preview a manual release\n  \
   kaptaind-cli init                       # Generate kaptaind.toml\n\n\
 ENVIRONMENT:\n  \
   KAPTAIND_CONFIG     Path to kaptaind.toml (default: ./kaptaind.toml)\n\n\
@@ -249,6 +253,168 @@ enum Commands {
     /// 🎨 Visual Asset Channel Saturation
     #[command(subcommand)]
     Vacs(VacsCommand),
+
+    /// 🧹 Storage management (deckhand)
+    #[command(subcommand)]
+    Storage(StorageCommand),
+
+    /// 🦈 Shark Stating — high availability / zero-downtime upgrades
+    #[command(subcommand)]
+    Shark(SharkCommand),
+
+    /// 🚢 Build release binaries, installers, and distribute to channels
+    ///
+    /// Produces release binaries for configured targets, builds installers,
+    /// and publishes to package managers and app stores.
+    ///
+    /// Examples:
+    ///   kaptaind-cli ship plan                    # Preview what would ship
+    ///   kaptaind-cli ship run                     # Execute the ship pipeline
+    ///   kaptaind-cli ship run --force             # Skip qualification gates
+    ///   kaptaind-cli ship stable                  # Ship a stable release
+    ///   kaptaind-cli ship stable --force          # Skip qualification gates
+    ///   kaptaind-cli ship nightly                 # Ship a nightly prerelease
+    ///   kaptaind-cli ship nightly --no-force      # Enforce qualification gates
+    ///   kaptaind-cli ship status                  # Show last ship run
+    #[command(subcommand)]
+    Ship(ShipCommand),
+}
+
+#[derive(Subcommand)]
+enum StorageCommand {
+    /// Run cargo clean across the workspace
+    Clean {
+        /// Profile to clean: debug, release, or all
+        #[arg(short, long, default_value = "all")]
+        profile: String,
+        /// Only print what would be removed
+        #[arg(long)]
+        dry_run: bool,
+        /// Only remove artifacts older than N days
+        #[arg(short, long)]
+        older_than: Option<u64>,
+    },
+    /// Sweep stale artifacts and caches
+    Sweep {
+        /// Keep registry cache entries newer than N days
+        #[arg(short, long, default_value_t = 30)]
+        keep_days: u64,
+        /// Only print what would be removed
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Report workspace storage state (disk usage)
+    Status {
+        /// Output JSON instead of text
+        #[arg(short, long)]
+        json: bool,
+        /// Show only the top N largest artifacts
+        #[arg(short, long)]
+        limit: Option<usize>,
+    },
+}
+
+#[derive(Subcommand)]
+enum SharkCommand {
+    /// Show current Shark Stating role and lease state
+    Status {
+        /// Output JSON instead of text
+        #[arg(short, long)]
+        json: bool,
+    },
+    /// Watch leadership changes in real time
+    Observe {
+        /// Poll interval in milliseconds
+        #[arg(short, long, default_value_t = 1000)]
+        interval_ms: u64,
+    },
+    /// Gracefully release leadership
+    Release,
+    /// Perform a zero-downtime upgrade to a new kaptaind binary
+    Upgrade {
+        /// Path to the new kaptaind binary
+        #[arg(short, long)]
+        binary: PathBuf,
+        /// Temporary health port for the standby instance
+        #[arg(short, long)]
+        standby_health_port: Option<u16>,
+        /// How long to wait for the standby to become healthy before retiring (ms)
+        #[arg(short, long, default_value_t = 30000)]
+        ready_timeout_ms: u64,
+    },
+}
+
+#[derive(Subcommand)]
+enum ShipCommand {
+    /// 📋 Preview the ship plan without building or publishing
+    Plan {
+        /// Override target triples (comma-separated)
+        #[arg(short, long, value_delimiter = ',')]
+        targets: Vec<String>,
+        /// Override channels (comma-separated: binaries,shell-installer,tauri,homebrew,github-releases)
+        #[arg(short, long, value_delimiter = ',')]
+        channels: Vec<String>,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// 🚢 Execute the ship pipeline
+    Run {
+        /// Override target triples (comma-separated)
+        #[arg(short, long, value_delimiter = ',')]
+        targets: Vec<String>,
+        /// Override channels (comma-separated)
+        #[arg(short, long, value_delimiter = ',')]
+        channels: Vec<String>,
+        /// Skip qualification gates
+        #[arg(short, long)]
+        force: bool,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// 🏷️ Ship a stable release from the current VERSION
+    Stable {
+        /// Override target triples (comma-separated)
+        #[arg(short, long, value_delimiter = ',')]
+        targets: Vec<String>,
+        /// Override channels (comma-separated)
+        #[arg(short, long, value_delimiter = ',')]
+        channels: Vec<String>,
+        /// Preview without building or publishing
+        #[arg(long)]
+        dry_run: bool,
+        /// Skip qualification gates
+        #[arg(short, long)]
+        force: bool,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// 🌙 Ship a nightly prerelease with an auto-generated version
+    Nightly {
+        /// Override target triples (comma-separated)
+        #[arg(short, long, value_delimiter = ',')]
+        targets: Vec<String>,
+        /// Override channels (comma-separated)
+        #[arg(short, long, value_delimiter = ',')]
+        channels: Vec<String>,
+        /// Preview without building or publishing
+        #[arg(long)]
+        dry_run: bool,
+        /// Enforce qualification gates (nightly skips them by default)
+        #[arg(long)]
+        no_force: bool,
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
+    /// 📊 Show the last ship run
+    Status {
+        /// Output format: text (default) or json
+        #[arg(long, default_value = "text")]
+        format: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -480,6 +646,15 @@ async fn main() -> anyhow::Result<()> {
         Commands::Vacs(vacs_cmd) => {
             handle_vacs(&config, vacs_cmd)?;
         }
+        Commands::Storage(storage_cmd) => {
+            handle_storage(&config, storage_cmd)?;
+        }
+        Commands::Shark(shark_cmd) => {
+            handle_shark(&config, shark_cmd).await?;
+        }
+        Commands::Ship(ship_cmd) => {
+            handle_ship(&config, ship_cmd).await?;
+        }
         Commands::Trawl { .. } => {
             // Already handled above - this should not be reached
         }
@@ -705,6 +880,403 @@ fn handle_vacs(config: &Config, cmd: &VacsCommand) -> anyhow::Result<()> {
             );
         }
     }
+    Ok(())
+}
+
+fn handle_storage(config: &Config, cmd: &StorageCommand) -> anyhow::Result<()> {
+    use colored::*;
+
+    let dh_cfg = deckhand_config_from_kaptaind(config);
+
+    match cmd {
+        StorageCommand::Clean {
+            profile,
+            dry_run,
+            older_than,
+        } => {
+            println!(
+                "{} {} {}",
+                "🧹".cyan(),
+                "Storage clean:".bold().cyan(),
+                profile.yellow()
+            );
+            deckhand::clean::run(&dh_cfg, profile, *dry_run, *older_than, None)?;
+        }
+        StorageCommand::Sweep { keep_days, dry_run } => {
+            println!(
+                "{} {} (keep {} days)",
+                "🧹".cyan(),
+                "Storage sweep".bold().cyan(),
+                keep_days.to_string().yellow()
+            );
+            deckhand::sweep::run(&dh_cfg, &config.repo_path, *dry_run, *keep_days)?;
+        }
+        StorageCommand::Status { json, limit } => {
+            deckhand::status::run(&dh_cfg, *json, *limit)?;
+        }
+    }
+
+    Ok(())
+}
+
+fn deckhand_config_from_kaptaind(config: &Config) -> deckhand::config::Config {
+    use deckhand::config::{CleanConfig, StatusConfig, SweepConfig, WorkspaceConfig};
+
+    deckhand::config::Config {
+        workspace: WorkspaceConfig {
+            path: config.repo_path.clone(),
+            members: deckhand::config::MemberSpec::Auto,
+        },
+        clean: CleanConfig {
+            profiles: config.deckhand.clean_profiles.clone(),
+            keep_incremental: false,
+            keep_days: config.deckhand.clean_older_than_days.unwrap_or(0),
+            languages: vec!["cargo".to_string()],
+            allow_native_commands: false,
+            remove_node_modules: false,
+            remove_venvs: false,
+        },
+        sweep: SweepConfig {
+            registry_cache: true,
+            git_checkouts: true,
+            keep_registry_days: config.deckhand.sweep_keep_days,
+            node_modules: false,
+            python_bytecode: false,
+            go_build_cache: false,
+            swift_derived_data: false,
+        },
+        status: StatusConfig {
+            warn_free_percent: config.deckhand.min_free_percent,
+        },
+    }
+}
+
+fn parse_ship_format(format: &str) -> kaptaind::release::ship::OutputFormat {
+    if format.eq_ignore_ascii_case("json") {
+        kaptaind::release::ship::OutputFormat::Json
+    } else {
+        kaptaind::release::ship::OutputFormat::Text
+    }
+}
+
+async fn handle_ship(config: &Config, cmd: &ShipCommand) -> anyhow::Result<()> {
+    let empty_targets = Vec::new();
+    let empty_channels = Vec::new();
+    let (targets, channels, format) = match cmd {
+        ShipCommand::Plan {
+            targets,
+            channels,
+            format,
+            ..
+        }
+        | ShipCommand::Run {
+            targets,
+            channels,
+            format,
+            ..
+        }
+        | ShipCommand::Stable {
+            targets,
+            channels,
+            format,
+            ..
+        }
+        | ShipCommand::Nightly {
+            targets,
+            channels,
+            format,
+            ..
+        } => (targets, channels, parse_ship_format(format)),
+        ShipCommand::Status { format } => {
+            (&empty_targets, &empty_channels, parse_ship_format(format))
+        }
+    };
+    let targets = if targets.is_empty() {
+        None
+    } else {
+        Some(targets.clone())
+    };
+    let channels = if channels.is_empty() {
+        None
+    } else {
+        Some(channels.clone())
+    };
+
+    match cmd {
+        ShipCommand::Plan { .. } => {
+            let opts = kaptaind::release::ship::ShipOptions {
+                dry_run: true,
+                targets,
+                channels,
+                force: false,
+                kind: kaptaind::release::ship::ShipKind::Manual,
+                version_override: None,
+                require_qualification: config.ship.require_qualification,
+                format,
+            };
+            kaptaind::release::ship::run_ship(config, opts).await?;
+        }
+        ShipCommand::Run { force, .. } => {
+            let opts = kaptaind::release::ship::ShipOptions {
+                dry_run: false,
+                targets,
+                channels,
+                force: *force,
+                kind: kaptaind::release::ship::ShipKind::Manual,
+                version_override: None,
+                require_qualification: config.ship.require_qualification,
+                format,
+            };
+            kaptaind::release::ship::run_ship(config, opts).await?;
+        }
+        ShipCommand::Stable { dry_run, force, .. } => {
+            let require_qualification = config
+                .ship
+                .stable
+                .require_qualification
+                .unwrap_or(config.ship.require_qualification);
+            let opts = kaptaind::release::ship::ShipOptions {
+                dry_run: *dry_run,
+                targets,
+                channels,
+                force: *force,
+                kind: kaptaind::release::ship::ShipKind::Stable,
+                version_override: None,
+                require_qualification: if *force { false } else { require_qualification },
+                format,
+            };
+            kaptaind::release::ship::run_stable(config, opts).await?;
+        }
+        ShipCommand::Nightly {
+            dry_run, no_force, ..
+        } => {
+            let require_qualification = config.ship.nightly.require_qualification.unwrap_or(false);
+            let opts = kaptaind::release::ship::ShipOptions {
+                dry_run: *dry_run,
+                targets,
+                channels,
+                force: false,
+                kind: kaptaind::release::ship::ShipKind::Nightly,
+                version_override: None,
+                require_qualification: if *no_force {
+                    true
+                } else {
+                    require_qualification
+                },
+                format,
+            };
+            kaptaind::release::ship::run_nightly(config, opts).await?;
+        }
+        ShipCommand::Status { .. } => {
+            kaptaind::release::ship::print_ship_status(&config.repo_path, format)?;
+        }
+    }
+
+    Ok(())
+}
+
+async fn handle_shark(config: &Config, cmd: &SharkCommand) -> anyhow::Result<()> {
+    use colored::*;
+    use std::time::Duration;
+
+    let arbiter_path = config.shark_arbiter_path();
+    let arbiter = kaptaind::daemon::shark::FileArbiter::new(&arbiter_path)?;
+    let instance_id = config.shark_instance_id();
+
+    match cmd {
+        SharkCommand::Status { json } => {
+            let lease = arbiter.current_lease()?;
+            if *json {
+                let output = serde_json::json!({
+                    "instance_id": instance_id,
+                    "role": if lease.as_ref().map(|l| l.instance_id == instance_id).unwrap_or(false) {
+                        "leader"
+                    } else {
+                        "standby"
+                    },
+                    "leader_id": lease.as_ref().map(|l| l.instance_id.clone()),
+                    "lease_acquired_at": lease.as_ref().map(|l| l.acquired_at.to_rfc3339()),
+                    "lease_renewed_at": lease.as_ref().map(|l| l.renewed_at.to_rfc3339()),
+                    "lease_ttl_ms": lease.as_ref().map(|l| l.ttl_ms),
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else {
+                println!("{} {}", "🦈".cyan(), "Shark Stating".bold().cyan());
+                println!("{} {}", "Instance:".bold(), instance_id.yellow());
+                let role = if lease
+                    .as_ref()
+                    .map(|l| l.instance_id == instance_id)
+                    .unwrap_or(false)
+                {
+                    "leader".green()
+                } else {
+                    "standby".blue()
+                };
+                println!("{} {}", "Role:".bold(), role);
+                if let Some(lease) = lease {
+                    println!("{} {}", "Leader:".bold(), lease.instance_id.magenta());
+                    println!(
+                        "{} {}",
+                        "Renewed:".bold(),
+                        lease.renewed_at.to_rfc3339().dimmed()
+                    );
+                    println!("{} {}ms", "TTL:".bold(), lease.ttl_ms.to_string().dimmed());
+                } else {
+                    println!("{}", "No active lease".dimmed());
+                }
+            }
+        }
+        SharkCommand::Observe { interval_ms } => {
+            println!(
+                "{} {}",
+                "🦈".cyan(),
+                "Observing Shark Stating (Ctrl-C to stop)".bold().cyan()
+            );
+            let interval = Duration::from_millis(*interval_ms);
+            let mut last_leader: Option<String> = None;
+            loop {
+                let lease = arbiter.current_lease()?;
+                let leader_id = lease.as_ref().map(|l| l.instance_id.clone());
+                let role = if leader_id.as_ref() == Some(&instance_id) {
+                    "leader".green()
+                } else if leader_id.is_some() {
+                    "standby".blue()
+                } else {
+                    "no leader".dimmed()
+                };
+                if leader_id != last_leader {
+                    println!(
+                        "{} role={} leader={} renewed={}",
+                        Utc::now().to_rfc3339(),
+                        role,
+                        leader_id.as_deref().unwrap_or("none").magenta(),
+                        lease
+                            .as_ref()
+                            .map(|l| l.renewed_at.to_rfc3339())
+                            .unwrap_or_default()
+                            .dimmed()
+                    );
+                    last_leader = leader_id;
+                }
+                tokio::time::sleep(interval).await;
+            }
+        }
+        SharkCommand::Release => {
+            arbiter.release(&instance_id)?;
+            println!(
+                "{} {}",
+                "🦈".cyan(),
+                "Leadership released (if held by this instance)".green()
+            );
+        }
+        SharkCommand::Upgrade {
+            binary,
+            standby_health_port,
+            ready_timeout_ms,
+        } => {
+            println!(
+                "{} {} {}",
+                "🦈".cyan(),
+                "Shark upgrade:".bold().cyan(),
+                binary.display().to_string().yellow()
+            );
+
+            let current_lease = arbiter.current_lease()?;
+            let leader_id = current_lease
+                .as_ref()
+                .map(|l| l.instance_id.clone())
+                .unwrap_or_else(|| instance_id.clone());
+
+            if current_lease
+                .as_ref()
+                .map(|l| l.instance_id != instance_id)
+                .unwrap_or(false)
+            {
+                println!(
+                    "{} current leader is {}; this instance is standby. Upgrade must be run from the leader.",
+                    "ℹ️".blue(),
+                    leader_id.blue()
+                );
+                return Ok(());
+            }
+
+            // Pick a health port for the standby. If the user did not supply one,
+            // choose an ephemeral port by binding to 127.0.0.1:0 and reading it back.
+            let standby_port = match *standby_health_port {
+                Some(port) => port,
+                None => {
+                    let listener = std::net::TcpListener::bind("127.0.0.1:0")
+                        .context("failed to bind ephemeral health port")?;
+                    listener.local_addr()?.port()
+                }
+            };
+
+            // Spawn standby instance.
+            let mut child = kaptaind::daemon::shark::spawn_standby(
+                &config.repo_path,
+                binary,
+                &arbiter_path,
+                Some(standby_port),
+            )
+            .await?;
+            println!(
+                "{} standby spawned with pid {} (health port {})",
+                "✅".green(),
+                child.id(),
+                standby_port
+            );
+
+            // Wait for the standby to report healthy before asking the leader to retire.
+            let ready_timeout = Duration::from_millis(*ready_timeout_ms);
+            if let Err(err) =
+                kaptaind::daemon::shark::wait_for_standby_ready(standby_port, ready_timeout).await
+            {
+                let _ = child.kill();
+                anyhow::bail!("standby failed to become ready: {}", err);
+            }
+            println!("{} standby is healthy", "✅".green());
+
+            // Request the current leader (us) to retire.
+            kaptaind::daemon::shark::request_retire(&arbiter_path, &instance_id)?;
+            println!(
+                "{} retire marker written for {}",
+                "✅".green(),
+                instance_id.yellow()
+            );
+
+            // Wait for the standby to acquire leadership.
+            let timeout = Duration::from_millis(config.shark.upgrade_handoff_timeout_ms);
+            let acquired = tokio::time::timeout(timeout, async {
+                loop {
+                    match arbiter.current_lease() {
+                        Ok(Some(lease)) if lease.instance_id != instance_id => {
+                            return Ok::<_, anyhow::Error>(lease)
+                        }
+                        _ => {}
+                    }
+                    tokio::time::sleep(Duration::from_millis(250)).await;
+                }
+            })
+            .await;
+
+            match acquired {
+                Ok(Ok(lease)) => {
+                    println!(
+                        "{} upgrade complete; new leader is {}",
+                        "🚀".green(),
+                        lease.instance_id.green()
+                    );
+                }
+                _ => {
+                    // Attempt to clean up the child and cancel retirement.
+                    let _ = child.kill();
+                    let _ = kaptaind::daemon::shark::cancel_retire(&arbiter_path, &instance_id);
+                    anyhow::bail!("upgrade handoff timed out; old leader retains control");
+                }
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -1145,6 +1717,25 @@ required = true
 # mode = "all"        # "all" (default), "cluster" (only changed files), or "pattern"
 # include = ["src/**"] # only used in "pattern" mode
 # exclude = ["*.log", ".env*"]
+
+# [deckhand]
+# enabled = false              # enable automatic storage management
+# interval_minutes = 360       # how often to run (default: 6 hours)
+# sweep_keep_days = 30         # keep registry/git cache entries newer than N days
+# clean_profiles = ["debug"]   # cargo profiles to clean
+# clean_older_than_days = 14   # only clean artifacts older than N days (optional)
+# dry_run = false              # only report what would be removed
+# min_free_percent = 10        # skip pass when more than this % of disk is free
+
+# [shark]
+# enabled = false              # enable Shark Stating high availability
+# arbiter_path = ".kaptaind/shark"  # shared directory for leadership leases
+# heartbeat_interval_ms = 1000 # how often to renew/inspect lease
+# heartbeat_timeout_ms = 5000  # how long to wait before considering leader dead
+# lease_ttl_ms = 10000         # lease expiration time
+# instance_id = "kaptaind-a"   # stable identifier for this instance
+# upgrade_handoff_timeout_ms = 30000
+# mode = "auto"                # "auto", "leader", "standby", or "observer"
 "#
     )
 }
