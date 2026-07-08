@@ -1194,7 +1194,7 @@ fn format_commit(
     )
 }
 
-fn load_version(path: &Path) -> Option<Version> {
+pub(crate) fn load_version(path: &Path) -> Option<Version> {
     let content = std::fs::read_to_string(path).ok()?;
     Version::parse(content.trim()).ok()
 }

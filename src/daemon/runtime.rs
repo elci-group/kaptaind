@@ -108,6 +108,7 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
     // Spawn health endpoint
     let health_state = HealthState {
         version: env!("CARGO_PKG_VERSION").to_string(),
+        repo_path: config.repo_path.clone(),
         metrics: metrics.clone(),
         event_tx: event_tx.clone(),
         shark: shark_runtime.clone(),

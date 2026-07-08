@@ -15,7 +15,7 @@
 - `src/cli/main.rs` — CLI binary (`kaptaind-cli`) with `status`, `log`, `analyze`, `init`, `aoc`, and `ship` subcommands.
 - `src/config/` — config loading, path normalization, staging/bundle/notify config structs.
 - `src/watcher/` — filesystem event types and notify-based watcher thread.
-- `src/daemon/` — async runtime, scheduler loop, telemetry tracking, health server, storage management (deckhand), HA leader election (shark), notifications, and audit logging.
+- `src/daemon/` — async runtime, scheduler loop, telemetry tracking, health/metrics server (JSON + Prometheus + SSE events), storage management (deckhand), HA leader election (shark), notifications, and audit logging.
 - `src/cluster/` — event clustering by time window.
 - `src/diff/` — scoring across five dimensions:
   - `text.rs` — structural scoring (event density, path spread, churn).

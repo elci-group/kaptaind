@@ -28,7 +28,7 @@ to close those gaps.
 | Manual `ship` (CLI) | B+ | A | Add SBOM / provenance artifacts and release signing. |
 | Automated `ship` (daemon) | D | A+ | **Implemented**: cron-driven nightly + stable releases with notifications and audit logs. |
 | Notifications | B+ | A | **Implemented**: nautical release/qualification/pulse events. |
-| Observability (status/telemetry) | B+ | A | **Implemented**: pulse notifications; add metrics endpoint extensions. |
+| Observability (status/telemetry) | B+ | A | **Implemented**: pulse notifications and Prometheus `/metrics/prometheus` endpoint. |
 | **Project overall** | **B+ / A-** | **A+ / S** | Close remaining S-tier gaps (signed releases, HA rollout, formal SLSA provenance). |
 
 ---
@@ -54,9 +54,13 @@ to close those gaps.
 - Overlapping ship runs are serialized with an `AtomicBool` guard.
 - Failures are audit-logged and notified.
 
-### 4. Documentation & Tests (Executed)
-- Added unit tests for cron parsing, config validation, and notification rendering.
-- Updated `README.md` with auto-ship examples and `ship status --auto`.
+### 4. Observability (Executed)
+- Added Prometheus `/metrics/prometheus` endpoint with counters, stability score, release count, and version labels.
+- Kept JSON `/metrics` endpoint for ad-hoc inspection and `/events` SSE stream.
+
+### 5. Documentation & Tests (Executed)
+- Added unit tests for cron parsing, config validation, notification rendering, and Prometheus metrics.
+- Updated `README.md` with auto-ship examples, `ship status --auto`, and monitoring section.
 - Updated `AGENTS.md` runtime flow and module list.
 - Created this strategy document.
 
@@ -84,6 +88,7 @@ to close those gaps.
 - [x] `[ship.auto_nightly]` / `[ship.auto_stable]` deserialize and validate.
 - [x] Daemon scheduler emits pulse and qualification notifications.
 - [x] Automated ship task logs to audit and sends release notifications.
+- [x] Prometheus `/metrics/prometheus` endpoint exposes counters, stability, releases, and version labels.
 - [x] Documentation updated and strategy published.
 
 ---

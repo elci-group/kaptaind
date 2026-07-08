@@ -233,6 +233,25 @@ Kaptaind operates entirely in the background, minimizing developer friction whil
 6. **Version Bump & Git Orchestration (`src/version/`, `src/commit/`, `src/git/`)**: 
    The weights are aggregated. Breaking APIs trigger `Major` bumps; new APIs trigger `Minor`; standard churn triggers `Patch`. The new version is flushed to the `VERSION` file (and `Cargo.toml` if present), a rich commit message is generated, and a JSON artifact is stored in `.kaptaind/analysis/` before Kaptaind's internal Git command adapter creates the commit via the system `git` executable. Staging is configurable: stage all files (default), only cluster-touched files, or pattern-matched files with optional excludes. Notifications are dispatched via shell hooks, Discord/Slack webhooks, or both.
 
+## Monitoring & Observability
+
+The daemon exposes a health/metrics server on `localhost:9090` (configurable via `health_port`):
+
+- `GET /health` — JSON health check including daemon version and Shark HA role.
+- `GET /metrics` — JSON counter snapshot (clusters processed, commits made, artifacts pruned, etc.).
+- `GET /metrics/prometheus` — Prometheus-compatible text exposition format including counters, stability score, release count, and version labels.
+- `GET /events` — Server-sent events stream of daemon lifecycle events.
+
+Example Prometheus scrape config:
+
+```yaml
+scrape_configs:
+  - job_name: kaptaind
+    static_configs:
+      - targets: ['localhost:9090']
+    metrics_path: /metrics/prometheus
+```
+
 ## Configuration
 
 `kaptaind` looks for an optional configuration file `kaptaind.toml` in the repository root.
