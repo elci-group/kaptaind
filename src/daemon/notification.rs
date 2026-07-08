@@ -71,6 +71,9 @@ pub enum NotificationEvent<'a> {
         clusters: u64,
         last_version: &'a str,
     },
+    FlakyTests {
+        tests: &'a [String],
+    },
 }
 
 impl NotificationEvent<'_> {
@@ -86,6 +89,7 @@ impl NotificationEvent<'_> {
             NotificationEvent::ReleaseFailure { .. } => "release_failure",
             NotificationEvent::Qualification { .. } => "qualification",
             NotificationEvent::Pulse { .. } => "pulse",
+            NotificationEvent::FlakyTests { .. } => "flaky_tests",
         }
     }
 
@@ -103,6 +107,7 @@ impl NotificationEvent<'_> {
             }
             NotificationEvent::Qualification { .. } => config.on_qualification.as_ref(),
             NotificationEvent::Pulse { .. } => config.on_pulse.as_ref(),
+            NotificationEvent::FlakyTests { .. } => config.on_flaky_tests.as_ref(),
         }
     }
 }
@@ -260,6 +265,9 @@ fn inject_env(command: &mut std::process::Command, event: &NotificationEvent<'_>
                 .env("KAPTAIND_UPTIME_SECS", uptime_secs.to_string())
                 .env("KAPTAIND_CLUSTERS", clusters.to_string())
                 .env("KAPTAIND_VERSION", *last_version);
+        }
+        NotificationEvent::FlakyTests { tests } => {
+            command.env("KAPTAIND_FLAKY_TESTS", tests.join(","));
         }
     }
 }
@@ -478,6 +486,21 @@ fn render_nautical(event: &NotificationEvent<'_>) -> RenderedNotification {
                 priority: Priority::Low,
             }
         }
+        NotificationEvent::FlakyTests { tests } => {
+            let list = tests.join(", ");
+            let title = "🎣 Flaky tests spotted".to_string();
+            let body = format!("These tests are bobbing between pass and fail: {}", list);
+            let webhook = format!(
+                "🎣 **Flaky tests spotted**\nThese tests are bobbing between pass and fail:\n```\n{}\n```",
+                list
+            );
+            RenderedNotification {
+                title,
+                body,
+                webhook,
+                priority: Priority::High,
+            }
+        }
     }
 }
 
@@ -687,6 +710,18 @@ fn render_plain(event: &NotificationEvent<'_>) -> RenderedNotification {
                 priority: Priority::Low,
             }
         }
+        NotificationEvent::FlakyTests { tests } => {
+            let list = tests.join(", ");
+            let title = "Flaky tests detected".to_string();
+            let body = format!("The following tests are flaky: {}", list);
+            let webhook = format!("**Flaky tests detected**\n```\n{}\n```", list);
+            RenderedNotification {
+                title,
+                body,
+                webhook,
+                priority: Priority::High,
+            }
+        }
     }
 }
 
@@ -857,6 +892,15 @@ pub fn notify_pulse(
             clusters,
             last_version,
         },
+        webhook_enabled,
+    );
+}
+
+/// Send a flaky-test notification.
+pub fn notify_flaky_tests(config: &NotifyConfig, tests: &[String], webhook_enabled: bool) {
+    notify(
+        config,
+        NotificationEvent::FlakyTests { tests },
         webhook_enabled,
     );
 }
@@ -1073,5 +1117,32 @@ mod tests {
         assert!(rendered.title.contains("v1.2.3"));
         assert!(rendered.body.contains("123"));
         assert!(rendered.body.contains("7"));
+    }
+
+    #[test]
+    fn nautical_flaky_tests_uses_fishing_theme() {
+        let rendered = render(
+            &NotificationEvent::FlakyTests {
+                tests: &["foo::bar".to_string(), "foo::baz".to_string()],
+            },
+            true,
+        );
+        assert!(rendered.title.contains("Flaky tests spotted"));
+        assert!(rendered.body.contains("foo::bar"));
+        assert!(rendered.body.contains("foo::baz"));
+        assert_eq!(rendered.priority, Priority::High);
+    }
+
+    #[test]
+    fn plain_flaky_tests_lists_tests() {
+        let rendered = render(
+            &NotificationEvent::FlakyTests {
+                tests: &["foo::bar".to_string()],
+            },
+            false,
+        );
+        assert!(rendered.title.contains("Flaky tests detected"));
+        assert!(rendered.body.contains("foo::bar"));
+        assert_eq!(rendered.priority, Priority::High);
     }
 }

@@ -21,6 +21,7 @@ pub async fn post_commit(
     version: &str,
     commit_hash: &str,
     tests_passed: bool,
+    failed_tests: Vec<String>,
     diff_score: f64,
     runtime_paths: u32,
     parse_confidence: f64,
@@ -61,9 +62,18 @@ pub async fn post_commit(
         resulting_score: 0.0, // filled in by engine
         timestamp: now_ts,
         parse_confidence: parse_confidence.clamp(0.0, 1.0),
+        failed_tests,
     };
 
     crate::stability::engine::update(&mut stability, entry, delta_t_mins);
+
+    if !stability.flaky_tests.is_empty() {
+        crate::daemon::notification::notify_flaky_tests(
+            &config.notify,
+            &stability.flaky_tests,
+            config.capabilities.network_webhooks,
+        );
+    }
 
     if let Err(err) = crate::stability::engine::save(repo_path, &stability) {
         tracing::warn!(error = %err, "failed to save stability record");

@@ -121,6 +121,7 @@ mod tests {
                 resulting_score: score,
                 timestamp: chrono::Utc::now().timestamp(),
                 parse_confidence: 0.95,
+                failed_tests: Vec::new(),
             });
         }
         rec

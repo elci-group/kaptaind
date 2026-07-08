@@ -15,6 +15,7 @@ use crate::version::Bump;
 use crate::watcher::FsEvent;
 use chrono::{DateTime, Utc};
 use globset::{Glob, GlobSet, GlobSetBuilder};
+use regex::Regex;
 use semver::Version;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -872,6 +873,10 @@ async fn process_cluster(
             .head_commit_hash()
             .unwrap_or_else(|_| "unknown".to_string());
         let tests_passed = matches!(test_outcome, TestOutcome::Passed);
+        let failed_tests = match &test_outcome {
+            TestOutcome::Failed { failed_tests, .. } => failed_tests.clone(),
+            _ => Vec::new(),
+        };
         let diff_f64 = weight.score as f64;
         let runtime_paths = diff.runtime_paths as u32;
         // Compute mean parse confidence from analysis metadata
@@ -894,6 +899,7 @@ async fn process_cluster(
                 &version_str,
                 &commit_hash,
                 tests_passed,
+                failed_tests,
                 diff_f64,
                 runtime_paths,
                 parse_confidence,
@@ -1271,7 +1277,11 @@ pub struct AnalysisArtifact {
 #[derive(Debug, Clone)]
 pub enum TestOutcome {
     Passed,
-    Failed { code: Option<i32>, stderr: String },
+    Failed {
+        code: Option<i32>,
+        stderr: String,
+        failed_tests: Vec<String>,
+    },
     Skipped,
 }
 
@@ -1315,15 +1325,38 @@ pub async fn run_test_hook_for_config(test: &TestConfig, repo_path: &Path) -> Te
         .await
     {
         Ok(output) if output.status.success() => TestOutcome::Passed,
-        Ok(output) => TestOutcome::Failed {
-            code: output.status.code(),
-            stderr: String::from_utf8_lossy(&output.stderr).trim().to_string(),
-        },
+        Ok(output) => {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let combined = format!("{stdout}\n{stderr}");
+            TestOutcome::Failed {
+                code: output.status.code(),
+                stderr,
+                failed_tests: parse_failed_tests(&combined),
+            }
+        }
         Err(err) => TestOutcome::Failed {
             code: None,
             stderr: err.to_string(),
+            failed_tests: Vec::new(),
         },
     }
+}
+
+/// Parse test output for lines like `test foo::bar ... FAILED`.
+/// Works for `cargo test` output and similar formats.
+fn parse_failed_tests(output: &str) -> Vec<String> {
+    let re = Regex::new(r"^test\s+(.+?)\s+\.\.\.\s+FAILED$").expect("valid regex");
+    let mut tests: Vec<String> = output
+        .lines()
+        .filter_map(|line| {
+            re.captures(line.trim())
+                .map(|caps| caps[1].trim().to_string())
+        })
+        .collect();
+    tests.sort();
+    tests.dedup();
+    tests
 }
 
 pub fn should_block_commit(test: &TestConfig, outcome: &TestOutcome) -> bool {
@@ -1343,8 +1376,18 @@ fn apply_test_outcome(diff: &mut DiffAnalysis, outcome: &TestOutcome) {
 }
 
 fn log_test_failure(outcome: &TestOutcome) {
-    if let TestOutcome::Failed { code, stderr } = outcome {
-        tracing::warn!(code = ?code, stderr = %stderr, "test hook failed; skipping automation");
+    if let TestOutcome::Failed {
+        code,
+        stderr,
+        failed_tests,
+    } = outcome
+    {
+        tracing::warn!(
+            code = ?code,
+            stderr = %stderr,
+            failed_tests = ?failed_tests,
+            "test hook failed; skipping automation"
+        );
     }
 }
 
@@ -1421,9 +1464,9 @@ fn looks_like_glob(value: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_test_outcome, format_commit, looks_like_glob, persist_analysis_artifact,
-        rate_limit_allows, run_test_hook, save_version, should_block_commit, AnalysisArtifact,
-        IgnoreMatcher, TestOutcome,
+        apply_test_outcome, format_commit, looks_like_glob, parse_failed_tests,
+        persist_analysis_artifact, rate_limit_allows, run_test_hook, save_version,
+        should_block_commit, AnalysisArtifact, IgnoreMatcher, TestOutcome,
     };
     use crate::cluster::engine::Cluster;
     use crate::config::loader::{Config, TestConfig};
@@ -1481,8 +1524,32 @@ mod tests {
             &TestOutcome::Failed {
                 code: Some(1),
                 stderr: String::new(),
+                failed_tests: Vec::new(),
             }
         ));
+    }
+
+    #[test]
+    fn parses_cargo_test_failed_lines() {
+        let output = r#"
+running 3 tests
+test foo::bar ... ok
+test foo::baz ... FAILED
+test foo::qux ... FAILED
+failures:
+    foo::baz
+    foo::qux
+test result: FAILED. 1 passed; 2 failed; 0 ignored
+"#;
+        let failed = parse_failed_tests(output);
+        assert_eq!(failed, vec!["foo::baz".to_string(), "foo::qux".to_string()]);
+    }
+
+    #[test]
+    fn parse_failed_tests_deduplicates() {
+        let output = "test foo::bar ... FAILED\ntest foo::bar ... FAILED\n";
+        let failed = parse_failed_tests(output);
+        assert_eq!(failed, vec!["foo::bar".to_string()]);
     }
 
     #[test]

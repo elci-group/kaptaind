@@ -231,6 +231,12 @@ pub struct ShipConfig {
     /// When true, `ship` enforces the daemon `[qualification]` gates.
     #[serde(default = "default_true")]
     pub require_qualification: bool,
+    /// GPG-sign git tags and release artifact checksums.
+    #[serde(default)]
+    pub sign: bool,
+    /// Optional GPG key ID or email to use for signing.
+    #[serde(default)]
+    pub gpg_key_id: Option<String>,
     #[serde(default)]
     pub nightly: ShipKindConfig,
     #[serde(default)]
@@ -239,6 +245,8 @@ pub struct ShipConfig {
     pub auto_nightly: ShipAutoConfig,
     #[serde(default)]
     pub auto_stable: ShipAutoConfig,
+    #[serde(default)]
+    pub sbom: ShipSbomConfig,
 }
 
 impl Default for ShipConfig {
@@ -248,10 +256,39 @@ impl Default for ShipConfig {
             targets: default_ship_targets(),
             channels: ShipChannelsConfig::default(),
             require_qualification: true,
+            sign: false,
+            gpg_key_id: None,
             nightly: ShipKindConfig::default(),
             stable: ShipKindConfig::default(),
             auto_nightly: ShipAutoConfig::default(),
             auto_stable: ShipAutoConfig::default(),
+            sbom: ShipSbomConfig::default(),
+        }
+    }
+}
+
+/// `[ship.sbom]` block in `kaptaind.toml`.
+///
+/// Configures SBOM generation for shipped releases.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ShipSbomConfig {
+    /// Generate an SBOM for every release.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Output format. Currently only `"spdx-json"` is supported.
+    #[serde(default = "default_sbom_format")]
+    pub format: String,
+}
+
+fn default_sbom_format() -> String {
+    "spdx-json".to_string()
+}
+
+impl Default for ShipSbomConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            format: default_sbom_format(),
         }
     }
 }
@@ -275,6 +312,9 @@ pub struct ShipKindConfig {
     /// Create and optionally push a git tag for this release.
     #[serde(default)]
     pub push_tag: bool,
+    /// Override the global `sign` setting for this release kind.
+    #[serde(default)]
+    pub sign: Option<bool>,
     /// Override the global `require_qualification` setting for this kind.
     #[serde(default)]
     pub require_qualification: Option<bool>,
@@ -334,6 +374,7 @@ impl Default for ShipKindConfig {
             draft: false,
             prerelease: false,
             push_tag: false,
+            sign: None,
             require_qualification: None,
             release_notes: true,
             retain_count: None,
@@ -647,6 +688,8 @@ pub struct NotifyConfig {
     pub on_qualification: Option<String>,
     #[serde(default)]
     pub on_pulse: Option<String>,
+    #[serde(default)]
+    pub on_flaky_tests: Option<String>,
     pub webhook_url: Option<String>,
     /// Use nautical-themed emoji and phrasing for notifications.
     #[serde(default = "default_true")]
@@ -671,6 +714,7 @@ impl Default for NotifyConfig {
             on_release: None,
             on_qualification: None,
             on_pulse: None,
+            on_flaky_tests: None,
             webhook_url: None,
             nautical_theme: true,
             rate_limit_seconds: default_notify_rate_limit_seconds(),
@@ -1089,6 +1133,16 @@ fn default_instance_id() -> String {
     format!("{}@{}", pid, host)
 }
 
+fn gpg_available() -> bool {
+    std::process::Command::new("gpg")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
 impl Config {
     /// Validate cross-field constraints and invariants.
     pub fn validate(&self) -> anyhow::Result<()> {
@@ -1125,6 +1179,15 @@ impl Config {
         }
 
         if self.ship.enabled {
+            let signing_requested = self.ship.sign
+                || self.ship.nightly.sign == Some(true)
+                || self.ship.stable.sign == Some(true);
+            if signing_requested && !gpg_available() {
+                tracing::warn!(
+                    "ship signing is enabled but gpg is not available; signing will fail at runtime"
+                );
+            }
+
             if self.ship.auto_nightly.enabled {
                 crate::schedule::validate_schedule(&self.ship.auto_nightly.schedule)
                     .map_err(|e| anyhow::anyhow!("ship.auto_nightly.schedule is invalid: {}", e))?;
@@ -1686,6 +1749,12 @@ mod tests {
         assert!(!config.ship.channels.installers.tauri);
         assert!(config.ship.channels.package_managers.is_empty());
         assert!(config.ship.channels.app_stores.is_empty());
+        assert!(!config.ship.sign);
+        assert!(config.ship.gpg_key_id.is_none());
+        assert!(config.ship.nightly.sign.is_none());
+        assert!(config.ship.stable.sign.is_none());
+        assert!(!config.ship.sbom.enabled);
+        assert_eq!(config.ship.sbom.format, "spdx-json");
     }
 
     #[test]
@@ -1736,6 +1805,48 @@ mod tests {
         assert_eq!(config.ship.channels.package_managers[0].kind, "homebrew");
         assert_eq!(config.ship.channels.app_stores.len(), 1);
         assert!(config.ship.channels.app_stores[0].draft);
+    }
+
+    #[test]
+    fn ship_deserializes_signing_fields() {
+        let toml_str = r#"
+            repo_path = "."
+            [watch]
+            path = "."
+            recursive = true
+            ignore_file = ".kaptainignore"
+            [cluster]
+            window = 5
+            [weights]
+            s = 0.35
+            a = 0.30
+            d = 0.20
+            r = 0.15
+            [push]
+            enabled = false
+            branch = "main"
+            [ratelimit]
+            min_commit_interval = 10
+            [test]
+            command = "cargo test"
+            required = true
+            [ship]
+            enabled = true
+            sign = true
+            gpg_key_id = "releases@example.com"
+            [ship.stable]
+            sign = false
+            [ship.nightly]
+            sign = true
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.ship.sign);
+        assert_eq!(
+            config.ship.gpg_key_id,
+            Some("releases@example.com".to_string())
+        );
+        assert_eq!(config.ship.stable.sign, Some(false));
+        assert_eq!(config.ship.nightly.sign, Some(true));
     }
 
     #[test]

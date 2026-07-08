@@ -197,6 +197,13 @@ computes the next fire time, runs the ship pipeline, logs to the audit log, and
 sends nautical release notifications. Use `kaptaind-cli ship status --auto` to
 preview the next scheduled fires.
 
+Release artifacts can be hardened with GPG-signed SHA256 checksums and signed
+git tags by setting `sign = true` under `[ship]`. SBOM generation (`[ship.sbom]`)
+produces an SPDX 2.3 JSON bill of materials from `Cargo.lock` or
+`package-lock.json` and attaches it to the release. The stability engine also
+tracks per-test outcomes and emits a nautical "flaky tests" notification when a
+test flips between pass and fail within the recent window.
+
 ![Kaptaind Analyze and Log Demo](analyze_and_log.gif)
 
 You can also use special `kaptaind` flags to see system indices:
@@ -466,6 +473,16 @@ rate_limit_seconds = 5
 # schedule = "0 9 * * 1"      # e.g. 09:00 every Monday
 # cron_timezone = "local"
 # require_qualification = true
+#
+# Artifact signing (GPG). When enabled, each artifact gets a .sha256 checksum
+# and a detached .sha256.asc signature. Git tags are also GPG-signed.
+# sign = false
+# gpg_key_id = "your-key@example.com"  # optional
+#
+# SBOM generation for release artifacts.
+# [ship.sbom]
+# enabled = false
+# format = "spdx-json"
 
 # Kimi-specific inference options (in addition to the generic [inference] block)
 # [inference]

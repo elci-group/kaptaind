@@ -160,6 +160,26 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
     let mut distributed: Vec<String> = Vec::new();
 
     // ------------------------------------------------------------------
+    // SBOM generation
+    // ------------------------------------------------------------------
+    if config.ship.sbom.enabled {
+        match crate::release::sbom::generate_sbom(&config.repo_path, &config.ship.sbom.format) {
+            Ok(sbom_path) => {
+                all_artifacts.push(sbom_path);
+                distributed.push("sbom".to_string());
+            }
+            Err(err) => {
+                eprintln!(
+                    "{} {}: {}",
+                    "⚠️".yellow(),
+                    "SBOM generation failed".yellow(),
+                    err
+                );
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------
     // 1. Build binaries for every target
     // ------------------------------------------------------------------
     let mut built_targets: Vec<BuiltTarget> = Vec::new();
@@ -295,11 +315,49 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
         }
     }
 
+    // ------------------------------------------------------------------
+    // 6. Generate checksums and detached GPG signatures
+    // ------------------------------------------------------------------
+    let sign_artifacts = signing_enabled(&config.ship, opts.kind);
+    let gpg_key_id = config.ship.gpg_key_id.as_deref();
+    let artifacts_to_checksum: Vec<PathBuf> = all_artifacts.clone();
+    for artifact in &artifacts_to_checksum {
+        if !artifact.exists() {
+            continue;
+        }
+        match generate_checksum(artifact) {
+            Ok(checksum_path) => {
+                all_artifacts.push(checksum_path.clone());
+                if sign_artifacts {
+                    match gpg_sign_checksum(&checksum_path, gpg_key_id).await {
+                        Ok(sig_path) => all_artifacts.push(sig_path),
+                        Err(err) => {
+                            eprintln!(
+                                "{} {}: {}",
+                                "⚠️".yellow(),
+                                format!("Failed to sign {}", checksum_path.display()).yellow(),
+                                err
+                            );
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                eprintln!(
+                    "{} {}: {}",
+                    "⚠️".yellow(),
+                    format!("Failed to checksum {}", artifact.display()).yellow(),
+                    err
+                );
+            }
+        }
+    }
+
     let short_commit =
         git_short_commit(&config.repo_path).unwrap_or_else(|_| "unknown".to_string());
 
     // ------------------------------------------------------------------
-    // 6. App stores / GitHub Releases
+    // 7. App stores / GitHub Releases
     // ------------------------------------------------------------------
     for store in &config.ship.channels.app_stores {
         if !channels.contains(&format!("app-store:{}", store.kind)) {
@@ -334,7 +392,7 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
     }
 
     // ------------------------------------------------------------------
-    // 7. Persist ship index
+    // 8. Persist ship index
     // ------------------------------------------------------------------
     append_ship_index(
         &config.repo_path,
@@ -360,9 +418,18 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
         &all_artifacts,
     )?;
 
-    // Create and optionally push a git tag for stable/nightly releases.
+    // Create and optionally push a signed git tag for stable/nightly releases.
     if matches!(opts.kind, ShipKind::Stable | ShipKind::Nightly) {
-        if let Err(err) = create_git_tag(&config.repo_path, &version, opts.kind).await {
+        let sign_tag = signing_enabled(&config.ship, opts.kind);
+        if let Err(err) = create_git_tag(
+            &config.repo_path,
+            &version,
+            opts.kind,
+            sign_tag,
+            config.ship.gpg_key_id.as_deref(),
+        )
+        .await
+        {
             eprintln!(
                 "{} {}: {}",
                 "⚠️".yellow(),
@@ -1047,6 +1114,54 @@ fn kind_config(ship: &ShipConfig, kind: ShipKind) -> &ShipKindConfig {
     }
 }
 
+fn signing_enabled(ship: &ShipConfig, kind: ShipKind) -> bool {
+    kind_config(ship, kind).sign.unwrap_or(ship.sign)
+}
+
+fn generate_checksum(artifact: &Path) -> anyhow::Result<PathBuf> {
+    let bytes = std::fs::read(artifact)?;
+    let hash = crate::util::hex::encode(Sha256::digest(&bytes));
+    let filename = artifact
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("artifact");
+    let mut checksum_path = artifact.as_os_str().to_owned();
+    checksum_path.push(".sha256");
+    let checksum = format!("{}  {}\n", hash, filename);
+    std::fs::write(&checksum_path, checksum)?;
+    Ok(PathBuf::from(checksum_path))
+}
+
+async fn gpg_sign_checksum(checksum_path: &Path, key_id: Option<&str>) -> anyhow::Result<PathBuf> {
+    let mut args = vec![
+        "--batch".to_string(),
+        "--yes".to_string(),
+        "--detach-sign".to_string(),
+        "--armor".to_string(),
+    ];
+    if let Some(k) = key_id {
+        args.push("--local-user".to_string());
+        args.push(k.to_string());
+    }
+    args.push(checksum_path.to_str().unwrap_or("").to_string());
+
+    let output = Command::new("gpg")
+        .args(&args)
+        .output()
+        .await
+        .context("failed to run gpg --detach-sign")?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "gpg --detach-sign failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let mut sig_path = checksum_path.as_os_str().to_owned();
+    sig_path.push(".asc");
+    Ok(PathBuf::from(sig_path))
+}
+
 fn resolve_kind_channels(
     ship: &ShipConfig,
     override_channels: Option<Vec<String>>,
@@ -1097,19 +1212,34 @@ fn git_short_commit(repo_path: &Path) -> anyhow::Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-async fn create_git_tag(repo_path: &Path, version: &str, kind: ShipKind) -> anyhow::Result<()> {
+async fn create_git_tag(
+    repo_path: &Path,
+    version: &str,
+    kind: ShipKind,
+    sign: bool,
+    key_id: Option<&str>,
+) -> anyhow::Result<()> {
     let tag = format!("v{}", version);
     let message = format!("kaptaind {} release {}", kind.as_str(), version);
+    let mut args: Vec<String> = vec![
+        "-C".into(),
+        repo_path.to_str().unwrap_or(".").into(),
+        "tag".into(),
+    ];
+    if sign {
+        args.push("-s".into());
+    } else {
+        args.push("-a".into());
+    }
+    if let Some(k) = key_id {
+        args.push("-u".into());
+        args.push(k.into());
+    }
+    args.push(tag);
+    args.push("-m".into());
+    args.push(message);
     let output = Command::new("git")
-        .args([
-            "-C",
-            repo_path.to_str().unwrap_or("."),
-            "tag",
-            "-a",
-            &tag,
-            "-m",
-            &message,
-        ])
+        .args(&args)
         .output()
         .await
         .context("failed to run git tag")?;
@@ -1529,5 +1659,37 @@ mod tests {
         let (dir, _) = temp_git_repo();
         let notes = generate_release_notes(dir.path(), "1.2.3", ShipKind::Stable, "abc").unwrap();
         assert!(notes.starts_with("Release v1.2.3"));
+    }
+
+    #[test]
+    fn generate_checksum_produces_valid_sha256() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = dir.path().join("artifact.tar.gz");
+        std::fs::write(&artifact, b"hello ship").unwrap();
+
+        let checksum_path = generate_checksum(&artifact).unwrap();
+
+        let mut expected_path = artifact.as_os_str().to_owned();
+        expected_path.push(".sha256");
+        assert_eq!(checksum_path.as_os_str(), expected_path);
+
+        let content = std::fs::read_to_string(&checksum_path).unwrap();
+        let (hash, filename) = content.trim().split_once("  ").unwrap();
+        assert_eq!(filename, "artifact.tar.gz");
+        let expected = crate::util::hex::encode(Sha256::digest(b"hello ship"));
+        assert_eq!(hash, expected);
+    }
+
+    #[test]
+    fn signing_enabled_respects_kind_overrides() {
+        let mut ship = ShipConfig {
+            sign: true,
+            ..ShipConfig::default()
+        };
+        ship.stable.sign = Some(false);
+        ship.nightly.sign = None;
+        assert!(!signing_enabled(&ship, ShipKind::Stable));
+        assert!(signing_enabled(&ship, ShipKind::Nightly));
+        assert!(signing_enabled(&ship, ShipKind::Manual));
     }
 }

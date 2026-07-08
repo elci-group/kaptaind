@@ -33,8 +33,8 @@
 - `src/git/` — thin repository wrapper.
 - `src/aoc/` — Aim of Change sessions, traces, agent interception, manifests.
 - `src/qualification/` — release qualification gates (stability, streak, cooldown, diff spike).
-- `src/stability/` — per-commit stability scoring.
-- `src/release/` — post-commit release pipeline (build, package, distribute, ship stable/nightly).
+- `src/stability/` — per-commit stability scoring and flaky-test detection.
+- `src/release/` — post-commit release pipeline (build, package, distribute, ship stable/nightly, GPG-signed tags/artifacts, SPDX SBOMs).
 - `src/schedule/` — cron scheduling helpers for daemon-driven automated releases.
 - `src/trawler/` — intelligent project discovery and bulk initialization.
 - `src/vacs/` — Visual Asset Channel Saturation (change-driven diagrams/charts).

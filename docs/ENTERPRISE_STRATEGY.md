@@ -22,14 +22,14 @@ to close those gaps.
 |---------|---------|--------|-----|
 | Semantic diff & scoring | A | A+ | Add confidence-weighted rollups and deterministic benchmarks. |
 | Git commit / push orchestration | A | A+ | Add signed commits and branch protection enforcement. |
-| Qualification & stability | A | A+ | Add cooldown policy observability and flaky-test guards. |
-| Audit logging | A- | A | Expand to structured OTel-style spans. |
-| Config validation | A- | A | Cross-field validation now covers ship schedules; expand to plugin configs. |
-| Manual `ship` (CLI) | B+ | A | Add SBOM / provenance artifacts and release signing. |
-| Automated `ship` (daemon) | D | A+ | **Implemented**: cron-driven nightly + stable releases with notifications and audit logs. |
-| Notifications | B+ | A | **Implemented**: nautical release/qualification/pulse events. |
-| Observability (status/telemetry) | B+ | A | **Implemented**: pulse notifications and Prometheus `/metrics/prometheus` endpoint. |
-| **Project overall** | **B+ / A-** | **A+ / S** | Close remaining S-tier gaps (signed releases, HA rollout, formal SLSA provenance). |
+| Qualification & stability | A | A+ | **Implemented**: per-test outcome tracking and flaky-test notifications. |
+| Audit logging | A | A+ | Expand to structured OTel-style spans. |
+| Config validation | A | A+ | Cross-field validation covers ship schedules; expand to plugin configs. |
+| Manual `ship` (CLI) | A- | A+ | **Implemented**: GPG-signed tags, SHA256 checksums, detached signatures, SBOM generation. |
+| Automated `ship` (daemon) | A+ | A+ / S | Add SLSA provenance attestation. |
+| Notifications | A | A+ | **Implemented**: release, qualification, pulse, and flaky-test events. |
+| Observability (status/telemetry) | A | A+ | **Implemented**: Prometheus `/metrics/prometheus` endpoint. |
+| **Project overall** | **A** | **A+ / S** | Close remaining S-tier gaps (SLSA provenance, HA rollout, RBAC). |
 
 ---
 
@@ -58,9 +58,22 @@ to close those gaps.
 - Added Prometheus `/metrics/prometheus` endpoint with counters, stability score, release count, and version labels.
 - Kept JSON `/metrics` endpoint for ad-hoc inspection and `/events` SSE stream.
 
-### 5. Documentation & Tests (Executed)
-- Added unit tests for cron parsing, config validation, notification rendering, and Prometheus metrics.
-- Updated `README.md` with auto-ship examples, `ship status --auto`, and monitoring section.
+### 5. Supply-Chain Hardening (Executed)
+- Added `[ship] sign` and `gpg_key_id` config; per-kind `sign` override in `[ship.stable]` / `[ship.nightly]`.
+- Ship pipeline now generates `{artifact}.sha256` checksums and `{artifact}.sha256.asc` detached GPG signatures when signing is enabled.
+- Stable/nightly git tags are GPG-signed (`git tag -s`) when signing is enabled.
+- Added `[ship.sbom]` config and `src/release/sbom.rs` generating SPDX 2.3 JSON from `Cargo.lock` / `package-lock.json`.
+- SBOMs are attached to release artifacts and recorded in the ship index.
+
+### 6. Flaky-Test Detection (Executed)
+- Extended `StabilityRecord` with per-test `TestOutcomeRecord` history and `flaky_tests` cache.
+- `StabilityEntry` carries `failed_tests` parsed from cargo test output.
+- Detection flags tests with both pass and fail outcomes in the last 10 records.
+- Added `NotificationEvent::FlakyTests` with nautical "🎣 Flaky tests spotted" rendering and `notify_flaky_tests()` helper.
+
+### 7. Documentation & Tests (Executed)
+- Added unit tests for cron parsing, config validation, notification rendering, Prometheus metrics, signing, SBOM generation, and flaky-test detection.
+- Updated `README.md` with auto-ship examples, `ship status --auto`, monitoring section, signing, SBOM, and flaky-test notes.
 - Updated `AGENTS.md` runtime flow and module list.
 - Created this strategy document.
 
@@ -70,12 +83,11 @@ to close those gaps.
 
 | Item | Why | Estimated Effort |
 |------|-----|------------------|
-| Signed git tags & release artifacts | Supply-chain assurance | 1-2 days |
-| SBOM / SLSA provenance generation | Enterprise compliance | 2-3 days |
-| Flaky-test detection in stability engine | Avoid false-positive qualification | 2-3 days |
-| Metrics endpoint (`/metrics`) for Prometheus | Operational dashboards | 1-2 days |
+| SLSA provenance attestation | Formal supply-chain compliance | 2-3 days |
 | HA / zero-downtime daemon upgrades (Shark) | 24/7 reliability | 3-5 days |
 | Fine-grained RBAC for multi-user installs | Large-team adoption | 3-5 days |
+| Signed git commits (not just tags) | Commit-level supply-chain assurance | 1-2 days |
+| Branch protection / required-CI enforcement | Prevent bypassing qualification gates | 1-2 days |
 
 ---
 
@@ -86,9 +98,11 @@ to close those gaps.
 - [x] `cargo build --release` succeeds.
 - [x] Binaries installed to `~/.local/bin/` with backups.
 - [x] `[ship.auto_nightly]` / `[ship.auto_stable]` deserialize and validate.
-- [x] Daemon scheduler emits pulse and qualification notifications.
+- [x] Daemon scheduler emits pulse, qualification, and flaky-test notifications.
 - [x] Automated ship task logs to audit and sends release notifications.
 - [x] Prometheus `/metrics/prometheus` endpoint exposes counters, stability, releases, and version labels.
+- [x] Ship pipeline generates SHA256 checksums, GPG signatures, and SPDX SBOMs when enabled.
+- [x] Flaky-test detection tracks per-test outcomes and notifies operators.
 - [x] Documentation updated and strategy published.
 
 ---

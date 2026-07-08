@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Persistent stability record stored at `.kaptaind/stability.json`.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -11,6 +12,23 @@ pub struct StabilityRecord {
     pub history: Vec<StabilityEntry>,
     /// Unix timestamp of the last regression event, if any.
     pub last_regression: Option<i64>,
+    /// Per-test outcome history used to detect flaky tests.
+    #[serde(default)]
+    pub test_outcomes: HashMap<String, Vec<TestOutcomeRecord>>,
+    /// Cached list of currently detected flaky tests.
+    #[serde(default)]
+    pub flaky_tests: Vec<String>,
+}
+
+/// A single pass/fail observation for a named test.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestOutcomeRecord {
+    /// Outcome string: "pass" or "fail".
+    pub outcome: String,
+    /// Short commit hash the observation belongs to.
+    pub commit: String,
+    /// Unix timestamp of the observation.
+    pub timestamp: i64,
 }
 
 /// A single commit's contribution to stability.
@@ -34,6 +52,9 @@ pub struct StabilityEntry {
     /// Used to penalize commits with uncertain parsing.
     #[serde(default = "default_confidence")]
     pub parse_confidence: f64,
+    /// Names of tests that failed in this commit (empty if tests passed).
+    #[serde(default)]
+    pub failed_tests: Vec<String>,
 }
 
 fn default_confidence() -> f64 {
