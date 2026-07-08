@@ -18,345 +18,650 @@ use std::path::PathBuf;
     name = "kaptaind-cli",
     version = env!("CARGO_PKG_VERSION"),
     author = "Elci Group <kaptaind@example.com>",
-    about = "CLI companion to kaptaind daemon for inspection and management",
-    long_about = "kaptaind-cli provides visibility into the daemon's state and offers one-off \
-analysis and session management without starting the daemon.\n\n\
-COMMANDS:\n  \
-  status              View current daemon health and version\n  \
-  log                 View recent automated commits and analysis decisions\n  \
-  analyze             Dry-run: analyze working tree without committing\n  \
-  dashboard           Live dashboard: stability, releases, recent analyses\n  \
-  ci-hint             Release/hold recommendation for CI/CD pipelines\n  \
-  aoc                 Manage Aim of Change sessions (multi-commit grouping)\n  \
-  ship                Build release binaries, installers, and distribute\n  \
-  init                Initialize kaptaind config for a project\n\n\
-EXAMPLES:\n  \
-  kaptaind-cli status                     # Check daemon health\n  \
-  kaptaind-cli log --limit 20             # View last 20 commits\n  \
-  kaptaind-cli analyze                    # Dry-run diff analysis\n  \
-  kaptaind-cli dashboard                  # Live terminal dashboard\n  \
-  kaptaind-cli ci-hint --format json      # JSON output for CI\n  \
-  kaptaind-cli aoc start \"feature: auth\"  # Begin a feature session\n  \
-  kaptaind-cli ship plan                  # Preview a manual release\n  \
-  kaptaind-cli init                       # Generate kaptaind.toml\n\n\
-ENVIRONMENT:\n  \
-  KAPTAIND_CONFIG     Path to kaptaind.toml (default: ./kaptaind.toml)\n\n\
-CONFIG FILE:\n  \
-  Location: ./kaptaind.toml or ~/.kaptaind/config.toml\n  \
-  Run init to generate:\n  \
-    kaptaind-cli init\n  \
-  Then start daemon:\n  \
-    kaptaind --daemon\n\n\
-DOCUMENTATION:\n  \
-  https://github.com/elci-group/kaptaind\n  \
-  https://github.com/elci-group/kaptaind/blob/main/README.md\n  \
-  https://github.com/elci-group/kaptaind/blob/main/INSTALL.md"
+    about = "Kaptaind CLI companion for the automated versioning daemon",
+    long_about = r#"Kaptaind CLI companion for the automated versioning daemon.
+
+Kaptaind is an automated semantic-versioning daemon that watches a repository,
+clusters filesystem events, analyzes the change set, computes a semantic-version
+bump, and commits the result. This CLI provides visibility into the daemon's
+state and offers one-off analysis, session management, and release operations
+without starting the daemon.
+
+USAGE:
+    kaptaind-cli [OPTIONS] <COMMAND>
+
+COMMANDS:
+    status            View current daemon health and version
+    log               View recent automated commits and analysis decisions
+    analyze           Dry-run: analyze working tree without committing
+    dashboard         Live dashboard: stability, releases, recent analyses
+    ci-hint           Release/hold recommendation for CI/CD pipelines
+    aoc               Manage Aim of Change sessions (multi-commit grouping)
+    ship              Build release binaries, installers, and distribute
+    init              Initialize kaptaind config for a project
+    trawl             Discover and initialize codebases in a directory tree
+    trace             View and manage AoC traces
+    vacs              Manage Visual Asset Channel Saturation
+    storage           Workspace storage management
+    shark             Shark Stating: high availability leader election
+
+OPTIONS:
+    -r, --repo <PATH>    Operate on the specified repository
+    -h, --help           Print help (see --help for the long version)
+    -V, --version        Print version
+
+EXAMPLES:
+    kaptaind-cli status
+    kaptaind-cli log --limit 20
+    kaptaind-cli analyze
+    kaptaind-cli dashboard
+    kaptaind-cli ci-hint --format json
+    kaptaind-cli aoc start "feature: auth"
+    kaptaind-cli ship plan
+    kaptaind-cli init
+
+ENVIRONMENT:
+    KAPTAIND_CONFIG      Path to kaptaind.toml (default: ./kaptaind.toml)
+
+CONFIG FILE:
+    Location: ./kaptaind.toml or ~/.kaptaind/config.toml
+    Generate one with:
+        kaptaind-cli init
+    Then start the daemon with:
+        kaptaind --daemon
+
+DOCUMENTATION:
+    https://github.com/elci-group/kaptaind
+    https://github.com/elci-group/kaptaind/blob/main/README.md
+    https://github.com/elci-group/kaptaind/blob/main/INSTALL.md"#
 )]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// 📁 Repository path (overrides kaptaind.toml)
-    ///
-    /// If specified, operates on this repository instead of reading from
-    /// kaptaind.toml. Useful for multi-repo workflows.
-    #[arg(short, long)]
+    /// Repository path to operate on (overrides kaptaind.toml).
+    #[arg(short, long, value_name = "PATH")]
     repo: Option<PathBuf>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
     /// 🟢 View current daemon health and version
-    ///
-    /// Shows the daemon's current state (Idle, Clustering, Testing, Committing, Failed),
-    /// the current version, installed binary locations, and recent error messages if any.
-    ///
-    /// Usage: kaptaind-cli status
+    #[command(long_about = r#"Purpose:
+    Show the daemon's current state, installed version, binary locations, and
+    any recent error messages.
+
+Usage:
+    kaptaind-cli status [OPTIONS]
+
+Options:
+    -r, --repo <PATH>    Operate on the specified repository
+
+Examples:
+    kaptaind-cli status
+    kaptaind-cli status --repo /path/to/project
+
+Notes:
+    Reads the daemon PID file and .kaptaind/status.json in the repository."#)]
     Status,
 
     /// ✅ Validate kaptaind.toml and report configuration errors
-    ///
-    /// Performs a post-load validation pass that checks cross-field constraints
-    /// such as timeout > 0, shark TTL >= 3x heartbeat, and air-gapped consistency.
-    /// Exits with a non-zero code if validation fails.
-    ///
-    /// Usage: kaptaind-cli config validate
+    #[command(long_about = r#"Purpose:
+    Perform a post-load validation pass on kaptaind.toml and report cross-field
+    constraint violations.
+
+Usage:
+    kaptaind-cli config validate [OPTIONS]
+
+Options:
+    -r, --repo <PATH>    Operate on the specified repository
+
+Examples:
+    kaptaind-cli config validate
+
+Notes:
+    Exits with a non-zero status if validation fails."#)]
     Validate,
 
     /// 📜 View recent automated commits and analysis decisions
-    ///
-    /// Lists the last N commits made by kaptaind, including version bumps, scores,
-    /// and the reasons for each bump (API, deps, runtime, bundle changes).
-    ///
-    /// Examples:
-    ///   kaptaind-cli log                    # Last 10 commits (default)
-    ///   kaptaind-cli log --limit 50         # Last 50 commits
-    ///   kaptaind-cli log -l 5               # Last 5 commits
+    #[command(long_about = r#"Purpose:
+    List the most recent automated commits made by kaptaind, including version
+    bumps, scores, and the reasons for each bump.
+
+Usage:
+    kaptaind-cli log [OPTIONS]
+
+Options:
+    -l, --limit <N>      Number of commits to display (default: 10).
+    -r, --repo <PATH>    Operate on the specified repository
+
+Examples:
+    kaptaind-cli log
+    kaptaind-cli log --limit 50
+    kaptaind-cli log -l 5"#)]
     Log {
-        /// Number of commits to display (default: 10)
-        #[arg(short, long, default_value_t = 10)]
+        /// Number of commits to display (default: 10).
+        #[arg(short, long, value_name = "N", default_value_t = 10)]
         limit: usize,
     },
 
-    /// 🔬 Analyze working tree without committing (dry-run)
-    ///
-    /// Performs a full semantic diff analysis on your current uncommitted changes
-    /// without actually committing. Shows what version bump would be made and why.
-    /// Great for testing bump logic before the daemon sees the changes.
-    ///
-    /// Output includes: score breakdown, API changes, dependency changes, runtime changes,
-    /// projected version bump.
-    ///
-    /// Usage: kaptaind-cli analyze
+    /// 🔬 Analyze working tree without committing
+    #[command(long_about = r#"Purpose:
+    Run a full semantic diff analysis on the current uncommitted changes without
+    actually committing. Shows the projected version bump and the score
+    breakdown.
+
+Usage:
+    kaptaind-cli analyze [OPTIONS]
+
+Options:
+    -r, --repo <PATH>    Operate on the specified repository
+
+Examples:
+    kaptaind-cli analyze
+
+Notes:
+    Output includes the structural, API, dependency, runtime, and optional
+    bundle scores, plus the projected version bump."#)]
     Analyze,
 
     /// 🎯 Manage Aim of Change sessions
-    ///
-    /// Group related changes into named intent-driven sessions with full traceability.
-    /// Useful for features, refactors, or coordinated multi-file changes.
-    ///
-    /// Examples:
-    ///   kaptaind-cli aoc start "feature: auth flow"
-    ///   kaptaind-cli aoc status
-    ///   kaptaind-cli aoc ship
-    ///   kaptaind-cli aoc intercept --intent "refactor" -- npm test
-    #[command(subcommand)]
+    #[command(
+        subcommand,
+        long_about = r#"Purpose:
+    Group related changes into named, intent-driven sessions with full
+    traceability. Useful for features, refactors, or coordinated multi-file
+    changes.
+
+Usage:
+    kaptaind-cli aoc <SUBCOMMAND>
+
+Subcommands:
+    start      Start a new AoC session
+    status     Show the active session
+    ship       End and ship the current session
+    intercept  Wrap a command and capture its trace
+    log        List completed sessions
+
+Examples:
+    kaptaind-cli aoc start "feature: auth flow"
+    kaptaind-cli aoc status
+    kaptaind-cli aoc ship
+    kaptaind-cli aoc intercept -- npm test
+
+Notes:
+    Session state is stored in .kaptaind/aoc/active.json and archived to
+    .kaptaind/aoc/manifests/<id>.json when shipped."#
+    )]
     Aoc(AocCommand),
 
     /// ⚙️ Initialize kaptaind config for the current project
-    ///
-    /// Auto-generates kaptaind.toml based on project type detection:
-    /// - Rust (Cargo.toml) → cargo test, cargo build
-    /// - Node (package.json) → npm test, npm run build
-    /// - Python (pyproject.toml) → pytest, python -m build
-    /// - Go (go.mod) → go test, go build
-    /// - And more...
-    ///
-    /// Also creates .kaptainignore with sensible defaults.
-    ///
-    /// Usage: kaptaind-cli init
+    #[command(long_about = r#"Purpose:
+    Auto-generate kaptaind.toml and .kaptainignore for the current project based
+    on detected project type.
+
+Usage:
+    kaptaind-cli init [OPTIONS]
+
+Options:
+    -r, --repo <PATH>    Operate on the specified repository
+
+Examples:
+    kaptaind-cli init
+    kaptaind-cli init --repo /path/to/project
+
+Detected project types:
+    Rust       Cargo.toml
+    Node       package.json
+    Python     pyproject.toml or requirements.txt
+    Go         go.mod
+    Swift      Package.swift
+    Kotlin     build.gradle(.kts)
+
+Notes:
+    Existing kaptaind.toml and .kaptainignore files are left untouched."#)]
     Init,
 
-    /// 🎣 Trawl for and auto-initialize all codebases in a directory tree
-    ///
-    /// Recursively scans directories to discover codebases, automatically
-    /// initializes kaptaind for each found project, and registers them
-    /// for monitoring. Removes the need to manually run `kaptaind-cli init`
-    /// for each project.
-    ///
-    /// Detects: Rust, Node.js, Python, Go, Swift, Kotlin, Java, Ruby,
-    ///          Elixir, PHP, .NET, and C++ projects.
-    ///
-    /// Examples:
-    ///   kaptaind-cli trawl                       # Trawl current directory
-    ///   kaptaind-cli trawl --path ~/projects     # Trawl specific directory
-    ///   kaptaind-cli trawl --max-depth 3         # Limit recursion depth
-    ///   kaptaind-cli trawl --include-existing    # Re-init existing projects
-    ///   kaptaind-cli trawl --type rust,go        # Only Rust and Go projects
-    ///   kaptaind-cli trawl --require-git         # Only git repositories
-    ///
-    /// By default, projects with existing kaptaind.toml are skipped.
+    /// 🎣 Discover and initialize codebases in a directory tree
+    #[command(
+        long_about = r#"Purpose:
+    Recursively scan directories to discover codebases, automatically initialize
+    kaptaind for each found project, and optionally register them for
+    monitoring.
+
+Usage:
+    kaptaind-cli trawl [OPTIONS]
+
+Options:
+    -p, --path <PATH>            Root directory to start from (default: current directory).
+    -m, --max-depth <DEPTH>      Maximum recursion depth (default: unlimited).
+    -i, --include-existing       Re-initialize projects that already have kaptaind.toml.
+    -g, --require-git            Only process git repositories.
+        --no-register            Do not register discovered projects for autostart.
+    -t, --type <TYPES>           Filter by project types (comma-separated).
+    -f, --format <FORMAT>        Output format: text (default) or json.
+        --dry-run                Discover but do not initialize anything.
+
+Examples:
+    kaptaind-cli trawl
+    kaptaind-cli trawl --path ~/projects
+    kaptaind-cli trawl --max-depth 3
+    kaptaind-cli trawl --type rust,go --dry-run
+
+Notes:
+    By default, projects with an existing kaptaind.toml are skipped."#,
+        after_help = r#"See the kaptaind-cli(1) man page and kaptaind.toml(5) for details.
+Relevant config section: [trawler] (if present)."#
+    )]
     Trawl {
-        /// Root directory to start trawling from (default: current directory)
-        #[arg(short, long)]
+        /// Root directory to start trawling from (default: current directory).
+        #[arg(short, long, value_name = "PATH")]
         path: Option<PathBuf>,
-        /// Maximum recursion depth (default: unlimited)
-        #[arg(short, long)]
+        /// Maximum recursion depth (default: unlimited).
+        #[arg(short, long, value_name = "DEPTH")]
         max_depth: Option<usize>,
-        /// Include projects that are already initialized
+        /// Include projects that are already initialized.
         #[arg(short, long)]
         include_existing: bool,
-        /// Only process git repositories
+        /// Only process git repositories.
         #[arg(short, long)]
         require_git: bool,
-        /// Do not auto-register discovered projects
+        /// Do not auto-register discovered projects for autostart.
         #[arg(long)]
         no_register: bool,
-        /// Filter by project types (comma-separated: rust,node,python,go,swift,kotlin,java,ruby,elixir,php,dotnet,cpp)
-        #[arg(short, long, value_delimiter = ',')]
+        /// Filter by project types (comma-separated).
+        ///
+        /// Supported values: rust, node, python, go, swift, kotlin, java, ruby,
+        /// elixir, php, dotnet, cpp, lua, scala, clojure, haskell, julia, r, perl.
+        #[arg(short, long, value_name = "TYPES", value_delimiter = ',')]
         r#type: Vec<String>,
-        /// Output format: text (default) or json
-        #[arg(short, long, default_value = "text")]
+        /// Output format: text (default) or json.
+        #[arg(short, long, value_name = "FORMAT", default_value = "text")]
         format: String,
-        /// Dry run - discover but don't initialize
+        /// Dry run: discover but do not initialize.
         #[arg(long)]
         dry_run: bool,
     },
 
     /// 📊 Live terminal dashboard
-    ///
-    /// Real-time view of kaptaind's state: version, daemon status, stability score,
-    /// LLM costs, release history, and recent analysis artifacts.
-    ///
-    /// Perfect for monitoring your automation at a glance. Updates intelligently
-    /// by reading the latest .kaptaind/ state files.
-    ///
-    /// Usage: kaptaind-cli dashboard
+    #[command(long_about = r#"Purpose:
+    Display a real-time view of kaptaind's state: version, daemon status,
+    stability score, LLM costs, release history, and recent analysis artifacts.
+
+Usage:
+    kaptaind-cli dashboard [OPTIONS]
+
+Options:
+    -r, --repo <PATH>    Operate on the specified repository
+
+Examples:
+    kaptaind-cli dashboard
+
+Notes:
+    Updates by reading the latest .kaptaind/ state files."#)]
     Dashboard,
 
     /// 🚀 Emit release/hold recommendation for CI/CD pipelines
-    ///
-    /// Determines if the current state qualifies for release based on:
-    /// - Stability score vs threshold
-    /// - Pass streak (trailing passing commits)
-    /// - Diff-spike guard (prevents releasing during volatile periods)
-    /// - Cooldown (minimum time between releases)
-    ///
-    /// Output formats:
-    ///   text   → Human-readable summary (default)
-    ///   json   → Machine-readable JSON for tooling
-    ///   github → GitHub Actions annotations + set-output
-    ///
-    /// Examples:
-    ///   kaptaind-cli ci-hint                    # Text output
-    ///   kaptaind-cli ci-hint --format json      # JSON for scripting
-    ///   kaptaind-cli ci-hint --format github    # GitHub Actions
-    ///
-    /// Usage in GitHub Actions:
-    ///   - name: Check release qualification
-    ///     id: qualify
-    ///     run: kaptaind-cli ci-hint --format github
-    ///   - name: Release
-    ///     if: steps.qualify.outputs.qualified == 'true'
-    ///     run: ./scripts/release.sh
+    #[command(long_about = r#"Purpose:
+    Determine whether the current repository state qualifies for release based
+    on stability score, pass streak, diff-spike guard, and cooldown.
+
+Usage:
+    kaptaind-cli ci-hint [OPTIONS]
+
+Options:
+    -f, --format <FORMAT>    Output format: text (default), json, or github.
+    -r, --repo <PATH>        Operate on the specified repository
+
+Examples:
+    kaptaind-cli ci-hint
+    kaptaind-cli ci-hint --format json
+    kaptaind-cli ci-hint --format github
+
+Notes:
+    The github format emits workflow annotations and set-output commands for
+    GitHub Actions."#)]
     CiHint {
-        /// Output format: text (default), json, or github (GitHub Actions format)
-        #[arg(short, long, default_value = "text")]
+        /// Output format: text (default), json, or github.
+        #[arg(short, long, value_name = "FORMAT", default_value = "text")]
         format: String,
     },
 
-    /// ✅ Enable auto-start for kaptaind daemon
-    ///
-    /// Configures the system to automatically start kaptaind on boot or shell login.
-    ///
-    /// Linux/systemd: Installs a user systemd service that starts with the user session
-    /// macOS: Adds a launchd plist to ~/.Library/LaunchAgents/
-    /// Cross-platform fallback: Adds shell initialization to ~/.bashrc and ~/.zshrc
-    ///
-    /// After enabling, the daemon will start automatically on next login/reboot.
-    ///
-    /// Usage: kaptaind-cli enable-autostart
+    /// ✅ Enable auto-start for the kaptaind daemon
+    #[command(long_about = r#"Purpose:
+    Configure the system to automatically start kaptaind on boot or shell login.
+
+Usage:
+    kaptaind-cli enable-autostart
+
+Examples:
+    kaptaind-cli enable-autostart
+
+Notes:
+    Linux/systemd installs a user service, macOS adds a launchd plist, and the
+    cross-platform fallback appends shell initialization to ~/.bashrc and
+    ~/.zshrc."#)]
     EnableAutostart,
 
-    /// ❌ Disable auto-start for kaptaind daemon
-    ///
-    /// Removes auto-start configuration so kaptaind no longer starts automatically.
-    ///
-    /// For systemd: Disables the user service
-    /// For launchd: Removes the plist
-    /// For shell: Removes the init lines from ~/.bashrc and ~/.zshrc
-    ///
-    /// Usage: kaptaind-cli disable-autostart
+    /// ❌ Disable auto-start for the kaptaind daemon
+    #[command(long_about = r#"Purpose:
+    Remove auto-start configuration so kaptaind no longer starts automatically.
+
+Usage:
+    kaptaind-cli disable-autostart
+
+Examples:
+    kaptaind-cli disable-autostart
+
+Notes:
+    Disables the systemd user service, removes the launchd plist, or strips the
+    init lines from ~/.bashrc and ~/.zshrc."#)]
     DisableAutostart,
 
     /// 🚀 Start all registered kaptaind daemons
-    ///
-    /// Reads ~/.kaptaind/projects.txt and launches a kaptaind daemon for each initialized project.
-    /// Used internally by the auto-start system.
+    #[command(long_about = r#"Purpose:
+    Read ~/.kaptaind/projects.txt and launch a kaptaind daemon for each
+    registered project. Used internally by the auto-start system.
+
+Usage:
+    kaptaind-cli autostart
+
+Examples:
+    kaptaind-cli autostart"#)]
     Autostart,
 
-    /// 🔍 View and manage traces
-    #[command(subcommand)]
+    /// 🔍 View and manage AoC traces
+    #[command(
+        subcommand,
+        long_about = r#"Purpose:
+    Inspect per-cluster trace records linked to Aim of Change sessions.
+
+Usage:
+    kaptaind-cli trace <SUBCOMMAND>
+
+Subcommands:
+    log     List traces for the current or a specified AoC session
+    show    Display a detailed trace breakdown
+    prune   Remove traces older than N days
+
+Examples:
+    kaptaind-cli trace log
+    kaptaind-cli trace log --limit 20
+    kaptaind-cli trace show <cluster-id>
+    kaptaind-cli trace prune --days 7"#
+    )]
     Trace(TraceCommand),
 
-    /// 🎨 Visual Asset Channel Saturation
-    #[command(subcommand)]
+    /// 🎨 Manage Visual Asset Channel Saturation
+    #[command(
+        subcommand,
+        long_about = r#"Purpose:
+    View and manually trigger visual asset generation (diagrams, charts) linked
+    to commits or concepts.
+
+Usage:
+    kaptaind-cli vacs <SUBCOMMAND>
+
+Subcommands:
+    show       List generated visual assets
+    generate   Trigger asset generation
+
+Examples:
+    kaptaind-cli vacs show
+    kaptaind-cli vacs show <commit-id>
+    kaptaind-cli vacs generate --asset-type diagram"#
+    )]
     Vacs(VacsCommand),
 
-    /// 🧹 Storage management (deckhand)
-    #[command(subcommand)]
+    /// 🧹 Workspace storage management
+    #[command(
+        subcommand,
+        long_about = r#"Purpose:
+    Clean and sweep build artifacts, caches, and stale storage.
+
+Usage:
+    kaptaind-cli storage <SUBCOMMAND>
+
+Subcommands:
+    clean    Run cargo clean across the workspace
+    sweep    Sweep stale artifacts and caches
+    status   Report workspace storage state
+
+Examples:
+    kaptaind-cli storage clean
+    kaptaind-cli storage clean --profile debug --dry-run
+    kaptaind-cli storage sweep --keep-days 14
+    kaptaind-cli storage status --json"#
+    )]
     Storage(StorageCommand),
 
-    /// 🦈 Shark Stating — high availability / zero-downtime upgrades
-    #[command(subcommand)]
+    /// 🦈 Shark Stating: high availability leader election
+    #[command(
+        subcommand,
+        long_about = r#"Purpose:
+    View and manage Shark Stating, the high-availability leader election system.
+
+Usage:
+    kaptaind-cli shark <SUBCOMMAND>
+
+Subcommands:
+    status     Show current role and lease state
+    observe    Watch leadership changes in real time
+    release    Gracefully release leadership
+    upgrade    Perform a zero-downtime binary upgrade
+
+Examples:
+    kaptaind-cli shark status
+    kaptaind-cli shark status --json
+    kaptaind-cli shark observe
+    kaptaind-cli shark upgrade --binary /usr/local/bin/kaptaind"#
+    )]
     Shark(SharkCommand),
 
-    /// 🚢 Build release binaries, installers, and distribute to channels
-    ///
-    /// Produces release binaries for configured targets, builds installers,
-    /// and publishes to package managers and app stores.
-    ///
-    /// Examples:
-    ///
-    ///   kaptaind-cli ship plan                    # Preview what would ship
-    ///
-    ///   kaptaind-cli ship run                     # Execute the ship pipeline
-    ///
-    ///   kaptaind-cli ship run --force             # Skip qualification gates
-    ///
-    ///   kaptaind-cli ship stable                  # Ship a stable release
-    ///
-    ///   kaptaind-cli ship stable --force          # Skip qualification gates
-    ///
-    ///   kaptaind-cli ship nightly                 # Ship a nightly prerelease
-    ///
-    ///   kaptaind-cli ship nightly --no-force      # Enforce qualification gates
-    ///
-    ///   kaptaind-cli ship status                  # Show last ship run
-    #[command(subcommand)]
+    /// 🚢 Build release binaries and distribute to channels
+    #[command(
+        subcommand,
+        long_about = r#"Purpose:
+    Produce release binaries for configured targets, build installers, and
+    publish to package managers and app stores.
+
+Usage:
+    kaptaind-cli ship <SUBCOMMAND>
+
+Subcommands:
+    plan      Preview the ship plan without building or publishing
+    run       Execute the ship pipeline
+    stable    Ship a stable release from the current VERSION
+    nightly   Ship a nightly prerelease with an auto-generated version
+    status    Show the last ship run and scheduled auto-releases
+
+Options (common):
+    -t, --targets <TARGETS>    Override target triples (comma-separated).
+    -c, --channels <CHANNELS>  Override channels (comma-separated).
+        --format <FORMAT>      Output format: text (default) or json.
+
+Examples:
+    kaptaind-cli ship plan
+    kaptaind-cli ship run
+    kaptaind-cli ship run --force
+    kaptaind-cli ship stable --dry-run
+    kaptaind-cli ship nightly --no-force
+    kaptaind-cli ship status --auto
+
+Notes:
+    The run and stable subcommands skip qualification gates when --force is set.
+    Nightly releases skip qualification gates by default; use --no-force to
+    enforce them."#,
+        after_help = r#"See the kaptaind-cli(1) man page and kaptaind.toml(5) for details.
+Relevant config sections: [ship], [ship.stable], [ship.nightly], [ship.channels]."#
+    )]
     Ship(ShipCommand),
 }
 
 #[derive(Subcommand)]
 enum StorageCommand {
-    /// Run cargo clean across the workspace
+    /// 🧹 Run cargo clean across the workspace
+    #[command(long_about = r#"Purpose:
+    Remove build artifacts for the specified cargo profile.
+
+Usage:
+    kaptaind-cli storage clean [OPTIONS]
+
+Options:
+    -p, --profile <PROFILE>    Profile to clean: debug, release, or all (default: all).
+        --dry-run              Only print what would be removed.
+    -o, --older-than <DAYS>    Only remove artifacts older than N days.
+
+Examples:
+    kaptaind-cli storage clean
+    kaptaind-cli storage clean --profile debug
+    kaptaind-cli storage clean --dry-run --older-than 7"#)]
     Clean {
-        /// Profile to clean: debug, release, or all
-        #[arg(short, long, default_value = "all")]
+        /// Profile to clean: debug, release, or all (default: all).
+        #[arg(short, long, value_name = "PROFILE", default_value = "all")]
         profile: String,
-        /// Only print what would be removed
+        /// Only print what would be removed.
         #[arg(long)]
         dry_run: bool,
-        /// Only remove artifacts older than N days
-        #[arg(short, long)]
+        /// Only remove artifacts older than N days.
+        #[arg(short, long, value_name = "DAYS")]
         older_than: Option<u64>,
     },
-    /// Sweep stale artifacts and caches
+    /// 🧹 Sweep stale artifacts and caches
+    #[command(long_about = r#"Purpose:
+    Remove stale registry cache entries, git checkouts, and other cached data.
+
+Usage:
+    kaptaind-cli storage sweep [OPTIONS]
+
+Options:
+    -k, --keep-days <DAYS>    Keep registry cache entries newer than N days (default: 30).
+        --dry-run             Only print what would be removed.
+
+Examples:
+    kaptaind-cli storage sweep
+    kaptaind-cli storage sweep --keep-days 14
+    kaptaind-cli storage sweep --dry-run"#)]
     Sweep {
-        /// Keep registry cache entries newer than N days
-        #[arg(short, long, default_value_t = 30)]
+        /// Keep registry cache entries newer than N days (default: 30).
+        #[arg(short, long, value_name = "DAYS", default_value_t = 30)]
         keep_days: u64,
-        /// Only print what would be removed
+        /// Only print what would be removed.
         #[arg(long)]
         dry_run: bool,
     },
-    /// Report workspace storage state (disk usage)
+    /// 📊 Report workspace storage state
+    #[command(long_about = r#"Purpose:
+    Report disk usage for workspace artifacts and caches.
+
+Usage:
+    kaptaind-cli storage status [OPTIONS]
+
+Options:
+    -j, --json          Output JSON instead of text.
+    -l, --limit <N>     Show only the top N largest artifacts.
+
+Examples:
+    kaptaind-cli storage status
+    kaptaind-cli storage status --json
+    kaptaind-cli storage status --limit 10"#)]
     Status {
-        /// Output JSON instead of text
+        /// Output JSON instead of text.
         #[arg(short, long)]
         json: bool,
-        /// Show only the top N largest artifacts
-        #[arg(short, long)]
+        /// Show only the top N largest artifacts.
+        #[arg(short, long, value_name = "N")]
         limit: Option<usize>,
     },
 }
 
 #[derive(Subcommand)]
 enum SharkCommand {
-    /// Show current Shark Stating role and lease state
+    /// 🦈 Show current Shark Stating role and lease state
+    #[command(long_about = r#"Purpose:
+    Display the current instance's role (leader or standby) and the active lease
+    state.
+
+Usage:
+    kaptaind-cli shark status [OPTIONS]
+
+Options:
+    -j, --json    Output JSON instead of text.
+
+Examples:
+    kaptaind-cli shark status
+    kaptaind-cli shark status --json"#)]
     Status {
-        /// Output JSON instead of text
+        /// Output JSON instead of text.
         #[arg(short, long)]
         json: bool,
     },
-    /// Watch leadership changes in real time
+    /// 👀 Watch leadership changes in real time
+    #[command(long_about = r#"Purpose:
+    Poll the Shark arbiter and print leadership changes until interrupted.
+
+Usage:
+    kaptaind-cli shark observe [OPTIONS]
+
+Options:
+    -i, --interval-ms <MILLISECONDS>    Poll interval in milliseconds (default: 1000).
+
+Examples:
+    kaptaind-cli shark observe
+    kaptaind-cli shark observe --interval-ms 500"#)]
     Observe {
-        /// Poll interval in milliseconds
-        #[arg(short, long, default_value_t = 1000)]
+        /// Poll interval in milliseconds (default: 1000).
+        #[arg(short, long, value_name = "MILLISECONDS", default_value_t = 1000)]
         interval_ms: u64,
     },
-    /// Gracefully release leadership
+    /// 🏳️ Gracefully release leadership
+    #[command(long_about = r#"Purpose:
+    Release the current instance's leadership lease, if held.
+
+Usage:
+    kaptaind-cli shark release
+
+Examples:
+    kaptaind-cli shark release
+
+Notes:
+    Requires the shark.release RBAC permission."#)]
     Release,
-    /// Perform a zero-downtime upgrade to a new kaptaind binary
+    /// ⬆️ Perform a zero-downtime upgrade to a new kaptaind binary
+    #[command(
+        long_about = r#"Purpose:
+    Replace the running kaptaind binary with a new version without dropping the
+    leader lease. Spawns a standby instance, waits for it to become healthy, and
+    hands off leadership.
+
+Usage:
+    kaptaind-cli shark upgrade [OPTIONS]
+
+Options:
+    -b, --binary <BINARY>                  Path to the new kaptaind binary.
+    -s, --standby-health-port <PORT>       Temporary health port for the standby instance.
+    -r, --ready-timeout-ms <MILLISECONDS>  How long to wait for the standby to become
+                                           healthy before retiring (default: 30000).
+
+Examples:
+    kaptaind-cli shark upgrade --binary /usr/local/bin/kaptaind
+    kaptaind-cli shark upgrade --binary ./target/release/kaptaind --standby-health-port 9090
+
+Notes:
+    Must be run from the current leader. Requires the shark.upgrade RBAC
+    permission."#,
+        after_help = r#"See the kaptaind-cli(1) man page and kaptaind.toml(5) for details.
+Relevant config section: [shark]."#
+    )]
     Upgrade {
-        /// Path to the new kaptaind binary
-        #[arg(short, long)]
+        /// Path to the new kaptaind binary.
+        #[arg(short, long, value_name = "BINARY")]
         binary: PathBuf,
-        /// Temporary health port for the standby instance
-        #[arg(short, long)]
+        /// Temporary health port for the standby instance.
+        #[arg(short, long, value_name = "PORT")]
         standby_health_port: Option<u16>,
-        /// How long to wait for the standby to become healthy before retiring (ms)
-        #[arg(short, long, default_value_t = 30000)]
+        /// How long to wait for the standby to become healthy before retiring (default: 30000).
+        #[arg(short, long, value_name = "MILLISECONDS", default_value_t = 30000)]
         ready_timeout_ms: u64,
     },
 }
@@ -364,74 +669,156 @@ enum SharkCommand {
 #[derive(Subcommand)]
 enum ShipCommand {
     /// 📋 Preview the ship plan without building or publishing
+    #[command(long_about = r#"Purpose:
+    Show what the ship pipeline would build and publish without performing any
+    destructive operations.
+
+Usage:
+    kaptaind-cli ship plan [OPTIONS]
+
+Options:
+    -t, --targets <TARGETS>    Override target triples (comma-separated).
+    -c, --channels <CHANNELS>  Override channels (comma-separated).
+        --format <FORMAT>      Output format: text (default) or json.
+
+Examples:
+    kaptaind-cli ship plan
+    kaptaind-cli ship plan --targets x86_64-unknown-linux-gnu
+    kaptaind-cli ship plan --format json"#)]
     Plan {
-        /// Override target triples (comma-separated)
-        #[arg(short, long, value_delimiter = ',')]
+        /// Override target triples (comma-separated).
+        #[arg(short, long, value_name = "TARGETS", value_delimiter = ',')]
         targets: Vec<String>,
-        /// Override channels (comma-separated: binaries,shell-installer,tauri,homebrew,github-releases)
-        #[arg(short, long, value_delimiter = ',')]
+        /// Override channels (comma-separated: binaries, shell-installer, tauri, homebrew, github-releases).
+        #[arg(short, long, value_name = "CHANNELS", value_delimiter = ',')]
         channels: Vec<String>,
-        /// Output format: text (default) or json
-        #[arg(long, default_value = "text")]
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: String,
     },
     /// 🚢 Execute the ship pipeline
+    #[command(long_about = r#"Purpose:
+    Build release binaries, installers, and publish to configured channels.
+
+Usage:
+    kaptaind-cli ship run [OPTIONS]
+
+Options:
+    -t, --targets <TARGETS>    Override target triples (comma-separated).
+    -c, --channels <CHANNELS>  Override channels (comma-separated).
+    -f, --force                Skip qualification gates.
+        --format <FORMAT>      Output format: text (default) or json.
+
+Examples:
+    kaptaind-cli ship run
+    kaptaind-cli ship run --force
+    kaptaind-cli ship run --channels binaries,homebrew"#)]
     Run {
-        /// Override target triples (comma-separated)
-        #[arg(short, long, value_delimiter = ',')]
+        /// Override target triples (comma-separated).
+        #[arg(short, long, value_name = "TARGETS", value_delimiter = ',')]
         targets: Vec<String>,
-        /// Override channels (comma-separated)
-        #[arg(short, long, value_delimiter = ',')]
+        /// Override channels (comma-separated).
+        #[arg(short, long, value_name = "CHANNELS", value_delimiter = ',')]
         channels: Vec<String>,
-        /// Skip qualification gates
+        /// Skip qualification gates.
         #[arg(short, long)]
         force: bool,
-        /// Output format: text (default) or json
-        #[arg(long, default_value = "text")]
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: String,
     },
     /// 🏷️ Ship a stable release from the current VERSION
+    #[command(long_about = r#"Purpose:
+    Produce and publish a stable release using the current VERSION file.
+
+Usage:
+    kaptaind-cli ship stable [OPTIONS]
+
+Options:
+    -t, --targets <TARGETS>    Override target triples (comma-separated).
+    -c, --channels <CHANNELS>  Override channels (comma-separated).
+        --dry-run              Preview without building or publishing.
+    -f, --force                Skip qualification gates.
+        --format <FORMAT>      Output format: text (default) or json.
+
+Examples:
+    kaptaind-cli ship stable
+    kaptaind-cli ship stable --dry-run
+    kaptaind-cli ship stable --force"#)]
     Stable {
-        /// Override target triples (comma-separated)
-        #[arg(short, long, value_delimiter = ',')]
+        /// Override target triples (comma-separated).
+        #[arg(short, long, value_name = "TARGETS", value_delimiter = ',')]
         targets: Vec<String>,
-        /// Override channels (comma-separated)
-        #[arg(short, long, value_delimiter = ',')]
+        /// Override channels (comma-separated).
+        #[arg(short, long, value_name = "CHANNELS", value_delimiter = ',')]
         channels: Vec<String>,
-        /// Preview without building or publishing
+        /// Preview without building or publishing.
         #[arg(long)]
         dry_run: bool,
-        /// Skip qualification gates
+        /// Skip qualification gates.
         #[arg(short, long)]
         force: bool,
-        /// Output format: text (default) or json
-        #[arg(long, default_value = "text")]
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: String,
     },
     /// 🌙 Ship a nightly prerelease with an auto-generated version
+    #[command(long_about = r#"Purpose:
+    Produce and publish a nightly prerelease with an auto-generated version
+    suffix.
+
+Usage:
+    kaptaind-cli ship nightly [OPTIONS]
+
+Options:
+    -t, --targets <TARGETS>    Override target triples (comma-separated).
+    -c, --channels <CHANNELS>  Override channels (comma-separated).
+        --dry-run              Preview without building or publishing.
+        --no-force             Enforce qualification gates (nightly skips them by default).
+        --format <FORMAT>      Output format: text (default) or json.
+
+Examples:
+    kaptaind-cli ship nightly
+    kaptaind-cli ship nightly --dry-run
+    kaptaind-cli ship nightly --no-force"#)]
     Nightly {
-        /// Override target triples (comma-separated)
-        #[arg(short, long, value_delimiter = ',')]
+        /// Override target triples (comma-separated).
+        #[arg(short, long, value_name = "TARGETS", value_delimiter = ',')]
         targets: Vec<String>,
-        /// Override channels (comma-separated)
-        #[arg(short, long, value_delimiter = ',')]
+        /// Override channels (comma-separated).
+        #[arg(short, long, value_name = "CHANNELS", value_delimiter = ',')]
         channels: Vec<String>,
-        /// Preview without building or publishing
+        /// Preview without building or publishing.
         #[arg(long)]
         dry_run: bool,
-        /// Enforce qualification gates (nightly skips them by default)
+        /// Enforce qualification gates (nightly skips them by default).
         #[arg(long)]
         no_force: bool,
-        /// Output format: text (default) or json
-        #[arg(long, default_value = "text")]
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: String,
     },
     /// 📊 Show the last ship run and scheduled auto-releases
+    #[command(long_about = r#"Purpose:
+    Display the most recent ship run and, with --auto, the next scheduled
+    auto-nightly and auto-stable fire times.
+
+Usage:
+    kaptaind-cli ship status [OPTIONS]
+
+Options:
+        --format <FORMAT>    Output format: text (default) or json.
+        --auto               Include next scheduled auto-release fire times.
+
+Examples:
+    kaptaind-cli ship status
+    kaptaind-cli ship status --auto
+    kaptaind-cli ship status --format json"#)]
     Status {
-        /// Output format: text (default) or json
-        #[arg(long, default_value = "text")]
+        /// Output format: text (default) or json.
+        #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: String,
-        /// Include next scheduled auto-nightly and auto-stable fire times
+        /// Include next scheduled auto-nightly and auto-stable fire times.
         #[arg(long)]
         auto: bool,
     },
@@ -439,14 +826,40 @@ enum ShipCommand {
 
 #[derive(Subcommand)]
 enum VacsCommand {
-    /// Show generated visual assets
+    /// 🖼️ Show generated visual assets
+    #[command(long_about = r#"Purpose:
+    List generated visual assets, optionally filtered by commit or concept ID.
+
+Usage:
+    kaptaind-cli vacs show [ID]
+
+Arguments:
+    [ID]    Optional commit or concept ID to filter by.
+
+Examples:
+    kaptaind-cli vacs show
+    kaptaind-cli vacs show <commit-id>"#)]
     Show {
-        /// Optional commit or concept ID to filter by
+        /// Optional commit or concept ID to filter by.
+        #[arg(value_name = "ID")]
         commit: Option<String>,
     },
-    /// Manually trigger generation of a visual asset
+    /// 🎨 Manually trigger generation of a visual asset
+    #[command(long_about = r#"Purpose:
+    Trigger generation of a visual asset of the specified type.
+
+Usage:
+    kaptaind-cli vacs generate [OPTIONS]
+
+Options:
+        --asset-type <TYPE>    Type of asset to generate (default: diagram).
+
+Examples:
+    kaptaind-cli vacs generate
+    kaptaind-cli vacs generate --asset-type chart"#)]
     Generate {
-        #[arg(long, default_value = "diagram")]
+        /// Type of asset to generate (default: diagram).
+        #[arg(long, value_name = "TYPE", default_value = "diagram")]
         asset_type: String,
     },
 }
@@ -454,23 +867,61 @@ enum VacsCommand {
 #[derive(Subcommand)]
 enum TraceCommand {
     /// 📜 List traces for the current or specified AoC session
+    #[command(long_about = r#"Purpose:
+    Display traces for the active Aim of Change session or a specified AoC ID.
+
+Usage:
+    kaptaind-cli trace log [OPTIONS]
+
+Options:
+    -a, --aoc-id <ID>    AoC ID to filter by (defaults to the active session).
+    -l, --limit <N>      Number of traces to display (default: 10).
+
+Examples:
+    kaptaind-cli trace log
+    kaptaind-cli trace log --limit 20
+    kaptaind-cli trace log --aoc-id <id>"#)]
     Log {
-        /// Optional AoC ID to filter by (defaults to active session)
-        #[arg(short, long)]
+        /// AoC ID to filter by (defaults to the active session).
+        #[arg(short, long, value_name = "ID")]
         aoc_id: Option<String>,
-        /// Number of traces to display (default: 10)
-        #[arg(short, long, default_value_t = 10)]
+        /// Number of traces to display (default: 10).
+        #[arg(short, long, value_name = "N", default_value_t = 10)]
         limit: usize,
     },
-    /// 📊 Show detailed breakdown of a specific trace
+    /// 🔍 Show detailed breakdown of a specific trace
+    #[command(long_about = r#"Purpose:
+    Display a detailed breakdown for a single trace by cluster ID.
+
+Usage:
+    kaptaind-cli trace show <CLUSTER_ID>
+
+Arguments:
+    <CLUSTER_ID>    Cluster or trace ID to display.
+
+Examples:
+    kaptaind-cli trace show <cluster-id>"#)]
     Show {
-        /// Cluster/Trace ID to display
+        /// Cluster or trace ID to display.
+        #[arg(value_name = "ID")]
         cluster_id: String,
     },
     /// 🧹 Prune traces older than N days
+    #[command(long_about = r#"Purpose:
+    Remove trace records older than the specified retention period.
+
+Usage:
+    kaptaind-cli trace prune [OPTIONS]
+
+Options:
+    -d, --days <DAYS>    Retention period in days (default: 30).
+
+Examples:
+    kaptaind-cli trace prune
+    kaptaind-cli trace prune --days 7"#)]
     Prune {
-        /// Retention period in days (default: 30)
-        #[arg(short, long, default_value_t = 30)]
+        /// Retention period in days (default: 30).
+        #[arg(short, long, value_name = "DAYS", default_value_t = 30)]
         days: i64,
     },
 }
@@ -478,111 +929,128 @@ enum TraceCommand {
 #[derive(Subcommand)]
 enum AocCommand {
     /// 🎯 Start a new Aim of Change session
-    ///
-    /// Begins a named session to group related commits under a single intent.
-    /// All commits while the session is active will be tagged with this label
-    /// and linked in the manifest.
-    ///
-    /// Session state is stored in .kaptaind/aoc/active.json
-    /// When shipped, it's archived to .kaptaind/aoc/manifests/<id>.json
-    ///
-    /// Examples:
-    ///
-    ///   kaptaind-cli aoc start "feature: authentication flow"
-    ///
-    ///   kaptaind-cli aoc start "refactor: database layer"
-    ///
-    ///   kaptaind-cli aoc start "fix: memory leaks"
+    #[command(long_about = r#"Purpose:
+    Begin a named session to group related commits under a single intent. All
+    commits while the session is active will be tagged with this label and
+    linked in the manifest.
+
+Usage:
+    kaptaind-cli aoc start <LABEL>
+
+Arguments:
+    <LABEL>    User-friendly name for this session.
+
+Examples:
+    kaptaind-cli aoc start "feature: authentication flow"
+    kaptaind-cli aoc start "refactor: database layer"
+    kaptaind-cli aoc start "fix: memory leaks"
+
+Notes:
+    Session state is stored in .kaptaind/aoc/active.json. Only one session can
+    be active at a time."#)]
     Start {
-        /// User-friendly name for this session (required)
+        /// User-friendly name for this session.
+        #[arg(value_name = "LABEL")]
         label: String,
     },
 
     /// 🚢 End and ship the current session
-    ///
-    /// Finalizes the active Aim of Change session, creates a manifest with:
-    /// - Session name and ID
-    /// - Start and end timestamps
-    /// - All commits included
-    /// - Version progression (start -> end)
-    /// - Test pass/fail summary
-    ///
-    /// Useful for linking to deploys, release notes, or audit logs.
-    ///
-    /// Usage: kaptaind-cli aoc ship
+    #[command(long_about = r#"Purpose:
+    Finalize the active Aim of Change session and create a manifest containing
+    the session name, ID, timestamps, commits, version progression, and test
+    results.
+
+Usage:
+    kaptaind-cli aoc ship
+
+Examples:
+    kaptaind-cli aoc ship
+
+Notes:
+    The manifest is archived to .kaptaind/aoc/manifests/<id>.json and the active
+    session is removed."#)]
     Ship,
 
     /// 📋 Show status of the current session
-    ///
-    /// Displays active session name, number of commits so far, and timeline.
-    /// Returns error if no session is active.
-    ///
-    /// Usage: kaptaind-cli aoc status
+    #[command(long_about = r#"Purpose:
+    Display the active session name, start time, initial version, and number of
+    traces collected so far.
+
+Usage:
+    kaptaind-cli aoc status
+
+Examples:
+    kaptaind-cli aoc status
+
+Notes:
+    Returns an error if no session is active."#)]
     Status,
 
-    /// 🔍 Intercept agent operations for contextual tracing
-    ///
-    /// Wraps a command (test, build, script) and captures:
-    /// - Command output
-    /// - Exit code
-    /// - Execution time
-    /// - Optionally: agent model name and intent description
-    ///
-    /// Logs are attached to the current Aim of Change session for full traceability.
-    /// Great for audit trails in regulated environments.
-    ///
-    /// Examples:
-    ///
-    ///   kaptaind-cli aoc intercept -- npm test
-    ///
-    ///   kaptaind-cli aoc intercept --model claude-3-5-sonnet -- cargo test
-    ///
-    ///   kaptaind-cli aoc intercept --intent \"refactor auth\" -- npm test
-    ///
-    /// Usage in scripts:
-    ///
-    ///   if kaptaind-cli aoc intercept --model my-model -- ./my_test.sh; then
-    ///     echo "Tests passed, changes are safe"
-    ///   fi
+    /// 🤖 Intercept agent operations for contextual tracing
+    #[command(
+        long_about = r#"Purpose:
+    Wrap a command (test, build, script) and capture its output, exit code, and
+    execution time. Optionally record the agent model name and intent
+    description.
+
+Usage:
+    kaptaind-cli aoc intercept [OPTIONS] -- <COMMAND> [ARGS]...
+
+Arguments:
+    <COMMAND>    Command to wrap and execute.
+    [ARGS]...    Arguments for the command.
+
+Options:
+    -m, --model <MODEL>          Agent or LLM model name.
+    -i, --intent <DESCRIPTION>   High-level description of the agent's task.
+
+Examples:
+    kaptaind-cli aoc intercept -- npm test
+    kaptaind-cli aoc intercept --model claude-3-5-sonnet -- cargo test
+    kaptaind-cli aoc intercept --intent "refactor auth" -- npm test
+
+Notes:
+    If no AoC session is active, a temporary session named after --intent (or
+    "agent-intercept") is created. The session remains active for the daemon to
+    process."#,
+        after_help = r#"See the kaptaind-cli(1) man page and kaptaind.toml(5) for details.
+Relevant config section: [aoc] (if present)."#
+    )]
     Intercept {
-        /// 🤖 Agent/LLM model name (e.g., claude-3-5-sonnet, gpt-4, local-llama)
-        ///
-        /// Optional label for which AI model made the change. Useful for tracking
-        /// which agent generated commits.
-        #[arg(short, long)]
+        /// Agent or LLM model name (e.g., claude-3-5-sonnet, gpt-4, local-llama).
+        #[arg(short, long, value_name = "MODEL")]
         model: Option<String>,
 
-        /// 💡 Intent or task description
-        ///
-        /// High-level description of what the agent is trying to do. Stored in
-        /// the trace for context and auditing.
-        #[arg(short, long)]
+        /// High-level description of the agent's task.
+        #[arg(short, long, value_name = "DESCRIPTION")]
         intent: Option<String>,
 
-        /// Command to wrap and execute (everything after --)
+        /// Command to wrap and execute (everything after --).
+        #[arg(value_name = "COMMAND")]
         command: String,
 
-        /// Arguments for the command
+        /// Arguments for the command.
+        #[arg(value_name = "ARGS")]
         args: Vec<String>,
     },
 
     /// 📚 View completed Aim of Change sessions
-    ///
-    /// Lists shipped AoC sessions with their manifests, showing:
-    /// - Session name and ID
-    /// - Start and end times
-    /// - Version change (e.g., v1.2.0 → v1.3.0)
-    /// - Commit count
-    /// - Test results
-    ///
-    /// Examples:
-    ///
-    ///   kaptaind-cli aoc log                  # Last 10 sessions (default)
-    ///
-    ///   kaptaind-cli aoc log --limit 50       # Last 50 sessions
+    #[command(long_about = r#"Purpose:
+    List shipped AoC sessions with their manifests, showing the session name,
+    version change, commit count, and test results.
+
+Usage:
+    kaptaind-cli aoc log [OPTIONS]
+
+Options:
+    -l, --limit <N>    Number of sessions to display (default: 10).
+
+Examples:
+    kaptaind-cli aoc log
+    kaptaind-cli aoc log --limit 50"#)]
     Log {
-        /// Number of sessions to display (default: 10)
-        #[arg(short, long, default_value_t = 10)]
+        /// Number of sessions to display (default: 10).
+        #[arg(short, long, value_name = "N", default_value_t = 10)]
         limit: usize,
     },
 }

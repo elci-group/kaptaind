@@ -1,8 +1,30 @@
 # kaptaind
 
+<p align="center">
+  <img src="docs/assets/kaptaind-logo.png" alt="Kaptaind neo-nautical logo" width="900">
+</p>
+
 `kaptaind` is an automated, daemon-based semantic versioning tool. It actively watches a repository for changes, batches those changes into logical clusters based on time windows, analyzes the impact of those changes, computes a semantic-version bump, writes the new `VERSION`, persists analysis artifacts, and automatically produces rich `git` commits on your behalf.
 
 It eliminates manual version bumping and subjective commit messages by replacing them with deterministic, rule-based Git operations.
+
+## Table of Contents
+
+- [Features](#features)
+- [Getting Started](#getting-started)
+  - [Installation](#installation)
+  - [Runtime Requirements](#runtime-requirements)
+  - [Quick Start](#quick-start)
+- [Quick Reference](#quick-reference)
+- [How It Works](#how-it-works)
+- [CLI Commands](#cli-commands)
+- [Configuration](#configuration)
+- [Security & Access Control](#security--access-control)
+- [Monitoring & Observability](#monitoring--observability)
+- [Performance Tuning](#performance-tuning)
+- [Troubleshooting](#troubleshooting)
+- [Man Pages](#man-pages)
+- [Contributing](#contributing)
 
 ## Features
 
@@ -182,6 +204,34 @@ kaptaind-cli ship status --auto       # Show last run + next auto-ship fires
 kaptaind-cli ship status --format json
 ```
 
+## Quick Reference
+
+| Command | Purpose | Config section |
+|---------|---------|----------------|
+| `kaptaind` | Run daemon in foreground | — |
+| `kaptaind --daemon` | Run daemon detached | `[watch]`, `[cluster]`, `[ratelimit]` |
+| `kaptaind-cli init` | Generate `kaptaind.toml` and `.kaptainignore` | — |
+| `kaptaind-cli status` | Daemon health and version | — |
+| `kaptaind-cli validate` | Validate `kaptaind.toml` | — |
+| `kaptaind-cli log` | Recent automated commits | — |
+| `kaptaind-cli analyze` | Dry-run diff analysis | `[weights]`, `[inference]` |
+| `kaptaind-cli dashboard` | Live terminal dashboard | — |
+| `kaptaind-cli aoc start` | Start Aim-of-Change session | `[aoc]` |
+| `kaptaind-cli ship plan` | Preview release | `[ship]` |
+| `kaptaind-cli ship run` | Build and publish release | `[ship]`, `[distribution]` |
+| `kaptaind-cli ci-hint` | Release/hold recommendation | `[qualification]` |
+| `kaptaind-cli shark status` | HA leadership state | `[shark]` |
+
+| File / Directory | Purpose |
+|------------------|---------|
+| `kaptaind.toml` | Main configuration |
+| `.kaptainignore` | Paths ignored by the watcher |
+| `.kaptaind/status.json` | Daemon state |
+| `.kaptaind/analysis/` | Per-cluster analysis artifacts |
+| `.kaptaind/audit.jsonl` | Structured audit log |
+| `.kaptaind/releases/` | Packaged release artifacts |
+| `.kaptaind/ship/` | Ship artifacts, SBOMs, provenance |
+
 The `ship stable` and `ship nightly` commands automate release versioning and
 publishing semantics. `stable` uses the current `VERSION`, creates a `v{VERSION}`
 git tag, publishes a non-prerelease GitHub release, and generates release notes
@@ -264,9 +314,11 @@ scrape_configs:
 
 ## Configuration
 
-`kaptaind` looks for an optional configuration file `kaptaind.toml` in the repository root.
+`kaptaind` looks for an optional configuration file `kaptaind.toml` in the repository root, or at the path supplied via `--config`. If the file is missing, sensible defaults are used.
 
-If no file is found, it uses the following defaults:
+### Core
+
+Controls filesystem watching, clustering, rate limits, and the test hook.
 
 ```toml
 repo_path = "."
@@ -282,18 +334,7 @@ window = 5            # Events within 5 seconds belong to the same cluster
 # adaptive = true
 # min_window_secs = 2
 # max_window_secs = 30
-# burst_threshold = 10  # Events before window starts expanding
-
-[weights]
-s = 0.35 # Structural weight
-a = 0.3  # API weight
-d = 0.2  # Dependency weight
-r = 0.15 # Runtime weight
-b = 0.0  # Bundle size weight (opt-in, increase to enable)
-
-[push]
-enabled = false
-branch = "main"
+# burst_threshold = 10
 
 [ratelimit]
 min_commit_interval = 10 # Seconds
@@ -302,19 +343,21 @@ min_commit_interval = 10 # Seconds
 command = "cargo test"
 required = true
 
-[inference]
-enabled = true
-provider = "auto"              # "auto" (detect from env), "anthropic", "openai", or "ollama"
-model = "auto"                 # "auto" (provider default), or explicit model name
-timeout_secs = 15
-ollama_base_url = "http://localhost:11434"  # Only used when provider = "ollama"
-min_score_for_inference = 0.0  # Skip LLM when score is below this threshold (saves quota)
+[weights]
+s = 0.35 # Structural weight
+a = 0.3  # API weight
+d = 0.2  # Dependency weight
+r = 0.15 # Runtime weight
+b = 0.0  # Bundle size weight (opt-in, increase to enable)
+```
 
+### Notifications
+
+Desktop, webhook, audit, and nautical-themed alerts.
+
+```toml
 [notify]
-# Toggle the nautical emoji theme used by desktop and webhook renderers.
 nautical_theme = true
-
-# Minimum seconds between duplicate event notifications. Set to 0 to disable.
 rate_limit_seconds = 5
 
 # Shell hooks are executed with `sh -c`. Available env vars depend on the event:
@@ -328,196 +371,149 @@ rate_limit_seconds = 5
 # on_start = 'notify-send "Kaptaind" "On watch for $KAPTAIND_REPO_PATH"'
 # on_shutdown = 'notify-send "Kaptaind" "Dropping anchor"'
 
-# Generic Discord or Slack webhook for commit/push/error/start/stop events.
 # webhook_url = "https://discord.com/api/webhooks/..."
 
-# Structured audit logging for compliance and incident response
 # [audit]
 # enabled = true
+```
 
-# Configurable version bump thresholds (defaults shown)
-# [version_thresholds]
-# minor = 0.6   # Score above this triggers a Minor bump
-# patch = 0.1   # Score above this triggers a Patch bump
+### Staging
 
-# Post-commit qualification and release pipeline (opt-in)
-# [qualification]
-# enabled = false
-# stability_threshold = 0.85   # Minimum stability score to qualify
-# min_pass_streak = 3          # Trailing passing commits required
-# max_allowed_diff = 0.7       # Reject if latest diff spike exceeds this
-# cooldown = "5m"              # Minimum time between releases
+Controls what is included in each automatic commit.
 
-# [build]
-# command = "cargo build --release"
-# timeout_secs = 120
+```toml
+[staging]
+mode = "all"                 # "all", "cluster", or "pattern"
+include = ["src/**"]         # Only used in "pattern" mode
+exclude = ["*.log", ".env*"]
 
-# [release]
-# intent = "local"   # "local", "s3", or "registry"
+[push]
+enabled = false
+branch = "main"
 
-# Plugin adapters — extend to any language via JSON stdio protocol
-# [[plugins.adapters]]
-# name = "ruby"
-# command = "python3 /path/to/ruby_adapter.py"
-# extensions = [".rb"]
-# language_confidence = 0.8
-
-# [bundle]
-# command = "npm run build"  # Build command to measure output size
-# output_dir = "dist"        # Output directory (defaults to dist, build, .next, or out)
-
-# [staging]
-# mode = "all"               # "all" (default), "cluster" (only changed files), or "pattern"
-# include = ["src/**"]       # Glob patterns to include (only used in "pattern" mode)
-# exclude = ["*.log", ".env*"] # Glob patterns to always exclude from commits
-
-# [version_thresholds]
-# minor = 0.6   # Score above this triggers a Minor bump
-# patch = 0.1   # Score above this triggers a Patch bump
-
-# Capability flags for air-gapped / locked-down environments
-# [capabilities]
-# network_push = true        # Allow git push
-# network_webhooks = true    # Allow webhook delivery
-# network_inference = true   # Allow LLM API calls
-# bundle_scoring = true      # Allow running the bundle build command
-# external_plugins = true    # Allow external plugin adapters and bait plugins
-
-# Automatic codebase discovery (used by `kaptaind-cli trawl` and daemon startup)
-# [trawl]
-# auto_trawl = false
-# max_depth = 3
-# skip_initialized = true
-# require_git = false
-# auto_register = true
-# project_types = []         # e.g. ["rust", "node", "python"]; empty = all
-# interval_secs = 0          # 0 = run only on startup
-
-# Automated storage hygiene for Cargo/Node caches and build artifacts
-# [deckhand]
-# enabled = false
-# interval_minutes = 360
-# sweep_keep_days = 30
-# clean_profiles = ["debug"]
-# clean_older_than_days = 14
-# dry_run = false
-# min_free_percent = 10      # Skip cleaning if free space is above this %
-
-# High-availability / zero-downtime upgrade leadership
-# [shark]
-# enabled = false
-# arbiter_path = ".kaptaind/shark"
-# heartbeat_interval_ms = 1000
-# heartbeat_timeout_ms = 5000
-# lease_ttl_ms = 10000
-# upgrade_handoff_timeout_ms = 30000
-# mode = "auto"              # "auto", "leader", "standby", "observer"
-
-# Visual Asset Channel Saturation (change summarization assets)
-# [vacs]
-# enabled = false
-# mode = "balanced"
-# allowed_assets = ["diagram", "chart"]
-# video_enabled = false
-# max_jobs_per_hour = 5
-
-# Release binary / installer / distribution pipeline
-# [ship]
-# enabled = false
-# targets = [
-#   "x86_64-unknown-linux-gnu",
-#   "aarch64-unknown-linux-gnu",
-#   "x86_64-apple-darwin",
-#   "aarch64-apple-darwin",
-#   "x86_64-pc-windows-msvc",
-# ]
-# require_qualification = true
-#
-# [ship.installers]
-# shell = false
-# tauri = false
-#
-# [[ship.package_managers]]
-# kind = "homebrew"
-# tap = "github.com/elci-group/homebrew-tap"
-# formula_name = "kaptaind"
-# token_env = "HOMEBREW_GITHUB_API_TOKEN"
-#
-# [[ship.app_stores]]
-# kind = "github-releases"
-# draft = false
-# prerelease = false
-# token_env = "GITHUB_TOKEN"
-#
-# [ship.stable]
-# targets = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]
-# channels = ["binaries", "github-releases"]
-# push_tag = true
-# require_qualification = true
-# release_notes = true
-#
-# [ship.nightly]
-# targets = ["x86_64-unknown-linux-gnu"]
-# channels = ["binaries", "github-releases"]
-# draft = true
-# push_tag = false
-# require_qualification = false
-# release_notes = true
-# retain_count = 7
-#
-# [ship.auto_nightly]
-# enabled = false
-# schedule = "0 2 * * *"      # 5-field cron: min hour day month weekday
-# cron_timezone = "local"     # "local" or "utc"
-# require_qualification = false
-#
-# [ship.auto_stable]
-# enabled = false
-# schedule = "0 9 * * 1"      # e.g. 09:00 every Monday
-# cron_timezone = "local"
-# require_qualification = true
-#
-# Artifact signing (GPG). When enabled, each artifact gets a .sha256 checksum
-# and a detached .sha256.asc signature. Git tags are also GPG-signed.
-# sign = false
-# gpg_key_id = "your-key@example.com"  # optional
-#
-# SBOM generation for release artifacts.
-# [ship.sbom]
-# enabled = false
-# format = "spdx-json"
-#
-# SLSA provenance attestation for release artifacts.
-# [ship.provenance]
-# enabled = false
-# builder_id = "https://kaptaind.dev/builder"
-# build_type = "https://kaptaind.dev/build"
-
-# Commit behavior
-# [commit]
-# sign = false              # GPG-sign every automated commit
-# gpg_key_id = "..."        # optional key ID or email
-
-# Push safety gates
 # [push.protection]
 # require_ci_pass = false
 # required_status_checks = ["ci/tests", "ci/lint"]
 # github_token_env = "GITHUB_TOKEN"
+```
 
-# Role-based access control for multi-user installs
+### Inference
+
+Optional LLM-powered summary and scoring refinement.
+
+```toml
+[inference]
+enabled = true
+provider = "auto"              # "auto", "anthropic", "openai", or "ollama"
+model = "auto"
+timeout_secs = 15
+ollama_base_url = "http://localhost:11434"
+min_score_for_inference = 0.0  # Skip LLM when score is below this threshold
+
+# Kimi-specific overrides
+# kimi_endpoint = "global"      # "global", "china", "coding", or omit for auto
+# kimi_model = "kimi-k2.5"
+# kimi_thinking = false
+```
+
+### Ship / Releases
+
+Automated stable and nightly release pipeline, plus artifact distribution.
+
+```toml
+[ship]
+enabled = false
+require_qualification = true
+
+[ship.stable]
+targets = ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"]
+channels = ["binaries", "github-releases"]
+push_tag = true
+require_qualification = true
+release_notes = true
+
+[ship.nightly]
+targets = ["x86_64-unknown-linux-gnu"]
+channels = ["binaries", "github-releases"]
+draft = true
+push_tag = false
+require_qualification = false
+
+[ship.auto_nightly]
+enabled = false
+schedule = "0 2 * * *"
+cron_timezone = "local"
+
+[ship.auto_stable]
+enabled = false
+schedule = "0 9 * * 1"
+cron_timezone = "local"
+```
+
+### Security
+
+Capability flags, commit signing, and role-based access control for locked-down environments.
+
+```toml
+[capabilities]
+network_push = true
+network_webhooks = true
+network_inference = true
+bundle_scoring = true
+external_plugins = true
+
+[commit]
+# sign = false
+# gpg_key_id = "..."
+
 # [[rbac.roles]]
 # name = "release-engineers"
 # permissions = ["ship.run", "shark.upgrade", "push.force"]
 # users = ["alice", "bob"]
 # groups = ["kaptaind-admins"]
+```
 
-# Kimi-specific inference options (in addition to the generic [inference] block)
-# [inference]
-# kimi_endpoint = "global"      # "global", "china", "coding", or omit for auto
-# kimi_base_url = "..."         # Optional override
-# kimi_model = "kimi-k2.5"
-# kimi_thinking = false
-# kimi_extended_context = false
+### High Availability
+
+Leader election for zero-downtime upgrades.
+
+```toml
+[shark]
+enabled = false
+arbiter_path = ".kaptaind/shark"
+heartbeat_interval_ms = 1000
+heartbeat_timeout_ms = 5000
+lease_ttl_ms = 10000
+upgrade_handoff_timeout_ms = 30000
+mode = "auto"              # "auto", "leader", "standby", "observer"
+```
+
+### Other Features
+
+Additional opt-in modules: bundle scoring, storage hygiene, code discovery, plugins, and visual assets.
+
+```toml
+[version_thresholds]
+minor = 0.6   # Score above this triggers a Minor bump
+patch = 0.1   # Score above this triggers a Patch bump
+
+[bundle]
+command = "npm run build"
+output_dir = "dist"
+
+[deckhand]
+enabled = false
+interval_minutes = 360
+sweep_keep_days = 30
+
+[trawl]
+auto_trawl = false
+max_depth = 3
+
+[vacs]
+enabled = false
+mode = "balanced"
+allowed_assets = ["diagram", "chart"]
 ```
 
 ### .kaptainignore
@@ -623,6 +619,61 @@ If tests are slow, consider running a fast smoke test in `kaptaind` and a full s
 [test]
 command = "cargo test --lib"  # Skip integration tests for speed
 ```
+
+## Troubleshooting
+
+### Daemon won’t start
+
+1. Check that `kaptaind.toml` exists in the working directory or pass `--config`:
+   ```bash
+   cargo run -- --config /path/to/kaptaind.toml
+   ```
+2. Verify no other instance is bound to the same `[daemon].port` (default `3000`):
+   ```bash
+   lsof -i :3000
+   ```
+3. Inspect logs; by default they are emitted via `tracing` to stderr. Increase verbosity with `RUST_LOG=kaptaind=debug`.
+
+### Push blocked by CI / branch protection
+
+- Kaptaind pushes to `origin` with `refs/heads/<branch>`. If your remote rejects pushes due to required status checks, either:
+  - Disable `push.enabled` and rely on CI to publish:
+    ```toml
+    [push]
+    enabled = false
+    ```
+  - Use `ship plan` to verify the release locally before pushing manually.
+
+### GPG signing fails
+
+- Ensure `[commit] signing_key` matches a key available in `gpg --list-secret-keys`.
+- If the gpg binary is not on `PATH`, set `[commit] gpg_program` explicitly.
+- For batch/daemon operation, configure a GPG agent so the key does not prompt for a passphrase on every commit.
+
+### Qualification rejected
+
+A release can be blocked by a qualification gate:
+
+- **Stability**: recent commits have a low stability score; wait for more green runs.
+- **Streak**: required consecutive successful releases not met.
+- **Cooldown**: last release was too recent; adjust `[qualification].cooldown_hours`.
+- **Diff spike**: API or structural score exceeded `[qualification].max_diff_score`.
+
+Run `cargo run --bin kaptaind-cli -- ship plan` to see which gate is failing.
+
+### Stale AST cache
+
+Symptoms include incorrect API detection or missing symbol changes. Delete the cache and let it rebuild:
+
+```bash
+rm .kaptaind/ast_cache.json
+```
+
+### Large repo is slow
+
+- Use `[staging] mode = "cluster"` to avoid scanning the whole index.
+- Disable bundle scoring if not needed (omit `[bundle]` or set `b = 0.0` in `[weights]`).
+- Increase `[cluster].window` to reduce commit frequency.
 
 ## Bundle Size Scoring
 

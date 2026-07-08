@@ -7,8 +7,9 @@ This document covers all methods for installing kaptaind on your system.
 1. [Quick Install (CLI)](#quick-install-cli)
 2. [GUI Installer](#gui-installer)
 3. [Manual Installation](#manual-installation)
-4. [Uninstall](#uninstall)
-5. [Troubleshooting](#troubleshooting)
+4. [Man Pages](#man-pages)
+5. [Uninstall](#uninstall)
+6. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -257,6 +258,52 @@ kaptaind --daemon
 
 ```bash
 kaptaind-cli status
+```
+
+---
+
+## Man Pages
+
+Man-page sources are included in the repository as Markdown. You can install them with or without **pandoc**.
+
+### With pandoc
+
+Render the man pages for **kaptaind** and **kaptaind-cli**:
+
+```bash
+pandoc man/kaptaind.1.md -s -t man -o /usr/local/share/man/man1/kaptaind.1
+pandoc man/kaptaind-cli.1.md -s -t man -o /usr/local/share/man/man1/kaptaind-cli.1
+```
+
+After installing, refresh the man database:
+
+```bash
+mandb   # Linux
+# or
+man -k kaptaind   # macOS, to verify indexing
+```
+
+### Without pandoc
+
+If you do not have **pandoc** installed, you can copy the Markdown sources directly to the man directory as reference documents:
+
+```bash
+cp man/kaptaind.1.md /usr/local/share/man/man1/kaptaind.1.md
+cp man/kaptaind-cli.1.md /usr/local/share/man/man1/kaptaind-cli.1.md
+```
+
+### Using the Makefile
+
+A minimal Makefile target is provided that renders with pandoc when available and falls back to copying the Markdown sources otherwise:
+
+```bash
+make install-man
+```
+
+You can change the destination with the `MANDIR` variable:
+
+```bash
+make install-man MANDIR=~/.local/share/man
 ```
 
 ---

@@ -8,7 +8,16 @@ use std::fs::File;
     version,
     author = "Elci Group <kaptaind@example.com>",
     about = "Automated semantic versioning daemon for dynamic release management",
-    long_about = "kaptaind watches your repository for changes, analyzes them across multiple \
+    long_about = "+-------------------+\n\
+|    .-=====-.      |\n\
+|   /  .---.  \\     |\n\
+|  |--< </> >--|    |\n\
+|   \\  '---'  /     |\n\
+|    '---|---'      |\n\
+|    ___/ \\___      |\n\
+|   /_KAPTAIND_\\    |\n\
++-------------------+\n\n\
+kaptaind watches your repository for changes, analyzes them across multiple \
 dimensions (API, dependencies, runtime), computes semantic version bumps, and automatically \
 commits with rich, AI-generated commit messages.\n\n\
 It's a self-governing release system that eliminates manual version bumping and subjective \
@@ -85,10 +94,20 @@ struct Cli {
     /// e.g. during a zero-downtime upgrade.
     #[arg(long, value_name = "PORT")]
     health_port: Option<u16>,
+
+    /// 📁 Path to the kaptaind configuration file
+    ///
+    /// Overrides the default search path (./kaptaind.toml) and the
+    /// KAPTAIND_CONFIG environment variable.
+    #[arg(short, long, value_name = "PATH")]
+    config: Option<std::path::PathBuf>,
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    if let Some(path) = cli.config.as_ref() {
+        std::env::set_var("KAPTAIND_CONFIG", path);
+    }
     let mut config = kaptaind::config::loader::load()?;
 
     if let Some(mode) = cli.shark_mode {
