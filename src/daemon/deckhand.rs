@@ -152,7 +152,9 @@ fn should_skip_due_to_free_space(repo_path: &Path, min_free_percent: u64) -> boo
 }
 
 fn build_deckhand_config(repo_path: &Path, cfg: &DeckhandConfig) -> deckhand::config::Config {
-    use deckhand::config::{CleanConfig, StatusConfig, SweepConfig, WorkspaceConfig};
+    use deckhand::config::{
+        AutoCleanConfig, CleanConfig, StatusConfig, SweepConfig, WorkspaceConfig,
+    };
 
     deckhand::config::Config {
         workspace: WorkspaceConfig {
@@ -180,6 +182,7 @@ fn build_deckhand_config(repo_path: &Path, cfg: &DeckhandConfig) -> deckhand::co
         status: StatusConfig {
             warn_free_percent: cfg.min_free_percent,
         },
+        auto_clean: AutoCleanConfig::default(),
     }
 }
 

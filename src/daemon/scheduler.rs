@@ -102,6 +102,8 @@ pub async fn run(
         last_version: load_version(&config.repo_path.join("VERSION")).map(|v| v.to_string()),
         last_action_time: Utc::now(),
         last_error: None,
+        current_task: None,
+        progress_percent: None,
     };
     write_status(&config.repo_path, &status);
 
@@ -117,8 +119,7 @@ pub async fn run(
 
                         if matches!(status.status, State::Idle) {
                             tracing::trace!("transitioning state to Clustering");
-                            status.status = State::Clustering;
-                            status.last_action_time = Utc::now();
+                            status.set_task(State::Clustering, "Collecting changes", None);
                             write_status(&config.repo_path, &status);
                         }
 
@@ -183,7 +184,7 @@ pub async fn run(
             }
             _ = shutdown.wait() => {
                 tracing::info!("shutdown signal received, draining tasks");
-                status.status = State::Stopping;
+                status.set_task(State::Stopping, "Shutting down", None);
                 write_status(&config.repo_path, &status);
                 break;
             }
@@ -198,7 +199,7 @@ pub async fn run(
         tasks.abort_all();
     }
 
-    status.status = State::Stopped;
+    status.set_task(State::Stopped, "Stopped", None);
     write_status(&config.repo_path, &status);
     tracing::info!("scheduler shutdown complete");
 }
@@ -250,7 +251,7 @@ async fn process_cluster(
                 test_outcome.trace_test(),
                 None,
             );
-            status.status = State::Idle;
+            status.set_idle();
             write_status(&config.repo_path, status);
             return;
         }
@@ -278,7 +279,7 @@ async fn process_cluster(
             test_outcome.trace_test(),
             agent_event.clone(),
         );
-        status.status = State::Idle;
+        status.set_idle();
         write_status(&config.repo_path, status);
         return;
     }
@@ -287,8 +288,7 @@ async fn process_cluster(
         Ok(clean) => clean,
         Err(err) => {
             tracing::error!(error = %err, "failed to inspect working tree");
-            status.status = State::Failed;
-            status.last_error = Some(err.to_string());
+            status.set_failed(err.to_string());
             write_status(&config.repo_path, status);
             return;
         }
@@ -305,12 +305,12 @@ async fn process_cluster(
             test_outcome.trace_test(),
             agent_event.clone(),
         );
-        status.status = State::Idle;
+        status.set_idle();
         write_status(&config.repo_path, status);
         return;
     }
 
-    status.status = State::Testing;
+    status.set_task(State::Testing, "Running tests", Some(25));
     write_status(&config.repo_path, status);
     tracing::trace!("running test hook");
 
@@ -364,21 +364,30 @@ async fn process_cluster(
             test_outcome.trace_test(),
             agent_event.clone(),
         );
-        status.status = State::Failed;
         if let TestOutcome::Failed { stderr, .. } = &test_outcome {
-            status.last_error = Some(stderr.clone());
+            status.set_failed(stderr.clone());
+        } else {
+            status.set_failed("Tests failed".to_string());
         }
         write_status(&config.repo_path, status);
-        crate::daemon::notification::notify_error(
+        crate::daemon::notification::notify_warning(
             &config.notify,
             "Tests failed",
-            Some("Test hook"),
+            "Test hook",
             config.capabilities.network_webhooks,
+        );
+        broadcast_event(
+            &event_tx,
+            "warning",
+            serde_json::json!({
+                "title": "Tests failed",
+                "source": "Test hook",
+            }),
         );
         return;
     }
 
-    status.status = State::Committing;
+    status.set_task(State::Committing, "Analyzing diff & committing", Some(75));
     write_status(&config.repo_path, status);
 
     let mut diff = crate::diff::analyze_with_plugins(&cluster, &config.repo_path, &config.plugins);
@@ -408,7 +417,7 @@ async fn process_cluster(
             test_outcome.trace_test(),
             agent_event.clone(),
         );
-        status.status = State::Idle;
+        status.set_idle();
         write_status(&config.repo_path, status);
         return;
     }
@@ -442,17 +451,23 @@ async fn process_cluster(
             for (change, reason) in &blocked {
                 tracing::warn!(path = %change.path.display(), reason = %reason, "change blocked by selective rule");
             }
-            crate::daemon::notification::notify_error(
+            let title = format!("{} change(s) blocked by selective rules", blocked.len());
+            crate::daemon::notification::notify_warning(
                 &config.notify,
-                &format!("{} change(s) blocked by selective rules", blocked.len()),
-                Some("Angler selective capture"),
+                &title,
+                "Angler selective capture",
                 config.capabilities.network_webhooks,
             );
-            status.status = State::Failed;
-            status.last_error = Some(format!(
-                "{} change(s) blocked by selective rules",
-                blocked.len()
-            ));
+            broadcast_event(
+                &event_tx,
+                "warning",
+                serde_json::json!({
+                    "title": title,
+                    "source": "Angler selective capture",
+                }),
+            );
+            let err = format!("{} change(s) blocked by selective rules", blocked.len());
+            status.set_failed(err);
             write_status(&config.repo_path, status);
             return;
         }
@@ -490,15 +505,22 @@ async fn process_cluster(
                     .map(|c| c.required)
                     .unwrap_or(false)
                 {
-                    status.status = State::Failed;
-                    status.last_error =
-                        Some(format!("Pre-commit hook failed: {}", hook_result.stderr));
+                    let err = format!("Pre-commit hook failed: {}", hook_result.stderr);
+                    status.set_failed(err.clone());
                     write_status(&config.repo_path, status);
-                    crate::daemon::notification::notify_error(
+                    crate::daemon::notification::notify_warning(
                         &config.notify,
-                        &format!("Pre-commit hook failed: {}", hook_result.stderr),
-                        None,
+                        &err,
+                        "Pre-commit hook",
                         config.capabilities.network_webhooks,
+                    );
+                    broadcast_event(
+                        &event_tx,
+                        "warning",
+                        serde_json::json!({
+                            "title": err,
+                            "source": "Pre-commit hook",
+                        }),
                     );
                     return;
                 }
@@ -519,14 +541,21 @@ async fn process_cluster(
             test_outcome.trace_test(),
             agent_event.clone(),
         );
-        status.status = State::Failed;
-        status.last_error = Some(err.to_string());
+        status.set_failed(err.to_string());
         write_status(&config.repo_path, status);
-        crate::daemon::notification::notify_error(
+        crate::daemon::notification::notify_warning(
             &config.notify,
             &err.to_string(),
-            None,
+            "Version write failed",
             config.capabilities.network_webhooks,
+        );
+        broadcast_event(
+            &event_tx,
+            "warning",
+            serde_json::json!({
+                "title": err.to_string(),
+                "source": "Version write failed",
+            }),
         );
         return;
     }
@@ -632,14 +661,21 @@ async fn process_cluster(
             test_outcome.trace_test(),
             agent_event.clone(),
         );
-        status.status = State::Failed;
-        status.last_error = Some(err.to_string());
+        status.set_failed(err.to_string());
         write_status(&config.repo_path, status);
-        crate::daemon::notification::notify_error(
+        crate::daemon::notification::notify_warning(
             &config.notify,
             &err.to_string(),
-            None,
+            "Commit failed",
             config.capabilities.network_webhooks,
+        );
+        broadcast_event(
+            &event_tx,
+            "warning",
+            serde_json::json!({
+                "title": err.to_string(),
+                "source": "Commit failed",
+            }),
         );
         return;
     }
@@ -735,15 +771,22 @@ async fn process_cluster(
                         .map(|c| c.required)
                         .unwrap_or(false)
                     {
-                        status.status = State::Failed;
-                        status.last_error =
-                            Some(format!("Pre-push hook failed: {}", hook_result.stderr));
+                        let err = format!("Pre-push hook failed: {}", hook_result.stderr);
+                        status.set_failed(err.clone());
                         write_status(&config.repo_path, status);
-                        crate::daemon::notification::notify_error(
+                        crate::daemon::notification::notify_warning(
                             &config.notify,
-                            &format!("Pre-push hook failed: {}", hook_result.stderr),
-                            None,
+                            &err,
+                            "Pre-push hook",
                             config.capabilities.network_webhooks,
+                        );
+                        broadcast_event(
+                            &event_tx,
+                            "warning",
+                            serde_json::json!({
+                                "title": err,
+                                "source": "Pre-push hook",
+                            }),
                         );
                         return;
                     }
@@ -776,14 +819,21 @@ async fn process_cluster(
                 test_outcome.trace_test(),
                 agent_event.clone(),
             );
-            status.status = State::Failed;
-            status.last_error = Some(format!("push failed: {err}"));
+            status.set_failed(format!("push failed: {err}"));
             write_status(&config.repo_path, status);
-            crate::daemon::notification::notify_error(
+            crate::daemon::notification::notify_warning(
                 &config.notify,
                 &err.to_string(),
-                None,
+                "Push failed",
                 config.capabilities.network_webhooks,
+            );
+            broadcast_event(
+                &event_tx,
+                "warning",
+                serde_json::json!({
+                    "title": err.to_string(),
+                    "source": "Push failed",
+                }),
             );
             return;
         }
@@ -853,9 +903,8 @@ async fn process_cluster(
     );
 
     *last_commit_at = Some(now);
-    status.status = State::Idle;
+    status.set_idle();
     status.last_version = Some(next.to_string());
-    status.last_action_time = now;
     status.last_error = None;
     write_status(&config.repo_path, status);
 

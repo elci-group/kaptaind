@@ -1,4 +1,5 @@
 use crate::angler::config::AnglerConfig;
+use crate::notify::audio::TtsConfig;
 use crate::qualification::policy::QualificationConfig;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -767,6 +768,9 @@ pub struct NotifyConfig {
     /// Minimum seconds between duplicate event notifications (0 = no rate limit).
     #[serde(default = "default_notify_rate_limit_seconds")]
     pub rate_limit_seconds: u64,
+    /// Optional text-to-speech configuration for spoken notifications.
+    #[serde(default)]
+    pub tts: TtsConfig,
 }
 
 fn default_notify_rate_limit_seconds() -> u64 {
@@ -788,6 +792,7 @@ impl Default for NotifyConfig {
             webhook_url: None,
             nautical_theme: true,
             rate_limit_seconds: default_notify_rate_limit_seconds(),
+            tts: TtsConfig::default(),
         }
     }
 }

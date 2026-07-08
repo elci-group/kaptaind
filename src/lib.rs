@@ -11,6 +11,7 @@ pub mod icon;
 pub mod inference;
 pub mod installer;
 pub mod monitor;
+pub mod notify;
 pub mod push;
 pub mod qualification;
 pub mod rbac;

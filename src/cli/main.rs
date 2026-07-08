@@ -1339,6 +1339,10 @@ Examples:
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // Load optional `.env` file so provider API keys and other secrets can live
+    // outside of `kaptaind.toml`.
+    let _ = dotenvy::dotenv();
+
     let cli = Cli::parse();
 
     // Init and Trawl commands work without a valid config
@@ -1732,7 +1736,9 @@ fn handle_storage(config: &Config, cmd: &StorageCommand) -> anyhow::Result<()> {
 }
 
 fn deckhand_config_from_kaptaind(config: &Config) -> deckhand::config::Config {
-    use deckhand::config::{CleanConfig, StatusConfig, SweepConfig, WorkspaceConfig};
+    use deckhand::config::{
+        AutoCleanConfig, CleanConfig, StatusConfig, SweepConfig, WorkspaceConfig,
+    };
 
     deckhand::config::Config {
         workspace: WorkspaceConfig {
@@ -1760,6 +1766,7 @@ fn deckhand_config_from_kaptaind(config: &Config) -> deckhand::config::Config {
         status: StatusConfig {
             warn_free_percent: config.deckhand.min_free_percent,
         },
+        auto_clean: AutoCleanConfig::default(),
     }
 }
 

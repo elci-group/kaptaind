@@ -38,6 +38,8 @@ export interface StatusReport {
   last_version: string | null;
   last_action_time: string;
   last_error: string | null;
+  current_task: string | null;
+  progress_percent: number | null;
 }
 
 export interface TokenMetrics {

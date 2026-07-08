@@ -82,12 +82,15 @@
 - Runtime artifacts:
   - `VERSION` in `repo_path` is read/written as the authoritative semantic version.
   - `.kaptaind/analysis/<cluster-id>.json` stores analysis artifacts for each processed cluster.
-  - `.kaptaind/status.json` — daemon state for external integrations.
+  - `.kaptaind/status.json` — daemon state for external integrations; includes `current_task` and `progress_percent` for live progress UI.
   - `.kaptaind/telemetry.json` — token usage and cost tracking.
   - `.kaptaind/bundle.json` — previous bundle size (when bundle scoring is enabled).
   - `.kaptaind/traces/<cluster-id>.json` — per-cluster trace records linked to AoC sessions.
   - `.kaptaind/aoc/active.json` — active Aim of Change session.
   - `.kaptaind/aoc/manifests/<id>.json` — shipped AoC session summaries.
+- Environment variables:
+  - kaptaind loads an optional `.env` file at startup (daemon and CLI) so provider keys and secrets can stay out of `kaptaind.toml`.
+  - TTS provider keys are read from `.env`: `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AZURE_SPEECH_KEY`/`AZURE_SPEECH_REGION`, `GOOGLE_API_KEY`, `CARTESIA_API_KEY`. Local system TTS uses `say` (macOS), `espeak` (Linux), or PowerShell (Windows).
 
 ## Code patterns and conventions
 
@@ -115,9 +118,23 @@
 
 ### Add a notification event
 
-1. Add the event variant in `src/notify/` (or the relevant module).
+1. Add the event variant in `src/daemon/notification.rs`.
 2. Update the shell/webhook renderers and the SSE payload format.
-3. Document environment variables in `README.md` under the Notifications section.
+3. If the event should trigger the storm/siren overlay, broadcast a `warning` SSE event from the scheduler.
+4. Document environment variables in `README.md` under the Notifications section.
+
+### Add a TTS provider
+
+1. Add the variant to `TtsProvider` in `src/notify/audio.rs`.
+2. Implement an async `*_speak` function and wire it in `speak_with_provider()`.
+3. Update env-key detection in `resolve_provider()` and add the provider to the `[notify.tts]` config docs.
+4. Add a unit test for provider parsing/env resolution.
+
+### Change task-progress visuals
+
+1. Update `StatusReport` fields in `src/daemon/status.rs` and the scheduler state transitions in `src/daemon/scheduler.rs`.
+2. The embedded WebUI (`src/daemon/web_ui.html`) derives sky/siren visuals from `status.json` and `warning` SSE events.
+3. The Next.js dashboard derives visuals from the same `status.json` via `DaemonStatusBadge.tsx` and `TaskProgress.tsx`.
 
 ### Ship a release manually
 

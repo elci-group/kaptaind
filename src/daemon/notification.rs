@@ -74,6 +74,11 @@ pub enum NotificationEvent<'a> {
     FlakyTests {
         tests: &'a [String],
     },
+    Warning {
+        title: &'a str,
+        message: &'a str,
+        source: &'a str,
+    },
 }
 
 impl NotificationEvent<'_> {
@@ -90,6 +95,7 @@ impl NotificationEvent<'_> {
             NotificationEvent::Qualification { .. } => "qualification",
             NotificationEvent::Pulse { .. } => "pulse",
             NotificationEvent::FlakyTests { .. } => "flaky_tests",
+            NotificationEvent::Warning { .. } => "warning",
         }
     }
 
@@ -108,6 +114,7 @@ impl NotificationEvent<'_> {
             NotificationEvent::Qualification { .. } => config.on_qualification.as_ref(),
             NotificationEvent::Pulse { .. } => config.on_pulse.as_ref(),
             NotificationEvent::FlakyTests { .. } => config.on_flaky_tests.as_ref(),
+            NotificationEvent::Warning { .. } => config.on_error.as_ref(),
         }
     }
 }
@@ -139,6 +146,9 @@ pub fn notify(config: &NotifyConfig, event: NotificationEvent<'_>, webhook_enabl
 
     // Desktop notification.
     let _ = send_desktop_notification(&rendered.title, &rendered.body, rendered.priority);
+
+    // Spoken notification.
+    crate::notify::audio::speak(rendered.title.clone(), &config.tts);
 
     // Webhook.
     if webhook_enabled {
@@ -268,6 +278,16 @@ fn inject_env(command: &mut std::process::Command, event: &NotificationEvent<'_>
         }
         NotificationEvent::FlakyTests { tests } => {
             command.env("KAPTAIND_FLAKY_TESTS", tests.join(","));
+        }
+        NotificationEvent::Warning {
+            title,
+            message,
+            source,
+        } => {
+            command
+                .env("KAPTAIND_WARNING_TITLE", *title)
+                .env("KAPTAIND_WARNING_MESSAGE", *message)
+                .env("KAPTAIND_WARNING_SOURCE", *source);
         }
     }
 }
@@ -501,6 +521,26 @@ fn render_nautical(event: &NotificationEvent<'_>) -> RenderedNotification {
                 priority: Priority::High,
             }
         }
+        NotificationEvent::Warning {
+            title,
+            message,
+            source,
+        } => {
+            let rendered_title = format!("🚨 Storm warning — {}", title);
+            let body = format!("{}\n{}", source, truncate(message, 200));
+            let webhook = format!(
+                "🚨 **Storm warning** — {} (`{}`)\n```\n{}\n```",
+                title,
+                source,
+                truncate(message, 3500)
+            );
+            RenderedNotification {
+                title: rendered_title,
+                body,
+                webhook,
+                priority: Priority::High,
+            }
+        }
     }
 }
 
@@ -722,6 +762,26 @@ fn render_plain(event: &NotificationEvent<'_>) -> RenderedNotification {
                 priority: Priority::High,
             }
         }
+        NotificationEvent::Warning {
+            title,
+            message,
+            source,
+        } => {
+            let rendered_title = format!("🚨 Kaptaind Warning: {}", title);
+            let body = format!("{}\n{}", source, truncate(message, 200));
+            let webhook = format!(
+                "🚨 **Kaptaind Warning** — {} (`{}`)\n```\n{}\n```",
+                title,
+                source,
+                truncate(message, 3500)
+            );
+            RenderedNotification {
+                title: rendered_title,
+                body,
+                webhook,
+                priority: Priority::High,
+            }
+        }
     }
 }
 
@@ -794,6 +854,22 @@ pub fn notify_error(
     notify(
         config,
         NotificationEvent::Error { error, context },
+        webhook_enabled,
+    );
+}
+
+/// Send a warning notification through all configured channels.
+///
+/// Warnings render as storm warnings in nautical mode and trigger the siren/storm
+/// visual effect in the WebUI and dashboard.
+pub fn notify_warning(config: &NotifyConfig, title: &str, source: &str, webhook_enabled: bool) {
+    notify(
+        config,
+        NotificationEvent::Warning {
+            title,
+            message: title,
+            source,
+        },
         webhook_enabled,
     );
 }
@@ -1147,6 +1223,36 @@ mod tests {
         );
         assert!(rendered.title.contains("Flaky tests detected"));
         assert!(rendered.body.contains("foo::bar"));
+        assert_eq!(rendered.priority, Priority::High);
+    }
+
+    #[test]
+    fn nautical_warning_uses_storm_warning() {
+        let rendered = render(
+            &NotificationEvent::Warning {
+                title: "Tests failed",
+                message: "cargo test exited with code 101",
+                source: "Test hook",
+            },
+            true,
+        );
+        assert!(rendered.title.contains("Storm warning"));
+        assert!(rendered.body.contains("Test hook"));
+        assert_eq!(rendered.priority, Priority::High);
+    }
+
+    #[test]
+    fn plain_warning_uses_kaptaind_warning() {
+        let rendered = render(
+            &NotificationEvent::Warning {
+                title: "Push failed",
+                message: "permission denied",
+                source: "Push",
+            },
+            false,
+        );
+        assert!(rendered.title.contains("Kaptaind Warning"));
+        assert!(rendered.body.contains("Push"));
         assert_eq!(rendered.priority, Priority::High);
     }
 }

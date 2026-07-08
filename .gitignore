@@ -9,6 +9,7 @@ Cargo.lock
 
 # Kaptaind runtime artifacts
 .kaptaind/
+.amber/
 daemon.pid
 
 # Node.js / npm

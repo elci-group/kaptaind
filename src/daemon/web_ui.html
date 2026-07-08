@@ -148,6 +148,159 @@
     }
     .toast.show { opacity: 1; }
     .hidden { display: none; }
+
+    /* Sky / weather ambience tied to daemon state */
+    body.sky-cloudy {
+      background:
+        radial-gradient(circle at 20% 30%, rgba(255,255,255,0.18) 0%, transparent 35%),
+        radial-gradient(circle at 80% 25%, rgba(255,255,255,0.14) 0%, transparent 30%),
+        linear-gradient(180deg, #4a5d75 0%, #2a3a52 60%, #16253f 100%);
+    }
+    body.sky-cloudy::before,
+    body.sky-cloudy::after {
+      content: '';
+      position: fixed;
+      left: -20%;
+      width: 140%;
+      height: 100%;
+      pointer-events: none;
+      background-repeat: repeat-x;
+      opacity: 0.45;
+      z-index: -1;
+    }
+    body.sky-cloudy::before {
+      top: -10%;
+      background-image:
+        radial-gradient(ellipse 120px 60px at 10% 40%, rgba(255,255,255,0.35) 50%, transparent 51%),
+        radial-gradient(ellipse 180px 80px at 35% 35%, rgba(255,255,255,0.3) 50%, transparent 51%),
+        radial-gradient(ellipse 140px 70px at 65% 45%, rgba(255,255,255,0.32) 50%, transparent 51%),
+        radial-gradient(ellipse 200px 90px at 90% 30%, rgba(255,255,255,0.28) 50%, transparent 51%);
+      animation: drift 90s linear infinite;
+    }
+    body.sky-cloudy::after {
+      top: 5%;
+      background-image:
+        radial-gradient(ellipse 160px 70px at 15% 50%, rgba(255,255,255,0.22) 50%, transparent 51%),
+        radial-gradient(ellipse 220px 100px at 50% 40%, rgba(255,255,255,0.2) 50%, transparent 51%),
+        radial-gradient(ellipse 180px 80px at 85% 55%, rgba(255,255,255,0.18) 50%, transparent 51%);
+      animation: drift 130s linear infinite reverse;
+    }
+    body.sky-clear {
+      background:
+        radial-gradient(circle at 85% 18%, rgba(255,235,180,0.35) 0%, transparent 25%),
+        linear-gradient(180deg, #1e90ff 0%, #87ceeb 55%, #0f4c75 55%, #003b5c 100%);
+    }
+    body.sky-clear::before {
+      content: '';
+      position: fixed;
+      left: 0;
+      right: 0;
+      top: 55%;
+      height: 1px;
+      background: rgba(255,255,255,0.25);
+      box-shadow: 0 0 20px rgba(255,255,255,0.15);
+      pointer-events: none;
+      z-index: -1;
+    }
+    body.sky-failed {
+      background:
+        radial-gradient(circle at 30% 20%, rgba(80,0,0,0.5) 0%, transparent 40%),
+        linear-gradient(180deg, #1a0b0b 0%, #2d1b1b 50%, #0b1220 100%);
+      animation: lightning 4s infinite;
+    }
+    @keyframes drift {
+      from { transform: translateX(0); }
+      to { transform: translateX(50%); }
+    }
+    @keyframes lightning {
+      0%, 90%, 100% { filter: brightness(1); }
+      92% { filter: brightness(1.3); }
+      94% { filter: brightness(1); }
+      96% { filter: brightness(1.25); }
+    }
+
+    /* Storm / siren warning overlay */
+    #siren-overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 1000;
+      opacity: 0;
+      transition: opacity 0.3s;
+      background:
+        radial-gradient(circle at 50% 50%, rgba(255,0,0,0.15) 0%, transparent 60%),
+        repeating-linear-gradient(90deg, rgba(255,0,0,0.05) 0px, rgba(255,0,0,0.05) 40px, transparent 40px, transparent 80px);
+    }
+    #siren-overlay.active {
+      opacity: 1;
+      animation: siren-flash 1.2s ease-in-out infinite, siren-rotate 6s linear infinite;
+    }
+    #siren-beacon {
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: conic-gradient(from 0deg, transparent 0deg, rgba(255,0,0,0.25) 30deg, transparent 60deg, transparent 180deg, rgba(255,0,0,0.25) 210deg, transparent 240deg);
+      opacity: 0;
+    }
+    #siren-overlay.active #siren-beacon {
+      opacity: 1;
+    }
+    @keyframes siren-flash {
+      0%, 100% { background-color: rgba(255,0,0,0.05); }
+      50% { background-color: rgba(255,0,0,0.2); }
+    }
+    @keyframes siren-rotate {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    #warning-toast {
+      position: fixed;
+      top: 1rem;
+      right: 1rem;
+      max-width: 420px;
+      padding: 1rem 1.2rem;
+      border-radius: 10px;
+      background: rgba(40,0,0,0.9);
+      border: 1px solid var(--danger);
+      color: var(--text);
+      box-shadow: 0 8px 30px rgba(255,0,0,0.25);
+      opacity: 0;
+      transform: translateY(-10px);
+      transition: opacity 0.3s, transform 0.3s;
+      pointer-events: none;
+      z-index: 1001;
+    }
+    #warning-toast.active {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    #warning-toast h4 { margin: 0 0 0.4rem; color: var(--warn); }
+    #warning-toast p { margin: 0; font-size: 0.9rem; }
+    .task-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.5rem;
+      padding: 0.35rem 0.8rem;
+      border-radius: 999px;
+      background: rgba(0,0,0,0.25);
+      font-size: 0.8rem;
+      color: var(--muted);
+      margin-top: 0.5rem;
+    }
+    .progress-bar {
+      width: 120px;
+      height: 6px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+    .progress-bar > div {
+      height: 100%;
+      background: var(--accent);
+      transition: width 0.3s;
+    }
   </style>
 </head>
 <body>
@@ -231,6 +384,11 @@
     </div>
   </main>
   <div id="toast" class="toast"></div>
+  <div id="siren-overlay"><div id="siren-beacon"></div></div>
+  <div id="warning-toast">
+    <h4>🚨 Warning</h4>
+    <p id="warning-message"></p>
+  </div>
 
   <script>
   const chartDefaults = {
@@ -276,13 +434,38 @@
 
   let statusData = null, telemetryData = null, commitsData = null, usageData = null, versionData = null;
 
+  function applySkyClass(status) {
+    document.body.classList.remove('sky-cloudy', 'sky-clear', 'sky-failed');
+    if (status === 'Failed') {
+      document.body.classList.add('sky-failed');
+    } else if (status === 'Committing') {
+      document.body.classList.add('sky-clear');
+    } else if (status === 'Clustering' || status === 'Testing') {
+      document.body.classList.add('sky-cloudy');
+    }
+  }
+
+  function renderTaskPill(task, percent) {
+    if (!task) return '';
+    const width = percent == null ? 100 : Math.max(0, Math.min(100, percent));
+    return `
+      <div class="task-pill">
+        <span>${task}</span>
+        <div class="progress-bar"><div style="width:${width}%"></div></div>
+        ${percent != null ? `<span>${percent}%</span>` : ''}
+      </div>
+    `;
+  }
+
   async function loadDashboard() {
     [statusData, telemetryData, versionData] = await Promise.all([
       api('/status'), api('/telemetry'), api('/version')
     ]);
+    applySkyClass(statusData.status);
     const cards = document.getElementById('dash-cards');
+    const isOk = statusData.status === 'Idle' || statusData.status === 'Clustering' || statusData.status === 'Testing' || statusData.status === 'Committing';
     cards.innerHTML = `
-      <div class="card"><h3>Status</h3><div class="value ${statusData.status === 'Idle' || statusData.status === 'Clustering' ? 'status-ok' : 'status-fail'}">${statusData.status}</div></div>
+      <div class="card"><h3>Status</h3><div class="value ${isOk ? 'status-ok' : 'status-fail'}">${statusData.status}</div>${renderTaskPill(statusData.current_task, statusData.progress_percent)}</div>
       <div class="card"><h3>Version</h3><div class="value">${versionData.version || '—'}</div><div class="sub">Cargo ${versionData.daemon_version}</div></div>
       <div class="card"><h3>Aggregate Cost</h3><div class="value">$${(telemetryData.aggregate_cost || 0).toFixed(4)}</div></div>
       <div class="card"><h3>Total Tokens</h3><div class="value">${((telemetryData.input_tokens || 0) + (telemetryData.output_tokens || 0)).toLocaleString()}</div></div>
@@ -472,6 +655,42 @@
     }
   });
 
+  function triggerSiren(title, source) {
+    const overlay = document.getElementById('siren-overlay');
+    const warningToast = document.getElementById('warning-toast');
+    const warningMessage = document.getElementById('warning-message');
+
+    overlay.classList.add('active');
+    warningToast.classList.add('active');
+    warningMessage.textContent = `${title}${source ? ` (${source})` : ''}`;
+
+    // Browser beep for accessibility / attention.
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      if (AudioCtx) {
+        const ctx = new AudioCtx();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(880, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(440, ctx.currentTime + 0.3);
+        gain.gain.setValueAtTime(0.1, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.3);
+      }
+    } catch (e) {
+      // ignore audio errors
+    }
+
+    setTimeout(() => {
+      overlay.classList.remove('active');
+      warningToast.classList.remove('active');
+    }, 6000);
+  }
+
   function connectEvents() {
     const es = new EventSource('/api/events');
     es.onmessage = e => {
@@ -482,6 +701,14 @@
       line.textContent = `[${new Date().toLocaleTimeString()}] ${ev.event_type}: ${JSON.stringify(ev.payload).slice(0, 200)}`;
       log.prepend(line);
       if (log.children.length > 200) log.lastChild.remove();
+
+      if (ev.event_type === 'warning') {
+        const p = ev.payload || {};
+        triggerSiren(p.title || 'Warning', p.source);
+      }
+      if (ev.event_type === 'qualification' && ev.payload && ev.payload.passed === false) {
+        triggerSiren(ev.payload.reason || 'Qualification failed', 'release qualification');
+      }
     };
     es.onerror = () => {
       document.getElementById('conn-status').textContent = '● reconnecting';

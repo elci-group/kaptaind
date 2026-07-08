@@ -16,6 +16,8 @@ export async function readStatus(repoPath: string): Promise<StatusReport> {
       last_version: null,
       last_action_time: new Date().toISOString(),
       last_error: null,
+      current_task: null,
+      progress_percent: null,
     };
   }
 }
