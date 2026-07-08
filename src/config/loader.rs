@@ -559,11 +559,31 @@ pub struct TestConfig {
     pub required: bool,
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct NotifyConfig {
     pub on_commit: Option<String>,
     pub on_error: Option<String>,
+    pub on_push: Option<String>,
+    pub on_start: Option<String>,
+    pub on_shutdown: Option<String>,
     pub webhook_url: Option<String>,
+    /// Use nautical-themed emoji and phrasing for notifications.
+    #[serde(default = "default_true")]
+    pub nautical_theme: bool,
+}
+
+impl Default for NotifyConfig {
+    fn default() -> Self {
+        Self {
+            on_commit: None,
+            on_error: None,
+            on_push: None,
+            on_start: None,
+            on_shutdown: None,
+            webhook_url: None,
+            nautical_theme: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]

@@ -116,3 +116,21 @@ mode = "auto"
 # require_qualification = false
 # release_notes = true
 # retain_count = 7
+
+[notify]
+# Toggle the nautical emoji theme for all notification renderers.
+nautical_theme = true
+
+# Shell hooks are executed with `sh -c`. Available env vars depend on the event:
+#   Commit:     KAPTAIND_EVENT=commit, KAPTAIND_VERSION, KAPTAIND_SCORE, KAPTAIND_MSG, KAPTAIND_FILES
+#   Push:       KAPTAIND_EVENT=push_success|push_failure, KAPTAIND_VERSION, KAPTAIND_BRANCH, KAPTAIND_REMOTE, KAPTAIND_ERROR
+#   Start/Stop: KAPTAIND_EVENT=start|stop, KAPTAIND_REPO_PATH
+#   Error:      KAPTAIND_EVENT=error, KAPTAIND_ERROR, KAPTAIND_CONTEXT
+# on_commit = 'notify-send "Kaptaind Bump" "Version $KAPTAIND_VERSION"'
+# on_push = 'notify-send "Kaptaind Push" "Shipped $KAPTAIND_VERSION to $KAPTAIND_REMOTE/$KAPTAIND_BRANCH"'
+# on_error = 'notify-send -u critical "Kaptaind Error" "$KAPTAIND_ERROR"'
+# on_start = 'notify-send "Kaptaind" "On watch for $KAPTAIND_REPO_PATH"'
+# on_shutdown = 'notify-send "Kaptaind" "Dropping anchor"'
+
+# Generic Discord or Slack webhook for commit/push/error/start/stop events.
+# webhook_url = "https://discord.com/api/webhooks/..."

@@ -1,5 +1,6 @@
 use crate::config::Config;
 use crate::daemon::health::{start_health_server, DaemonEvent, HealthState, Metrics};
+use crate::daemon::notification::{notify_start, notify_stop};
 use anyhow::Context;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -47,11 +48,69 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
 
     let (event_tx, _event_rx) = tokio::sync::broadcast::channel::<DaemonEvent>(256);
 
+    // Create shutdown channel early so all subsystems can share it.
+    let (shutdown_handle, mut shutdown_token) = crate::daemon::shutdown::channel();
+
+    // Start optional Shark Stating task and wait for leadership before running scheduler.
+    let shark_runtime: Option<Arc<crate::daemon::shark::SharkRuntime>> = if config.shark.enabled {
+        tracing::info!("shark stating enabled; waiting for leadership");
+        let (runtime, mut leader_rx) = crate::daemon::shark::start_shark_task(
+            config.clone(),
+            shutdown_token.clone_token(),
+            Some(event_tx.clone()),
+            Some(metrics.clone()),
+        )
+        .await
+        .context("failed to start shark stating task")?;
+        let runtime = Arc::new(runtime);
+
+        // Block until this instance becomes leader or shutdown is requested.
+        let leader_or_shutdown = async {
+            loop {
+                if *leader_rx.borrow() {
+                    return true;
+                }
+                tokio::select! {
+                    changed = leader_rx.changed() => {
+                        if changed.is_err() {
+                            return false;
+                        }
+                    }
+                    _ = shutdown_token.wait() => {
+                        return false;
+                    }
+                }
+            }
+        };
+
+        if leader_or_shutdown.await {
+            tracing::info!("acquired shark leadership; starting scheduler");
+        } else {
+            tracing::info!("shutdown requested while waiting for leadership; exiting");
+            return Ok(());
+        }
+
+        // Watch for leadership loss and trigger shutdown if we lose the lease.
+        let shutdown_handle_clone = shutdown_handle.clone();
+        tokio::spawn(watch_leadership_loss(leader_rx, shutdown_handle_clone));
+
+        Some(runtime)
+    } else {
+        None
+    };
+
+    notify_start(
+        &config.notify,
+        &config.repo_path,
+        config.capabilities.network_webhooks,
+    );
+
     // Spawn health endpoint
     let health_state = HealthState {
         version: env!("CARGO_PKG_VERSION").to_string(),
         metrics: metrics.clone(),
         event_tx: event_tx.clone(),
+        shark: shark_runtime.clone(),
     };
     tokio::spawn(start_health_server(config.health_port, health_state));
 
@@ -84,8 +143,18 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
     let watcher_handle =
         crate::watcher::fs::start(tx.clone(), config.watch.clone(), atomic_shutdown.clone())?;
 
-    // Create shutdown channel for graceful shutdown signal
-    let (shutdown_handle, shutdown_token) = crate::daemon::shutdown::channel();
+    // Spawn optional automated storage management task
+    if config.deckhand.enabled {
+        tracing::info!(
+            interval_minutes = config.deckhand.interval_minutes,
+            "deckhand storage management enabled"
+        );
+        tokio::spawn(crate::daemon::deckhand::start_storage_task(
+            config.clone(),
+            shutdown_token.clone_token(),
+            metrics.clone(),
+        ));
+    }
 
     let scheduler = tokio::spawn(crate::daemon::scheduler::run(
         rx,
@@ -134,5 +203,27 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
         .await
         .context("watcher join task failed")??;
 
+    notify_stop(
+        &config.notify,
+        &config.repo_path,
+        config.capabilities.network_webhooks,
+    );
+
     Ok(())
+}
+
+async fn watch_leadership_loss(
+    mut leader_rx: tokio::sync::watch::Receiver<bool>,
+    shutdown_handle: crate::daemon::shutdown::ShutdownHandle,
+) {
+    loop {
+        if leader_rx.changed().await.is_err() {
+            break;
+        }
+        if !*leader_rx.borrow() {
+            tracing::warn!("leadership lost; initiating graceful shutdown");
+            shutdown_handle.signal();
+            break;
+        }
+    }
 }

@@ -1,3 +1,4 @@
+pub mod deckhand;
 pub mod health;
 pub mod notification;
 pub mod policy;
@@ -5,6 +6,7 @@ pub mod process;
 pub mod prune;
 pub mod runtime;
 pub mod scheduler;
+pub mod shark;
 pub mod shutdown;
 pub mod status;
 pub mod telemetry;

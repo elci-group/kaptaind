@@ -64,11 +64,48 @@ struct Cli {
     /// performance profiling.
     #[arg(long)]
     lanes: bool,
+
+    /// 🦈 Set Shark Stating mode for this instance
+    ///
+    /// Determines how this instance participates in high-availability:
+    /// auto (default), leader, standby, observer.
+    #[arg(long, value_name = "MODE")]
+    shark_mode: Option<String>,
+
+    /// 🦈 Override the Shark Stating arbiter path
+    ///
+    /// Shared directory used for leadership leases. Required when running
+    /// multiple instances against the same repository.
+    #[arg(long, value_name = "PATH")]
+    shark_arbiter: Option<std::path::PathBuf>,
+
+    /// 🏥 Override the health server port
+    ///
+    /// Useful when running multiple kaptaind instances on the same host,
+    /// e.g. during a zero-downtime upgrade.
+    #[arg(long, value_name = "PORT")]
+    health_port: Option<u16>,
 }
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let config = kaptaind::config::loader::load()?;
+    let mut config = kaptaind::config::loader::load()?;
+
+    if let Some(mode) = cli.shark_mode {
+        config.shark.enabled = true;
+        config.shark.mode = match mode.to_lowercase().as_str() {
+            "leader" => kaptaind::config::loader::SharkMode::Leader,
+            "standby" => kaptaind::config::loader::SharkMode::Standby,
+            "observer" => kaptaind::config::loader::SharkMode::Observer,
+            _ => kaptaind::config::loader::SharkMode::Auto,
+        };
+    }
+    if let Some(path) = cli.shark_arbiter {
+        config.shark.arbiter_path = path;
+    }
+    if let Some(port) = cli.health_port {
+        config.health_port = port;
+    }
 
     if cli.dock {
         println!(

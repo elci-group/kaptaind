@@ -1,32 +1,11 @@
 use crate::config::loader::{Config, ReleaseIntent};
 use crate::qualification::engine::{evaluate, QualificationResult};
 use crate::release::builder;
+use crate::release::index::{append_index, load_index, write_atomic};
 use crate::stability::model::StabilityEntry;
-use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-fn write_atomic(path: &Path, content: &str) -> anyhow::Result<()> {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, content)?;
-    std::fs::rename(&tmp, path)?;
-    Ok(())
-}
-
-/// Index entry for a completed release.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReleaseIndexEntry {
-    pub version: String,
-    pub commit: String,
-    pub released_at: i64,
-    pub stability: f64,
-    pub intent: String,
-    pub tarball: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ReleaseIndex {
-    pub releases: Vec<ReleaseIndexEntry>,
-}
+pub use crate::release::index::{ReleaseIndex, ReleaseIndexEntry};
 
 /// Entry point called by the daemon scheduler after every successful commit.
 ///
@@ -225,45 +204,5 @@ pub async fn post_commit(
             tracing::warn!(error = %err, "packaging failed; aborting release");
             crate::daemon::telemetry::update_release_metrics(repo_path, stability.score, false);
         }
-    }
-}
-
-// --- Index helpers ---
-
-fn load_index(repo_path: &Path) -> ReleaseIndex {
-    let path = repo_path
-        .join(".kaptaind")
-        .join("releases")
-        .join("index.json");
-    if !path.exists() {
-        return ReleaseIndex::default();
-    }
-    std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|c| serde_json::from_str(&c).ok())
-        .unwrap_or_default()
-}
-
-fn append_index(
-    repo_path: &Path,
-    version: &str,
-    commit: &str,
-    stability: f64,
-    intent: &str,
-    tarball: Option<String>,
-) {
-    let mut index = load_index(repo_path);
-    index.releases.push(ReleaseIndexEntry {
-        version: version.to_string(),
-        commit: commit.to_string(),
-        released_at: chrono::Utc::now().timestamp(),
-        stability,
-        intent: intent.to_string(),
-        tarball,
-    });
-    let releases_dir = repo_path.join(".kaptaind").join("releases");
-    let _ = std::fs::create_dir_all(&releases_dir);
-    if let Ok(content) = serde_json::to_string_pretty(&index) {
-        let _ = write_atomic(&releases_dir.join("index.json"), &content);
     }
 }

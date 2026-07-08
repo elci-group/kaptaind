@@ -37,6 +37,7 @@ It eliminates manual version bumping and subjective commit messages by replacing
 - **Visual Asset Channel Saturation (VACS):** A capacity-aware background generation system that converts surplus inference capacity into high-value visual/documentation assets (like diagrams and architecture maps) linked directly to code changes. VACS operates opportunistically and surfaces assets in the CLI.
 - **Multi-Provider Inference Routing:** Intelligently routes commit message generation to the best available inference provider. Automatically detects and prioritizes: **Anthropic Claude** → **OpenAI GPT-4o** → **Local Ollama** fallback. No API keys needed; works offline with Ollama.
 - **Commit Validation Modes:** Choose between **Fast Mode** (single provider, lowest latency) or **Consensus Mode** (multiple local models with semantic cross-comparison, lowest hallucination risk). Developer-selected via config.
+- **Nautical Notifications:** Real-time commit, push, start/stop, and error alerts through native desktop notifications, configurable shell hooks, and Discord/Slack webhooks. Optional nautical theme renders maritime emoji titles like "⚓ Ahoy!" and "🚢 Ship's log updated".
 - **🎣 Angler Hook & Selective Capture System:** A comprehensive four-part system for advanced automation:
   - *Git Hooks Integration:* Manage client-side git hooks (pre-commit, post-commit, pre-push, etc.) with configurable commands, timeouts, and file pattern matching.
   - *Enhanced Webhooks:* Send HTTP webhooks with HMAC signature verification, exponential backoff retries, rate limiting, and event filtering.
@@ -277,10 +278,22 @@ ollama_base_url = "http://localhost:11434"  # Only used when provider = "ollama"
 min_score_for_inference = 0.0  # Skip LLM when score is below this threshold (saves quota)
 
 [notify]
-# Shell hooks — env vars: $KAPTAIND_VERSION, $KAPTAIND_SCORE, $KAPTAIND_MSG, $KAPTAIND_ERROR
+# Toggle the nautical emoji theme used by desktop and webhook renderers.
+nautical_theme = true
+
+# Shell hooks are executed with `sh -c`. Available env vars depend on the event:
+#   Commit:     KAPTAIND_EVENT=commit, KAPTAIND_VERSION, KAPTAIND_SCORE, KAPTAIND_MSG, KAPTAIND_FILES
+#   Push:       KAPTAIND_EVENT=push_success|push_failure, KAPTAIND_VERSION, KAPTAIND_BRANCH, KAPTAIND_REMOTE, KAPTAIND_ERROR
+#   Start/Stop: KAPTAIND_EVENT=start|stop, KAPTAIND_REPO_PATH
+#   Error:      KAPTAIND_EVENT=error, KAPTAIND_ERROR, KAPTAIND_CONTEXT
 # on_commit = 'notify-send "Kaptaind Bump" "Version $KAPTAIND_VERSION"'
+# on_push = 'notify-send "Kaptaind Push" "Shipped $KAPTAIND_VERSION to $KAPTAIND_REMOTE/$KAPTAIND_BRANCH"'
 # on_error = 'notify-send -u critical "Kaptaind Error" "$KAPTAIND_ERROR"'
-# webhook_url = "https://discord.com/api/webhooks/..."  # Discord or Slack webhook
+# on_start = 'notify-send "Kaptaind" "On watch for $KAPTAIND_REPO_PATH"'
+# on_shutdown = 'notify-send "Kaptaind" "Dropping anchor"'
+
+# Generic Discord or Slack webhook for commit/push/error/start/stop events.
+# webhook_url = "https://discord.com/api/webhooks/..."
 
 # Configurable version bump thresholds (defaults shown)
 # [version_thresholds]

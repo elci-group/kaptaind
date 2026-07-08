@@ -755,6 +755,14 @@ async fn process_cluster(
                 .trigger_baits(BaitEvent::PostPush, &bait_context)
                 .await;
         }
+
+        crate::daemon::notification::notify_push_success(
+            &config.notify,
+            &next.to_string(),
+            &config.push.branch,
+            &config.push.remote,
+            config.capabilities.network_webhooks,
+        );
     }
 
     let files_changed = cluster_paths.len();

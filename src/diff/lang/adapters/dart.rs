@@ -250,19 +250,42 @@ void _privateFn() {}
         let adapter = DartAdapter;
         let ast = adapter.parse_ast(&path).unwrap();
 
-        assert!(ast.symbols.iter().any(|s| s.name == "User" && s.kind == "class"));
-        assert!(ast.symbols.iter().any(|s| s.name == "Status" && s.kind == "enum"));
-        assert!(
-            ast.symbols.iter().any(|s| s.name == "StringHelpers" && s.kind == "extension")
-        );
-        assert!(ast.symbols.iter().any(|s| s.name == "Logging" && s.kind == "mixin"));
-        assert!(
-            ast.symbols.iter().any(|s| s.name == "Repository" && s.kind == "class")
-        );
-        assert!(ast.symbols.iter().any(|s| s.name == "greet" && s.kind == "function"));
-        assert!(ast.symbols.iter().any(|s| s.name == "add" && s.kind == "function"));
-        assert!(ast.symbols.iter().any(|s| s.name == "fetch" && s.kind == "function"));
-        assert!(ast.symbols.iter().any(|s| s.name == "generic" && s.kind == "function"));
+        assert!(ast
+            .symbols
+            .iter()
+            .any(|s| s.name == "User" && s.kind == "class"));
+        assert!(ast
+            .symbols
+            .iter()
+            .any(|s| s.name == "Status" && s.kind == "enum"));
+        assert!(ast
+            .symbols
+            .iter()
+            .any(|s| s.name == "StringHelpers" && s.kind == "extension"));
+        assert!(ast
+            .symbols
+            .iter()
+            .any(|s| s.name == "Logging" && s.kind == "mixin"));
+        assert!(ast
+            .symbols
+            .iter()
+            .any(|s| s.name == "Repository" && s.kind == "class"));
+        assert!(ast
+            .symbols
+            .iter()
+            .any(|s| s.name == "greet" && s.kind == "function"));
+        assert!(ast
+            .symbols
+            .iter()
+            .any(|s| s.name == "add" && s.kind == "function"));
+        assert!(ast
+            .symbols
+            .iter()
+            .any(|s| s.name == "fetch" && s.kind == "function"));
+        assert!(ast
+            .symbols
+            .iter()
+            .any(|s| s.name == "generic" && s.kind == "function"));
 
         // Private names and class members should not appear in the API surface.
         assert!(!ast.symbols.iter().any(|s| s.name.starts_with('_')));

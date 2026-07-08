@@ -32,9 +32,30 @@ pub fn create(
     build_config: &BuildConfig,
     releases_dir: &Path,
 ) -> anyhow::Result<PackageResult> {
+    let artifact_path = Path::new(&build_config.artifact_path).to_path_buf();
+    create_from_artifact(
+        version,
+        commit,
+        stability,
+        &artifact_path,
+        build_config.artifact_path.as_str(),
+        releases_dir,
+    )
+}
+
+/// Create a `.tar.gz` from an explicit artifact path.
+///
+/// `artifact_label` is the name the file will have inside the tarball.
+pub fn create_from_artifact(
+    version: &str,
+    commit: &str,
+    stability: f64,
+    artifact_path: &Path,
+    artifact_label: &str,
+    releases_dir: &Path,
+) -> anyhow::Result<PackageResult> {
     std::fs::create_dir_all(releases_dir)?;
 
-    let artifact_path = Path::new(&build_config.artifact_path);
     if !artifact_path.exists() {
         anyhow::bail!(
             "build artifact not found at '{}'; ensure [build] command produces it",
@@ -55,7 +76,7 @@ pub fn create(
     let tarball_file = std::fs::File::create(&tarball_path)?;
     let enc = GzEncoder::new(tarball_file, Compression::best());
     let mut tar = tar::Builder::new(enc);
-    tar.append_path_with_name(artifact_path, artifact_name)?;
+    tar.append_path_with_name(artifact_path, artifact_label)?;
     tar.finish()?;
 
     // Compute SHA-256 checksum of the tarball

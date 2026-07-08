@@ -8,10 +8,11 @@
 - `cargo run` — run the daemon from the repository root.
 - `cargo test` — run the unit and async tests embedded in module files.
 - `cargo build` — build the binary.
+- `cargo run --bin kaptaind-cli -- ship plan` — preview a manual release without side effects.
 
 ## Repository layout
 - `src/main.rs` — startup wiring, daemonization.
-- `src/cli/main.rs` — CLI binary (`kaptaind-cli`) with `status`, `log`, `analyze`, `init`, and `aoc` subcommands.
+- `src/cli/main.rs` — CLI binary (`kaptaind-cli`) with `status`, `log`, `analyze`, `init`, `aoc`, and `ship` subcommands.
 - `src/config/` — config loading, path normalization, staging/bundle/notify config structs.
 - `src/watcher/` — filesystem event types and notify-based watcher thread.
 - `src/daemon/` — async runtime, scheduler loop, telemetry tracking.

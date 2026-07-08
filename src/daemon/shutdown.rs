@@ -1,6 +1,7 @@
 use tokio::sync::watch;
 
 /// Broadcasts a shutdown signal to all tasks holding a ShutdownToken.
+#[derive(Clone)]
 pub struct ShutdownHandle(watch::Sender<bool>);
 
 /// Receives shutdown signals. Tasks wait on this to gracefully exit.

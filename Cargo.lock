@@ -582,6 +582,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "deckhand"
+version = "0.9.13"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "colored",
+ "serde",
+ "serde_json",
+ "toml",
+ "walkdir",
+]
+
+[[package]]
 name = "deranged"
 version = "0.5.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1412,6 +1426,7 @@ dependencies = [
  "chrono",
  "clap",
  "colored",
+ "deckhand",
  "flate2",
  "fltk",
  "fs2",

@@ -211,10 +211,7 @@ mod tests {
             repo.path(),
             "cluster mode skips ignored",
             &staging,
-            &[
-                PathBuf::from("src/a.rs"),
-                PathBuf::from("ignored/b.txt"),
-            ],
+            &[PathBuf::from("src/a.rs"), PathBuf::from("ignored/b.txt")],
         )
         .unwrap();
 
