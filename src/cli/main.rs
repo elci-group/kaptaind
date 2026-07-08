@@ -594,6 +594,9 @@ async fn main() -> anyhow::Result<()> {
     // Init and Trawl commands work without a valid config
     match &cli.command {
         Commands::Init => {
+            let rbac_config = loader::load().map(|c| c.rbac).unwrap_or_default();
+            kaptaind::rbac::check_permission(&rbac_config, "config.edit")?;
+
             let repo_path = cli
                 .repo
                 .map(|p| p.canonicalize().unwrap_or(p))
@@ -615,6 +618,9 @@ async fn main() -> anyhow::Result<()> {
             format,
             dry_run,
         } => {
+            let rbac_config = loader::load().map(|c| c.rbac).unwrap_or_default();
+            kaptaind::rbac::check_permission(&rbac_config, "config.edit")?;
+
             let options = kaptaind::trawler::TrawlOptions {
                 root: path.clone().unwrap_or_else(|| {
                     std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
@@ -688,9 +694,21 @@ async fn main() -> anyhow::Result<()> {
             handle_storage(&config, storage_cmd)?;
         }
         Commands::Shark(shark_cmd) => {
+            match shark_cmd {
+                SharkCommand::Release => {
+                    kaptaind::rbac::check_permission(&config.rbac, "shark.release")?;
+                }
+                SharkCommand::Upgrade { .. } => {
+                    kaptaind::rbac::check_permission(&config.rbac, "shark.upgrade")?;
+                }
+                _ => {}
+            }
             handle_shark(&config, shark_cmd).await?;
         }
         Commands::Ship(ship_cmd) => {
+            if !matches!(ship_cmd, ShipCommand::Status { .. }) {
+                kaptaind::rbac::check_permission(&config.rbac, "ship.run")?;
+            }
             handle_ship(&config, ship_cmd).await?;
         }
         Commands::Trawl { .. } => {
@@ -1278,11 +1296,16 @@ async fn handle_shark(config: &Config, cmd: &SharkCommand) -> anyhow::Result<()>
             println!("{} standby is healthy", "✅".green());
 
             // Request the current leader (us) to retire.
-            kaptaind::daemon::shark::request_retire(&arbiter_path, &instance_id)?;
+            kaptaind::daemon::shark::request_retire(
+                &arbiter_path,
+                &instance_id,
+                Some(standby_port),
+            )?;
             println!(
-                "{} retire marker written for {}",
+                "{} retire marker written for {} (standby health port {})",
                 "✅".green(),
-                instance_id.yellow()
+                instance_id.yellow(),
+                standby_port.to_string().dimmed()
             );
 
             // Wait for the standby to acquire leadership.
@@ -1307,12 +1330,38 @@ async fn handle_shark(config: &Config, cmd: &SharkCommand) -> anyhow::Result<()>
                         "🚀".green(),
                         lease.instance_id.green()
                     );
+                    kaptaind::audit::log_event(
+                        &config.repo_path,
+                        &instance_id,
+                        "shark.upgrade",
+                        true,
+                        serde_json::json!({
+                            "new_leader": lease.instance_id,
+                            "standby_health_port": standby_port,
+                            "binary": binary.display().to_string(),
+                        }),
+                    );
                 }
                 _ => {
                     // Attempt to clean up the child and cancel retirement.
                     let _ = child.kill();
-                    let _ = kaptaind::daemon::shark::cancel_retire(&arbiter_path, &instance_id);
-                    anyhow::bail!("upgrade handoff timed out; old leader retains control");
+                    kaptaind::daemon::shark::cancel_upgrade(&arbiter_path, &instance_id);
+                    eprintln!(
+                        "{} upgrade handoff timed out; old leader retains control",
+                        "❌".red()
+                    );
+                    kaptaind::audit::log_event(
+                        &config.repo_path,
+                        &instance_id,
+                        "shark.upgrade",
+                        false,
+                        serde_json::json!({
+                            "standby_health_port": standby_port,
+                            "binary": binary.display().to_string(),
+                            "error": "upgrade handoff timed out",
+                        }),
+                    );
+                    std::process::exit(1);
                 }
             }
         }

@@ -238,7 +238,10 @@ Kaptaind operates entirely in the background, minimizing developer friction whil
    Before any commit, the daemon updates `.kaptaind/status.json` and runs the pre-configured test hook (`cargo test` by default). If tests fail, the workflow aborts. It also tracks the "token cost" of the diff size and commit message size, writing to `.kaptaind/telemetry.json`.
 
 6. **Version Bump & Git Orchestration (`src/version/`, `src/commit/`, `src/git/`)**: 
-   The weights are aggregated. Breaking APIs trigger `Major` bumps; new APIs trigger `Minor`; standard churn triggers `Patch`. The new version is flushed to the `VERSION` file (and `Cargo.toml` if present), a rich commit message is generated, and a JSON artifact is stored in `.kaptaind/analysis/` before Kaptaind's internal Git command adapter creates the commit via the system `git` executable. Staging is configurable: stage all files (default), only cluster-touched files, or pattern-matched files with optional excludes. Notifications are dispatched via shell hooks, Discord/Slack webhooks, or both.
+   The weights are aggregated. Breaking APIs trigger `Major` bumps; new APIs trigger `Minor`; standard churn triggers `Patch`. The new version is flushed to the `VERSION` file (and `Cargo.toml` if present), a rich commit message is generated, and a JSON artifact is stored in `.kaptaind/analysis/` before Kaptaind's internal Git command adapter creates the commit via the system `git` executable. Staging is configurable: stage all files (default), only cluster-touched files, or pattern-matched files with optional excludes. Commits can be GPG-signed with `[commit] sign = true`. Pushes can enforce required CI status checks via `[push.protection]`. Notifications are dispatched via shell hooks, Discord/Slack webhooks, or both.
+
+7. **Access Control (`src/rbac/`)**: 
+   On shared machines, `[rbac]` restricts privileged CLI commands and daemon startup to configured OS users and groups.
 
 ## Monitoring & Observability
 
@@ -483,6 +486,30 @@ rate_limit_seconds = 5
 # [ship.sbom]
 # enabled = false
 # format = "spdx-json"
+#
+# SLSA provenance attestation for release artifacts.
+# [ship.provenance]
+# enabled = false
+# builder_id = "https://kaptaind.dev/builder"
+# build_type = "https://kaptaind.dev/build"
+
+# Commit behavior
+# [commit]
+# sign = false              # GPG-sign every automated commit
+# gpg_key_id = "..."        # optional key ID or email
+
+# Push safety gates
+# [push.protection]
+# require_ci_pass = false
+# required_status_checks = ["ci/tests", "ci/lint"]
+# github_token_env = "GITHUB_TOKEN"
+
+# Role-based access control for multi-user installs
+# [[rbac.roles]]
+# name = "release-engineers"
+# permissions = ["ship.run", "shark.upgrade", "push.force"]
+# users = ["alice", "bob"]
+# groups = ["kaptaind-admins"]
 
 # Kimi-specific inference options (in addition to the generic [inference] block)
 # [inference]
@@ -501,6 +528,32 @@ It supports:
 - Blank lines and `#` comments
 - Glob patterns matching relative paths (e.g. `**/*.tmp`)
 - Exact paths or directory prefixes (e.g. `target`)
+
+## Security & Access Control
+
+### GPG-Signed Commits
+
+Enable `[commit] sign = true` to make every automated commit GPG-signed. This
+works with `git commit -S` and honors `gpg_key_id` if set.
+
+### Branch Protection / Required CI
+
+`[push.protection]` blocks pushes when required GitHub status checks are not
+passing. Configure the check names and the environment variable holding a GitHub
+PAT; kaptaind queries the GitHub API before executing `git push`.
+
+### RBAC
+
+`[rbac]` maps OS users and groups to permissions such as `ship.run`,
+`shark.upgrade`, and `config.edit`. When enabled, privileged CLI commands and
+daemon startup check the current user against the role allowlist.
+
+### SLSA Provenance
+
+`[ship.provenance]` generates an in-toto/SLSA v1.0 provenance attestation for
+every release, listing artifact SHA256 digests, builder ID, build type, and
+external parameters. When ship signing is enabled, the attestation is also
+GPG-signed.
 
 ## Performance Tuning
 

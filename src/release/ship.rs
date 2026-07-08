@@ -353,11 +353,53 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
         }
     }
 
+    // ------------------------------------------------------------------
+    // 7. SLSA provenance attestation
+    // ------------------------------------------------------------------
+    if config.ship.provenance.enabled {
+        match crate::release::provenance::generate_provenance(
+            &config.repo_path,
+            &version,
+            opts.kind,
+            &targets,
+            &artifacts_to_checksum,
+            &config.ship.provenance,
+        ) {
+            Ok(prov_path) => {
+                all_artifacts.push(prov_path.clone());
+                if sign_artifacts {
+                    match crate::release::provenance::sign_provenance(&prov_path, gpg_key_id).await
+                    {
+                        Ok(sig_path) => all_artifacts.push(sig_path),
+                        Err(err) => {
+                            eprintln!(
+                                "{} {}: {}",
+                                "⚠️".yellow(),
+                                format!("Failed to sign provenance {}", prov_path.display())
+                                    .yellow(),
+                                err
+                            );
+                        }
+                    }
+                }
+                distributed.push("provenance".to_string());
+            }
+            Err(err) => {
+                eprintln!(
+                    "{} {}: {}",
+                    "⚠️".yellow(),
+                    "Provenance generation failed".yellow(),
+                    err
+                );
+            }
+        }
+    }
+
     let short_commit =
         git_short_commit(&config.repo_path).unwrap_or_else(|_| "unknown".to_string());
 
     // ------------------------------------------------------------------
-    // 7. App stores / GitHub Releases
+    // 8. App stores / GitHub Releases
     // ------------------------------------------------------------------
     for store in &config.ship.channels.app_stores {
         if !channels.contains(&format!("app-store:{}", store.kind)) {
@@ -392,7 +434,7 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
     }
 
     // ------------------------------------------------------------------
-    // 8. Persist ship index
+    // 9. Persist ship index
     // ------------------------------------------------------------------
     append_ship_index(
         &config.repo_path,

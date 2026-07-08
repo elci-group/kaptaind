@@ -131,6 +131,30 @@ mode = "auto"
 # schedule = "0 9 * * 1"      # e.g. 09:00 every Monday
 # cron_timezone = "local"
 # require_qualification = true
+#
+# SLSA provenance attestation for release artifacts.
+# [ship.provenance]
+# enabled = false
+# builder_id = "https://kaptaind.dev/builder"
+# build_type = "https://kaptaind.dev/build"
+
+# Commit behavior
+# [commit]
+# sign = false
+# gpg_key_id = "your-key@example.com"
+
+# Push safety gates
+# [push.protection]
+# require_ci_pass = false
+# required_status_checks = ["ci/tests", "ci/lint"]
+# github_token_env = "GITHUB_TOKEN"
+
+# Role-based access control for multi-user installs
+# [[rbac.roles]]
+# name = "admin"
+# permissions = ["*"]
+# users = []
+# groups = []
 
 [notify]
 # Toggle the nautical emoji theme for all notification renderers.

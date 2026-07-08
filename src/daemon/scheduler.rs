@@ -600,6 +600,7 @@ async fn process_cluster(
         &msg,
         &config.staging,
         &cluster_paths,
+        &config.commit,
     ) {
         tracing::error!(error = %err, "commit failed");
         broadcast_event(
@@ -745,8 +746,13 @@ async fn process_cluster(
             protect_branches: config.push.safety.protect_branches.clone(),
         };
 
-        if let Err(err) =
-            crate::push::push(&config.repo_path, &push_options, &config.push.retry).await
+        if let Err(err) = crate::push::push(
+            &config.repo_path,
+            &push_options,
+            &config.push.retry,
+            &config.push.protection,
+        )
+        .await
         {
             tracing::warn!(error = %err, "push failed");
             write_trace_if_active(

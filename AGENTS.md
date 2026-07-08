@@ -28,13 +28,14 @@
     - `adapters/` — one module per concrete adapter (Rust, Go, Swift, Kotlin, Java, TypeScript, JavaScript, Vue, Svelte, Astro, SCSS, HTML/CSS, Python, Ruby, Elixir, PHP, .NET/C#, Dart, Lua, Scala, Clojure, Haskell, Julia, R, Perl, C/C++) plus shared helpers in `common.rs`.
 - `src/weight/` — weighted score calculation (`s*structural + a*api + d*deps + r*runtime + b*bundle`).
 - `src/version/` — semantic bump decision and `semver::Version` mutation.
-- `src/commit/` — git commit orchestration with configurable staging (all/cluster/pattern modes + exclude patterns).
-- `src/push/` — git push orchestration.
+- `src/commit/` — git commit orchestration with configurable staging and optional GPG-signed commits.
+- `src/push/` — git push orchestration with retry, safety checks, and required-CI enforcement.
 - `src/git/` — thin repository wrapper.
 - `src/aoc/` — Aim of Change sessions, traces, agent interception, manifests.
 - `src/qualification/` — release qualification gates (stability, streak, cooldown, diff spike).
 - `src/stability/` — per-commit stability scoring and flaky-test detection.
-- `src/release/` — post-commit release pipeline (build, package, distribute, ship stable/nightly, GPG-signed tags/artifacts, SPDX SBOMs).
+- `src/release/` — post-commit release pipeline (build, package, distribute, ship stable/nightly, GPG-signed tags/artifacts, SPDX SBOMs, SLSA provenance).
+- `src/rbac/` — role-based access control for CLI commands and daemon startup.
 - `src/schedule/` — cron scheduling helpers for daemon-driven automated releases.
 - `src/trawler/` — intelligent project discovery and bulk initialization.
 - `src/vacs/` — Visual Asset Channel Saturation (change-driven diagrams/charts).

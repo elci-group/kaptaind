@@ -99,6 +99,23 @@ pub fn log_push(
     append_or_warn(repo_path, entry, "push");
 }
 
+/// Convenience: log a generic event.
+pub fn log_event(
+    repo_path: &Path,
+    actor: &str,
+    event_type: &str,
+    success: bool,
+    details: serde_json::Value,
+) {
+    let entry = AuditEntry::new(
+        event_type,
+        actor,
+        if success { "success" } else { "failure" },
+    )
+    .with_details(details);
+    append_or_warn(repo_path, entry, event_type);
+}
+
 /// Convenience: log a release/shipment.
 pub fn log_release(
     repo_path: &Path,

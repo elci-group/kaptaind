@@ -21,6 +21,8 @@ pub struct Config {
     #[serde(default)]
     pub staging: StagingConfig,
     #[serde(default)]
+    pub commit: CommitConfig,
+    #[serde(default)]
     pub inference: InferenceConfig,
     #[serde(default)]
     pub qualification: QualificationConfig,
@@ -46,6 +48,8 @@ pub struct Config {
     pub deckhand: DeckhandConfig,
     #[serde(default)]
     pub shark: SharkConfig,
+    #[serde(default)]
+    pub rbac: RbacConfig,
     #[serde(default)]
     pub repo_path: PathBuf,
     #[serde(default)]
@@ -247,6 +251,8 @@ pub struct ShipConfig {
     pub auto_stable: ShipAutoConfig,
     #[serde(default)]
     pub sbom: ShipSbomConfig,
+    #[serde(default)]
+    pub provenance: ShipProvenanceConfig,
 }
 
 impl Default for ShipConfig {
@@ -263,6 +269,7 @@ impl Default for ShipConfig {
             auto_nightly: ShipAutoConfig::default(),
             auto_stable: ShipAutoConfig::default(),
             sbom: ShipSbomConfig::default(),
+            provenance: ShipProvenanceConfig::default(),
         }
     }
 }
@@ -289,6 +296,40 @@ impl Default for ShipSbomConfig {
         Self {
             enabled: false,
             format: default_sbom_format(),
+        }
+    }
+}
+
+/// `[ship.provenance]` block in `kaptaind.toml`.
+///
+/// Configures SLSA provenance attestation generation for shipped releases.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ShipProvenanceConfig {
+    /// Generate an in-toto/SLSA provenance attestation for every release.
+    #[serde(default)]
+    pub enabled: bool,
+    /// Builder ID URI for SLSA runDetails.builder.id.
+    #[serde(default = "default_provenance_builder_id")]
+    pub builder_id: String,
+    /// Build type URI for SLSA buildDefinition.buildType.
+    #[serde(default = "default_provenance_build_type")]
+    pub build_type: String,
+}
+
+fn default_provenance_builder_id() -> String {
+    "https://kaptaind.dev/builder".to_string()
+}
+
+fn default_provenance_build_type() -> String {
+    "https://kaptaind.dev/build".to_string()
+}
+
+impl Default for ShipProvenanceConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            builder_id: default_provenance_builder_id(),
+            build_type: default_provenance_build_type(),
         }
     }
 }
@@ -517,10 +558,36 @@ pub struct PushConfig {
     pub safety: SafetyConfig,
     #[serde(default)]
     pub batch: BatchConfig,
+    #[serde(default)]
+    pub protection: PushProtectionConfig,
 }
 
 fn default_remote() -> String {
     "origin".to_string()
+}
+
+/// `[push.protection]` configuration for pre-push safety gates.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PushProtectionConfig {
+    /// Require configured CI status checks to pass before pushing.
+    #[serde(default)]
+    pub require_ci_pass: bool,
+    /// List of required status check names (e.g. ["ci/tests", "ci/lint"]).
+    #[serde(default)]
+    pub required_status_checks: Vec<String>,
+    /// Environment variable holding a GitHub personal access token for API checks.
+    #[serde(default)]
+    pub github_token_env: Option<String>,
+}
+
+impl Default for PushProtectionConfig {
+    fn default() -> Self {
+        Self {
+            require_ci_pass: false,
+            required_status_checks: Vec::new(),
+            github_token_env: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -769,6 +836,26 @@ pub struct StagingConfig {
     /// Glob patterns for files to always exclude from staging
     #[serde(default)]
     pub exclude: Vec<String>,
+}
+
+/// `[commit]` configuration for git commit behavior.
+#[derive(Debug, Clone, Deserialize)]
+pub struct CommitConfig {
+    /// Sign commits with GPG (`git commit -S`).
+    #[serde(default)]
+    pub sign: bool,
+    /// Optional GPG key ID or email to use for signing.
+    #[serde(default)]
+    pub gpg_key_id: Option<String>,
+}
+
+impl Default for CommitConfig {
+    fn default() -> Self {
+        Self {
+            sign: false,
+            gpg_key_id: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Default)]
@@ -1108,6 +1195,48 @@ impl Default for SharkConfig {
     }
 }
 
+// ---------------------------------------------------------------------------
+// RBAC config
+// ---------------------------------------------------------------------------
+
+/// `[rbac]` block in `kaptaind.toml`.
+///
+/// Fine-grained access control for multi-user installs. When enabled, CLI
+/// commands and daemon startup check the current OS user against role
+/// assignments.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RbacConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default)]
+    pub roles: Vec<RbacRoleConfig>,
+}
+
+impl Default for RbacConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            roles: vec![RbacRoleConfig {
+                name: "admin".to_string(),
+                permissions: vec!["*".to_string()],
+                users: Vec::new(),
+                groups: Vec::new(),
+            }],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RbacRoleConfig {
+    pub name: String,
+    #[serde(default)]
+    pub permissions: Vec<String>,
+    #[serde(default)]
+    pub users: Vec<String>,
+    #[serde(default)]
+    pub groups: Vec<String>,
+}
+
 impl Config {
     /// Resolve the shark arbiter path relative to the repo root.
     pub fn shark_arbiter_path(&self) -> PathBuf {
@@ -1218,6 +1347,48 @@ impl Config {
             }
         }
 
+        if self.commit.sign && !gpg_available() {
+            tracing::warn!(
+                "commit.sign is enabled but gpg is not available; signed commits will fail at runtime"
+            );
+        }
+
+        if self.push.protection.require_ci_pass
+            && self.push.protection.required_status_checks.is_empty()
+        {
+            anyhow::bail!(
+                "push.protection.require_ci_pass is true but required_status_checks is empty"
+            );
+        }
+
+        if self.rbac.enabled {
+            let valid_permissions: std::collections::HashSet<&str> = [
+                "*",
+                "daemon.start",
+                "daemon.stop",
+                "ship.run",
+                "ship.auto",
+                "push.force",
+                "shark.release",
+                "shark.upgrade",
+                "config.edit",
+            ]
+            .iter()
+            .copied()
+            .collect();
+            for role in &self.rbac.roles {
+                for perm in &role.permissions {
+                    if !valid_permissions.contains(perm.as_str()) {
+                        anyhow::bail!(
+                            "rbac role '{}' contains unknown permission '{}'",
+                            role.name,
+                            perm
+                        );
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 }
@@ -1257,6 +1428,7 @@ impl Default for Config {
                 pre_push: PrePushConfig::default(),
                 safety: SafetyConfig::default(),
                 batch: BatchConfig::default(),
+                protection: PushProtectionConfig::default(),
             },
             ratelimit: RateLimitConfig {
                 min_commit_interval: Duration::from_secs(10),
@@ -1269,6 +1441,7 @@ impl Default for Config {
             notify: NotifyConfig::default(),
             bundle: BundleConfig::default(),
             staging: StagingConfig::default(),
+            commit: CommitConfig::default(),
             inference: InferenceConfig::default(),
             qualification: QualificationConfig::default(),
             build: BuildConfig::default(),
@@ -1282,6 +1455,7 @@ impl Default for Config {
             angler: AnglerConfig::default(),
             deckhand: DeckhandConfig::default(),
             shark: SharkConfig::default(),
+            rbac: RbacConfig::default(),
             repo_path: cwd,
             policy_id: None,
             prune_interval_minutes: default_prune_interval_minutes(),

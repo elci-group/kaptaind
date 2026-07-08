@@ -1,11 +1,17 @@
-use crate::config::loader::{StagingConfig, StagingMode};
+use crate::config::loader::{CommitConfig, StagingConfig, StagingMode};
 use crate::git::repo;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::path::{Path, PathBuf};
 
 /// Stage and commit with the default "all" strategy.
-pub fn commit(repo_path: &Path, msg: &str) -> anyhow::Result<()> {
-    commit_with_staging(repo_path, msg, &StagingConfig::default(), &[])
+pub fn commit(repo_path: &Path, msg: &str, commit_config: &CommitConfig) -> anyhow::Result<()> {
+    commit_with_staging(
+        repo_path,
+        msg,
+        &StagingConfig::default(),
+        &[],
+        commit_config,
+    )
 }
 
 /// Stage and commit with configurable staging behavior.
@@ -14,6 +20,7 @@ pub fn commit_with_staging(
     msg: &str,
     staging: &StagingConfig,
     cluster_paths: &[PathBuf],
+    commit_config: &CommitConfig,
 ) -> anyhow::Result<()> {
     match staging.mode {
         StagingMode::All => {
@@ -49,7 +56,13 @@ pub fn commit_with_staging(
     }
 
     unstage_excluded(repo_path, &staging.exclude)?;
-    repo::run_git(repo_path, &["commit", "-m", msg])?;
+
+    if commit_config.sign {
+        repo::commit_signed(repo_path, msg, commit_config.gpg_key_id.as_deref())?;
+    } else {
+        repo::run_git(repo_path, &["commit", "-m", msg])?;
+    }
+
     Ok(())
 }
 
@@ -130,7 +143,14 @@ mod tests {
             exclude: vec!["secret.txt".to_string()],
         };
 
-        commit_with_staging(repo.path(), "all mode", &staging, &[]).unwrap();
+        commit_with_staging(
+            repo.path(),
+            "all mode",
+            &staging,
+            &[],
+            &CommitConfig::default(),
+        )
+        .unwrap();
 
         assert_eq!(repo.last_commit_files(), vec!["visible.txt"]);
         assert!(repo.changed_files().contains(&PathBuf::from("secret.txt")));
@@ -153,6 +173,7 @@ mod tests {
             "cluster mode",
             &staging,
             &[PathBuf::from("src/a.rs")],
+            &CommitConfig::default(),
         )
         .unwrap();
 
@@ -172,7 +193,14 @@ mod tests {
             exclude: vec![],
         };
 
-        commit_with_staging(repo.path(), "pattern mode", &staging, &[]).unwrap();
+        commit_with_staging(
+            repo.path(),
+            "pattern mode",
+            &staging,
+            &[],
+            &CommitConfig::default(),
+        )
+        .unwrap();
 
         assert_eq!(repo.last_commit_files(), vec!["src/a.rs"]);
         assert!(repo.changed_files().contains(&PathBuf::from("README.md")));
@@ -187,7 +215,14 @@ mod tests {
             exclude: vec![],
         };
 
-        let err = commit_with_staging(repo.path(), "nothing", &staging, &[]).unwrap_err();
+        let err = commit_with_staging(
+            repo.path(),
+            "nothing",
+            &staging,
+            &[],
+            &CommitConfig::default(),
+        )
+        .unwrap_err();
         assert!(err.to_string().contains("git commit"));
     }
 
@@ -212,6 +247,7 @@ mod tests {
             "cluster mode skips ignored",
             &staging,
             &[PathBuf::from("src/a.rs"), PathBuf::from("ignored/b.txt")],
+            &CommitConfig::default(),
         )
         .unwrap();
 
@@ -237,10 +273,74 @@ mod tests {
                 PathBuf::from("src/a.rs"),
                 PathBuf::from("does/not/exist.tmp"),
             ],
+            &CommitConfig::default(),
         )
         .unwrap();
 
         assert_eq!(repo.last_commit_files(), vec!["src/a.rs"]);
+    }
+
+    #[test]
+    fn signing_enabled_attempts_gpg_signature() {
+        let repo = TestRepo::new();
+        repo.write("src/a.rs", "changed");
+
+        let commit_config = CommitConfig {
+            sign: true,
+            gpg_key_id: None,
+        };
+
+        assert_signing_attempted_or_succeeded(repo.path(), &commit_config);
+    }
+
+    #[test]
+    fn signing_with_key_id_attempts_gpg_signature() {
+        let repo = TestRepo::new();
+        repo.write("src/a.rs", "changed");
+
+        let commit_config = CommitConfig {
+            sign: true,
+            gpg_key_id: Some("test@example.com".to_string()),
+        };
+
+        assert_signing_attempted_or_succeeded(repo.path(), &commit_config);
+    }
+
+    fn assert_signing_attempted_or_succeeded(repo_path: &Path, commit_config: &CommitConfig) {
+        let result = commit_with_staging(
+            repo_path,
+            "signed commit",
+            &StagingConfig::default(),
+            &[],
+            commit_config,
+        );
+
+        match result {
+            Ok(()) => {
+                // If signing succeeded, the commit object must contain a GPG signature.
+                let output = std::process::Command::new("git")
+                    .arg("-C")
+                    .arg(repo_path)
+                    .args(["cat-file", "commit", "HEAD"])
+                    .output()
+                    .unwrap();
+                let commit_obj = String::from_utf8_lossy(&output.stdout).to_lowercase();
+                assert!(
+                    commit_obj.contains("gpgsig") || commit_obj.contains("begin pgp signature"),
+                    "signed commit did not produce a gpgsig header"
+                );
+            }
+            Err(err) => {
+                // In environments without a usable GPG key, the commit fails with a
+                // GPG-related error, which proves the -S flag was passed.
+                let text = err.to_string().to_lowercase();
+                assert!(
+                    text.contains("gpg") || text.contains("pgp") || text.contains("sign"),
+                    "expected a GPG-related failure, got: {}",
+                    err
+                );
+            }
+        }
     }
 
     struct TestRepo {

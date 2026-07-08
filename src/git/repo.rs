@@ -112,6 +112,29 @@ pub fn run_git(repo_path: &Path, args: &[&str]) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Create a GPG-signed commit.
+///
+/// Runs `git commit -S[=<key_id>] -m <msg>`. The caller is responsible for
+/// ensuring the GPG key is available and that git is configured to use it.
+pub fn commit_signed(repo_path: &Path, msg: &str, gpg_key_id: Option<&str>) -> anyhow::Result<()> {
+    let output = match gpg_key_id {
+        Some(key_id) => git(repo_path)
+            .args(["commit", &format!("-S={}", key_id), "-m", msg])
+            .output()
+            .context("failed to run git commit -S=<key_id>")?,
+        None => git(repo_path)
+            .args(["commit", "-S", "-m", msg])
+            .output()
+            .context("failed to run git commit -S")?,
+    };
+
+    if !output.status.success() {
+        return Err(git_error("commit -S", &output));
+    }
+
+    Ok(())
+}
+
 fn git(repo_path: &Path) -> Command {
     let mut command = Command::new("git");
     command.arg("-C").arg(repo_path);

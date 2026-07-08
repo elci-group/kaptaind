@@ -384,8 +384,14 @@ fn claim_staging_all_commits_everything_except_excluded() {
         exclude: vec!["exclude.txt".to_string()],
     };
 
-    kaptaind::commit::orchestrator::commit_with_staging(dir.path(), "test commit", &staging, &[])
-        .expect("commit should succeed");
+    kaptaind::commit::orchestrator::commit_with_staging(
+        dir.path(),
+        "test commit",
+        &staging,
+        &[],
+        &kaptaind::config::loader::CommitConfig::default(),
+    )
+    .expect("commit should succeed");
 
     let output = std::process::Command::new("git")
         .arg("-C")
@@ -430,6 +436,7 @@ fn claim_staging_cluster_commits_only_cluster_paths() {
         "cluster test",
         &staging,
         &[PathBuf::from("in_cluster.rs")],
+        &kaptaind::config::loader::CommitConfig::default(),
     )
     .expect("commit should succeed");
 
@@ -591,6 +598,7 @@ fn claim_default_config_requires_no_external_api() {
         pre_push: Default::default(),
         safety: Default::default(),
         batch: Default::default(),
+        protection: Default::default(),
     };
     assert!(!push.enabled, "default push should be disabled");
 
@@ -672,6 +680,7 @@ fn claim_push_disabled_by_default() {
         pre_push: Default::default(),
         safety: Default::default(),
         batch: Default::default(),
+        protection: Default::default(),
     };
     assert!(!config.enabled, "push should be disabled by default");
     assert_eq!(config.branch, "main", "default branch should be main");

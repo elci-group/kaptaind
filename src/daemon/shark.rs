@@ -6,8 +6,8 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;
 
@@ -253,6 +253,10 @@ pub struct SharkRuntime {
     pub role: Arc<AtomicRole>,
     pub instance_id: String,
     pub arbiter: Arc<dyn Arbiter>,
+    /// True while this instance is performing a voluntary upgrade handoff.
+    pub upgrade_in_progress: Arc<AtomicBool>,
+    /// When the current upgrade handoff started, if any.
+    pub upgrade_started_at: Arc<Mutex<Option<DateTime<Utc>>>>,
 }
 
 impl SharkRuntime {
@@ -262,6 +266,8 @@ impl SharkRuntime {
             role: Arc::new(AtomicRole::default()),
             instance_id: config.shark_instance_id(),
             arbiter,
+            upgrade_in_progress: Arc::new(AtomicBool::new(false)),
+            upgrade_started_at: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -338,6 +344,8 @@ pub async fn start_shark_task(
     let role = runtime.role.clone();
     let role_for_init = runtime.role.clone();
     let arbiter = runtime.arbiter.clone();
+    let upgrade_in_progress = runtime.upgrade_in_progress.clone();
+    let upgrade_started_at = runtime.upgrade_started_at.clone();
 
     let heartbeat = Duration::from_millis(config.shark.heartbeat_interval_ms.max(100));
     let ttl_ms = config
@@ -358,6 +366,7 @@ pub async fn start_shark_task(
 
     let task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(heartbeat);
+        let mut retire_marker: Option<RetireMarker> = None;
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         if observer {
@@ -381,35 +390,136 @@ pub async fn start_shark_task(
                     }
 
                     // Check for voluntary retire request (upgrade flow).
-                    match check_retire_marker(&arbiter, &instance_id).await {
-                        Ok(true) => {
-                            tracing::info!("retire marker found; entering retiring state");
-                            role.store(InstanceRole::Retiring);
-                            emit_event(
-                                &event_tx_clone,
-                                "shark.retire_marked",
-                                serde_json::json!({"instance_id": instance_id}),
-                            );
-                        }
-                        Ok(false) => {}
-                        Err(err) => {
-                            tracing::warn!(error = %err, "failed to check retire marker");
+                    if retire_marker.is_none() {
+                        match check_retire_marker(&arbiter, &instance_id).await {
+                            Ok(Some(marker)) => {
+                                tracing::info!("retire marker found; entering retiring state");
+                                role.store(InstanceRole::Retiring);
+                                upgrade_in_progress.store(true, Ordering::SeqCst);
+                                *upgrade_started_at.lock().unwrap() = Some(Utc::now());
+                                emit_event(
+                                    &event_tx_clone,
+                                    "shark.retire_marked",
+                                    serde_json::json!({"instance_id": instance_id}),
+                                );
+                                retire_marker = Some(marker);
+                            }
+                            Ok(None) => {}
+                            Err(err) => {
+                                tracing::warn!(error = %err, "failed to check retire marker");
+                            }
                         }
                     }
                     if role.load() == InstanceRole::Retiring {
-                        tracing::info!("retire marker found; releasing leadership");
-                        let _ = with_backoff(
+                        const ROLLBACK_TIMEOUT: Duration = Duration::from_secs(15);
+
+                        // Verify the standby is healthy before releasing leadership.
+                        let standby_healthy =
+                            match retire_marker.as_ref().and_then(|m| m.standby_health_port) {
+                                Some(port) => {
+                                    match wait_for_standby_ready(port, ROLLBACK_TIMEOUT).await {
+                                        Ok(()) => true,
+                                        Err(err) => {
+                                            tracing::error!(error = %err, "standby failed health checks; rolling back upgrade");
+                                            false
+                                        }
+                                    }
+                                }
+                                None => true,
+                            };
+
+                        if !standby_healthy {
+                            rollback_upgrade(
+                                arbiter.clone(),
+                                instance_id.clone(),
+                                ttl_ms,
+                                role.clone(),
+                                tx_clone.clone(),
+                                event_tx_clone.clone(),
+                                upgrade_in_progress.clone(),
+                                upgrade_started_at.clone(),
+                                "standby health check failed".to_string(),
+                            )
+                            .await;
+                            continue;
+                        }
+
+                        tracing::info!("standby is healthy; releasing leadership for upgrade");
+                        if let Err(err) = with_backoff(
                             || async { arbiter.release(&instance_id) },
                             3,
                             Duration::from_millis(50),
-                        ).await;
+                        )
+                        .await
+                        {
+                            tracing::error!(error = %err, "failed to release leadership during upgrade; rolling back");
+                            rollback_upgrade(
+                                arbiter.clone(),
+                                instance_id.clone(),
+                                ttl_ms,
+                                role.clone(),
+                                tx_clone.clone(),
+                                event_tx_clone.clone(),
+                                upgrade_in_progress.clone(),
+                                upgrade_started_at.clone(),
+                                "failed to release leadership".to_string(),
+                            )
+                            .await;
+                            continue;
+                        }
                         let _ = tx_clone.send(false);
                         emit_event(
                             &event_tx_clone,
                             "shark.retired",
                             serde_json::json!({"instance_id": instance_id}),
                         );
-                        break;
+
+                        // Wait for the standby to acquire leadership.
+                        let handoff_timeout =
+                            Duration::from_millis(config.shark.upgrade_handoff_timeout_ms);
+                        match wait_for_lease_change(&arbiter, &instance_id, handoff_timeout).await {
+                            Ok(Some(lease)) => {
+                                upgrade_in_progress.store(false, Ordering::SeqCst);
+                                *upgrade_started_at.lock().unwrap() = None;
+                                emit_event(
+                                    &event_tx_clone,
+                                    "shark.upgrade_complete",
+                                    serde_json::json!({
+                                        "instance_id": instance_id,
+                                        "new_leader": lease.instance_id,
+                                        "acquired_at": lease.acquired_at,
+                                    }),
+                                );
+                                crate::audit::log_event(
+                                    &config.repo_path,
+                                    &instance_id,
+                                    "shark.upgrade_complete",
+                                    true,
+                                    serde_json::json!({
+                                        "new_leader": lease.instance_id,
+                                        "standby_health_port": retire_marker
+                                            .as_ref()
+                                            .and_then(|m| m.standby_health_port),
+                                    }),
+                                );
+                                break;
+                            }
+                            Ok(None) | Err(_) => {
+                                rollback_upgrade(
+                                    arbiter.clone(),
+                                    instance_id.clone(),
+                                    ttl_ms,
+                                    role.clone(),
+                                    tx_clone.clone(),
+                                    event_tx_clone.clone(),
+                                    upgrade_in_progress.clone(),
+                                    upgrade_started_at.clone(),
+                                    "standby did not acquire leadership".to_string(),
+                                )
+                                .await;
+                                continue;
+                            }
+                        }
                     }
 
                     match role.load() {
@@ -523,19 +633,20 @@ pub async fn start_shark_task(
     Ok((runtime, rx))
 }
 
-async fn check_retire_marker(arbiter: &Arc<dyn Arbiter>, instance_id: &str) -> Result<bool> {
+async fn check_retire_marker(
+    arbiter: &Arc<dyn Arbiter>,
+    instance_id: &str,
+) -> Result<Option<RetireMarker>> {
     let marker_path = arbiter.dir().join("retire.json");
     if !marker_path.exists() {
-        return Ok(false);
+        return Ok(None);
     }
     let content = tokio::fs::read_to_string(&marker_path).await?;
     let marker: RetireMarker = serde_json::from_str(&content)?;
     if marker.instance_id == instance_id {
-        // Remove marker so we don't re-read it after restart.
-        let _ = tokio::fs::remove_file(&marker_path).await;
-        Ok(true)
+        Ok(Some(marker))
     } else {
-        Ok(false)
+        Ok(None)
     }
 }
 
@@ -543,15 +654,22 @@ async fn check_retire_marker(arbiter: &Arc<dyn Arbiter>, instance_id: &str) -> R
 struct RetireMarker {
     instance_id: String,
     retired_at: DateTime<Utc>,
+    #[serde(default)]
+    standby_health_port: Option<u16>,
 }
 
 /// Request the named instance to retire. Used by the upgrade CLI flow.
-pub fn request_retire(arbiter_path: impl Into<PathBuf>, instance_id: &str) -> Result<()> {
+pub fn request_retire(
+    arbiter_path: impl Into<PathBuf>,
+    instance_id: &str,
+    standby_health_port: Option<u16>,
+) -> Result<()> {
     let dir = arbiter_path.into();
     std::fs::create_dir_all(&dir)?;
     let marker = RetireMarker {
         instance_id: instance_id.to_string(),
         retired_at: Utc::now(),
+        standby_health_port,
     };
     let path = dir.join("retire.json");
     let tmp = path.with_extension("tmp");
@@ -560,10 +678,9 @@ pub fn request_retire(arbiter_path: impl Into<PathBuf>, instance_id: &str) -> Re
     Ok(())
 }
 
-/// Cancel a previously requested retirement.
-pub fn cancel_retire(arbiter_path: impl Into<PathBuf>, instance_id: &str) -> Result<()> {
-    let dir = arbiter_path.into();
-    let path = dir.join("retire.json");
+/// Cancel a previously written retire marker.
+pub fn clear_retire_marker(arbiter_path: &Path, instance_id: &str) -> Result<()> {
+    let path = arbiter_path.join("retire.json");
     if path.exists() {
         let content = std::fs::read_to_string(&path)?;
         if let Ok(marker) = serde_json::from_str::<RetireMarker>(&content) {
@@ -573,6 +690,18 @@ pub fn cancel_retire(arbiter_path: impl Into<PathBuf>, instance_id: &str) -> Res
         }
     }
     Ok(())
+}
+
+/// Cancel a previously requested retirement.
+pub fn cancel_retire(arbiter_path: impl Into<PathBuf>, instance_id: &str) -> Result<()> {
+    clear_retire_marker(&arbiter_path.into(), instance_id)
+}
+
+/// Cancel an in-progress upgrade by clearing the retire marker.
+pub fn cancel_upgrade(arbiter_path: &Path, instance_id: &str) {
+    if let Err(err) = clear_retire_marker(arbiter_path, instance_id) {
+        tracing::warn!(error = %err, "failed to cancel upgrade");
+    }
 }
 
 /// Wait until `predicate` returns true or timeout elapses.
@@ -624,6 +753,85 @@ pub async fn spawn_standby(
     })?;
 
     Ok(child)
+}
+
+/// Roll back an upgrade: clear the retire marker, attempt to reclaim leadership,
+/// and emit a `shark.upgrade_rollback` event.
+#[allow(clippy::too_many_arguments)]
+async fn rollback_upgrade(
+    arbiter: Arc<dyn Arbiter>,
+    instance_id: String,
+    ttl_ms: u64,
+    role: Arc<AtomicRole>,
+    tx: tokio::sync::watch::Sender<bool>,
+    event_tx: Option<broadcast::Sender<DaemonEvent>>,
+    upgrade_in_progress: Arc<AtomicBool>,
+    upgrade_started_at: Arc<Mutex<Option<DateTime<Utc>>>>,
+    reason: String,
+) {
+    if let Err(err) = clear_retire_marker(arbiter.dir(), &instance_id) {
+        tracing::warn!(error = %err, "failed to clear retire marker during rollback");
+    }
+
+    // Attempt to reclaim leadership immediately so this instance can resume
+    // service rather than waiting for the next heartbeat tick. If this instance
+    // already holds the lease (the common rollback case), renew it; otherwise
+    // try to acquire a fresh lease.
+    let instance_id_for_retry = instance_id.clone();
+    let reclaimed = with_backoff(
+        move || {
+            let arbiter = arbiter.clone();
+            let instance_id = instance_id_for_retry.clone();
+            async move {
+                match arbiter.current_lease() {
+                    Ok(Some(lease)) if lease.instance_id == instance_id && !lease.is_expired() => {
+                        arbiter.renew(&instance_id, ttl_ms)
+                    }
+                    _ => arbiter.try_acquire(&instance_id, ttl_ms),
+                }
+            }
+        },
+        3,
+        Duration::from_millis(50),
+    )
+    .await
+    .unwrap_or(false);
+
+    role.store(if reclaimed {
+        InstanceRole::Leader
+    } else {
+        InstanceRole::Candidate
+    });
+    let _ = tx.send(reclaimed);
+    upgrade_in_progress.store(false, Ordering::SeqCst);
+    *upgrade_started_at.lock().unwrap() = None;
+    emit_event(
+        &event_tx,
+        "shark.upgrade_rollback",
+        serde_json::json!({
+            "instance_id": instance_id,
+            "reason": reason,
+            "reclaimed": reclaimed,
+        }),
+    );
+}
+
+/// Wait until a lease is held by an instance other than `instance_id`.
+async fn wait_for_lease_change(
+    arbiter: &Arc<dyn Arbiter>,
+    instance_id: &str,
+    timeout: Duration,
+) -> Result<Option<Lease>> {
+    let start = tokio::time::Instant::now();
+    let interval = Duration::from_millis(250);
+    while start.elapsed() < timeout {
+        match arbiter.current_lease() {
+            Ok(Some(lease)) if lease.instance_id != instance_id => return Ok(Some(lease)),
+            _ => {}
+        }
+        tokio::time::sleep(interval).await;
+    }
+    anyhow::bail!("timeout waiting for leadership handoff")
 }
 
 /// Poll a kaptaind health endpoint until it returns `"status": "ok"`.
@@ -744,18 +952,28 @@ mod tests {
     #[test]
     fn retire_marker_roundtrips() {
         let dir = tempdir().unwrap();
-        request_retire(dir.path(), "old-instance").unwrap();
+        request_retire(dir.path(), "old-instance", None).unwrap();
         let path = dir.path().join("retire.json");
         assert!(path.exists());
         let content = std::fs::read_to_string(&path).unwrap();
         let marker: RetireMarker = serde_json::from_str(&content).unwrap();
         assert_eq!(marker.instance_id, "old-instance");
+        assert!(marker.standby_health_port.is_none());
+    }
+
+    #[test]
+    fn retire_marker_preserves_health_port() {
+        let dir = tempdir().unwrap();
+        request_retire(dir.path(), "old-instance", Some(9090)).unwrap();
+        let content = std::fs::read_to_string(dir.path().join("retire.json")).unwrap();
+        let marker: RetireMarker = serde_json::from_str(&content).unwrap();
+        assert_eq!(marker.standby_health_port, Some(9090));
     }
 
     #[test]
     fn cancel_retire_removes_matching_marker() {
         let dir = tempdir().unwrap();
-        request_retire(dir.path(), "instance-a").unwrap();
+        request_retire(dir.path(), "instance-a", None).unwrap();
         cancel_retire(dir.path(), "instance-a").unwrap();
         assert!(!dir.path().join("retire.json").exists());
     }
@@ -763,9 +981,33 @@ mod tests {
     #[test]
     fn cancel_retire_ignores_non_matching_marker() {
         let dir = tempdir().unwrap();
-        request_retire(dir.path(), "instance-a").unwrap();
+        request_retire(dir.path(), "instance-a", None).unwrap();
         cancel_retire(dir.path(), "instance-b").unwrap();
         assert!(dir.path().join("retire.json").exists());
+    }
+
+    #[test]
+    fn clear_retire_marker_removes_matching_marker() {
+        let dir = tempdir().unwrap();
+        request_retire(dir.path(), "instance-a", None).unwrap();
+        clear_retire_marker(dir.path(), "instance-a").unwrap();
+        assert!(!dir.path().join("retire.json").exists());
+    }
+
+    #[test]
+    fn clear_retire_marker_ignores_non_matching_marker() {
+        let dir = tempdir().unwrap();
+        request_retire(dir.path(), "instance-a", None).unwrap();
+        clear_retire_marker(dir.path(), "instance-b").unwrap();
+        assert!(dir.path().join("retire.json").exists());
+    }
+
+    #[test]
+    fn cancel_upgrade_clears_matching_marker() {
+        let dir = tempdir().unwrap();
+        request_retire(dir.path(), "instance-a", None).unwrap();
+        cancel_upgrade(dir.path(), "instance-a");
+        assert!(!dir.path().join("retire.json").exists());
     }
 
     #[tokio::test]
@@ -788,5 +1030,73 @@ mod tests {
 
         assert_eq!(results.iter().filter(|&&r| r).count(), 1);
         assert!(arbiter.current_lease().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn rollback_upgrade_restores_leader_role() {
+        let dir = tempdir().unwrap();
+        let arbiter = Arc::new(FileArbiter::new(dir.path()).unwrap());
+        let instance_id = "leader-a".to_string();
+        assert!(arbiter.try_acquire(&instance_id, 5000).unwrap());
+        arbiter.release(&instance_id).unwrap();
+
+        request_retire(dir.path(), &instance_id, None).unwrap();
+
+        let role = Arc::new(AtomicRole::default());
+        role.store(InstanceRole::Retiring);
+        let (tx, mut rx) = tokio::sync::watch::channel(false);
+        let upgrade_in_progress = Arc::new(AtomicBool::new(true));
+        let upgrade_started_at = Arc::new(Mutex::new(Some(Utc::now())));
+
+        rollback_upgrade(
+            arbiter.clone(),
+            instance_id.clone(),
+            5000,
+            role.clone(),
+            tx,
+            None,
+            upgrade_in_progress.clone(),
+            upgrade_started_at.clone(),
+            "test rollback".to_string(),
+        )
+        .await;
+
+        assert!(matches!(role.load(), InstanceRole::Leader));
+        assert!(*rx.borrow_and_update());
+        assert!(!upgrade_in_progress.load(Ordering::SeqCst));
+        assert!(upgrade_started_at.lock().unwrap().is_none());
+        assert!(!dir.path().join("retire.json").exists());
+        let lease = arbiter.current_lease().unwrap();
+        assert_eq!(
+            lease.as_ref().map(|l| l.instance_id.as_str()),
+            Some("leader-a")
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_for_lease_change_detects_new_leader() {
+        let dir = tempdir().unwrap();
+        let arbiter: Arc<dyn Arbiter> = Arc::new(FileArbiter::new(dir.path()).unwrap());
+        assert!(arbiter.try_acquire("old", 5000).unwrap());
+
+        // Start a background task that acquires the lease after a short delay.
+        let arbiter_clone = arbiter.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            arbiter_clone.release("old").unwrap();
+            assert!(arbiter_clone.try_acquire("new", 5000).unwrap());
+        });
+
+        let lease = wait_for_lease_change(&arbiter, "old", Duration::from_secs(2))
+            .await
+            .unwrap();
+        assert_eq!(lease.as_ref().map(|l| l.instance_id.as_str()), Some("new"));
+    }
+
+    #[tokio::test]
+    async fn wait_for_standby_ready_fails_when_standby_unhealthy() {
+        // Port 0 is invalid, so the health endpoint cannot succeed.
+        let result = wait_for_standby_ready(0, Duration::from_millis(250)).await;
+        assert!(result.is_err());
     }
 }

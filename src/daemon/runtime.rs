@@ -19,6 +19,8 @@ fn warn_if_git_lock_exists(repo_path: &Path) {
 }
 
 pub async fn start(config: Config) -> anyhow::Result<()> {
+    crate::rbac::check_permission(&config.rbac, "daemon.start")?;
+
     // Initialize trace database
     crate::aoc::db::init_db(&config.repo_path)?;
 
