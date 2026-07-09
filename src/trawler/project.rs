@@ -822,4 +822,129 @@ name = "root"
         assert_eq!(result.project_type, ProjectType::Rust);
         assert!(result.indicators.iter().any(|i| i.contains("Monorepo")));
     }
+
+    #[test]
+    fn inspect_cargo_manifest_variants() {
+        // Plain package
+        let temp = TempDir::new().unwrap();
+        std::fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        assert_eq!(inspect_cargo_manifest(temp.path()), CargoManifestKind::Package);
+
+        // Virtual workspace
+        let temp = TempDir::new().unwrap();
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"*\"]\n",
+        )
+        .unwrap();
+        let kind = inspect_cargo_manifest(temp.path());
+        assert_eq!(kind, CargoManifestKind::Workspace);
+        assert!(kind.is_workspace() && kind.is_valid());
+
+        // Package + workspace
+        let temp = TempDir::new().unwrap();
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[package]\nname = \"r\"\n\n[workspace]\nmembers = []\n",
+        )
+        .unwrap();
+        assert_eq!(
+            inspect_cargo_manifest(temp.path()),
+            CargoManifestKind::PackageAndWorkspace
+        );
+
+        // Empty / neither table
+        let temp = TempDir::new().unwrap();
+        std::fs::write(temp.path().join("Cargo.toml"), "").unwrap();
+        assert_eq!(inspect_cargo_manifest(temp.path()), CargoManifestKind::Invalid);
+
+        // Malformed TOML
+        let temp = TempDir::new().unwrap();
+        std::fs::write(temp.path().join("Cargo.toml"), "this is = not valid = =").unwrap();
+        assert_eq!(inspect_cargo_manifest(temp.path()), CargoManifestKind::Invalid);
+
+        // No manifest at all
+        let temp = TempDir::new().unwrap();
+        assert_eq!(inspect_cargo_manifest(temp.path()), CargoManifestKind::Invalid);
+    }
+
+    #[test]
+    fn workspace_members_resolves_and_filters() {
+        let temp = TempDir::new().unwrap();
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        )
+        .unwrap();
+        let a = temp.path().join("crates/a");
+        let b = temp.path().join("crates/b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("Cargo.toml"), "[package]\nname = \"a\"\n").unwrap();
+        std::fs::write(b.join("Cargo.toml"), "[package]\nname = \"b\"\n").unwrap();
+        // Not a crate: no manifest.
+        std::fs::create_dir_all(temp.path().join("crates/empty")).unwrap();
+
+        let members = workspace_members(temp.path());
+        assert_eq!(members.len(), 2);
+        assert!(members.contains(&a));
+        assert!(members.contains(&b));
+    }
+
+    #[test]
+    fn workspace_members_honors_exclude() {
+        let temp = TempDir::new().unwrap();
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/*\"]\nexclude = [\"crates/b\"]\n",
+        )
+        .unwrap();
+        let a = temp.path().join("crates/a");
+        let b = temp.path().join("crates/b");
+        std::fs::create_dir_all(&a).unwrap();
+        std::fs::create_dir_all(&b).unwrap();
+        std::fs::write(a.join("Cargo.toml"), "[package]\nname = \"a\"\n").unwrap();
+        std::fs::write(b.join("Cargo.toml"), "[package]\nname = \"b\"\n").unwrap();
+
+        let members = workspace_members(temp.path());
+        assert_eq!(members, vec![a]);
+    }
+
+    #[test]
+    fn workspace_members_empty_for_non_workspace() {
+        let temp = TempDir::new().unwrap();
+        std::fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+        assert!(workspace_members(temp.path()).is_empty());
+    }
+
+    #[test]
+    fn is_blacklisted_matches_basename_and_rel_glob() {
+        let scratch = globset::Glob::new("scratch").unwrap();
+        assert!(is_blacklisted(
+            "scratch",
+            std::path::Path::new("scratch"),
+            &[scratch]
+        ));
+
+        let vendor = globset::Glob::new("vendor/*").unwrap();
+        assert!(is_blacklisted(
+            "legacy",
+            std::path::Path::new("vendor/legacy"),
+            &[vendor]
+        ));
+
+        let none = globset::Glob::new("nope").unwrap();
+        assert!(!is_blacklisted(
+            "src",
+            std::path::Path::new("src"),
+            &[none]
+        ));
+
+        // Built-in skip list always applies, even with an empty user blacklist.
+        assert!(is_blacklisted(
+            "target",
+            std::path::Path::new("target"),
+            &[]
+        ));
+    }
 }
