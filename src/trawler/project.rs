@@ -1,5 +1,97 @@
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+
+/// Built-in directory names that are never themselves project roots and are not
+/// worth descending into while trawling. This is the default blacklist; users can
+/// extend it via `TrawlOptions::blacklist` / `--blacklist`.
+///
+/// Keep this list to *directory basenames* only. Glob/relative-path rules belong in
+/// the user blacklist or in `.gitignore`/`.ignore` files (honored by the walker).
+pub const DEFAULT_SKIP_DIRS: &[&str] = &[
+    // Version control
+    ".git",
+    ".hg",
+    ".svn",
+    ".bzr",
+    // Build outputs & caches
+    "target",
+    "build",
+    "dist",
+    "out",
+    "bin",
+    "obj",
+    "_build",
+    "cmake-build-debug",
+    "cmake-build-release",
+    ".scons",
+    ".scons_opt_cache",
+    // Dependencies & virtual envs
+    "node_modules",
+    "__pycache__",
+    ".gradle",
+    "vendor",
+    ".venv",
+    "venv",
+    "env",
+    ".cargo",
+    ".composer",
+    "Pods",
+    "DerivedData",
+    ".yarn",
+    ".npm",
+    ".pnpm-store",
+    "site-packages",
+    ".eggs",
+    ".eggs-info",
+    "ebin",
+    // Editor & IDE
+    ".idea",
+    ".vscode",
+    ".vscode-server",
+    ".vs",
+    ".sublime-text",
+    ".atom",
+    // Language tooling caches
+    ".next",
+    ".output",
+    ".turbo",
+    ".sbtserver",
+    ".elixir_ls",
+    ".erlang_ls",
+    ".metals",
+    ".bloop",
+    ".mix",
+    ".rebar3",
+    // Testing & coverage
+    ".tox",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".coverage",
+    ".nyc_output",
+    "coverage",
+    ".rcov",
+    // OS junk
+    ".DS_Store",
+    ".AppleDouble",
+    ".LSOverride",
+    "Thumbs.db",
+    "$RECYCLE.BIN",
+    ".directory",
+    // Documentation builds
+    "docs",
+    "doc",
+    "site",
+    "_site",
+    "gh-pages",
+    // Temp / caches
+    ".tmp",
+    ".cache",
+    ".temp",
+    "tmp",
+    "temp",
+    // Kaptaind
+    ".kaptaind",
+];
 
 /// Represents the type of project detected in a directory
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -445,102 +537,162 @@ pub fn is_kaptaind_initialized(path: &Path) -> bool {
     path.join("kaptaind.toml").exists()
 }
 
-/// Check if a directory should be skipped during trawling
+/// Check if a directory should be skipped during trawling using the built-in
+/// default blacklist (`DEFAULT_SKIP_DIRS`).
+///
+/// This is the backward-compatible entry point. For user-supplied blacklists use
+/// `is_blacklisted` together with `DEFAULT_SKIP_DIRS`.
 pub fn should_skip_directory(dir_name: &str) -> bool {
-    // Skip common non-project directories
-    const SKIP_DIRS: &[&str] = &[
-        // Git & version control
-        ".git",
-        ".hg",
-        ".svn",
-        ".bzr",
-        // Build outputs & caches
-        "target",
-        "build",
-        "dist",
-        "out",
-        "bin",
-        "obj",
-        "node_modules",
-        "__pycache__",
-        ".gradle",
-        "vendor",
-        ".next",
-        ".output",
-        ".turbo",
-        ".sbtserver",
-        // Editor & IDE
-        ".idea",
-        ".vscode",
-        ".vscode-server",
-        ".vs",
-        ".sublime-text",
-        ".atom",
-        // Dependencies & virtual envs
-        ".venv",
-        "venv",
-        "env",
-        "vendor/bundle",
-        "vendor",
-        ".cargo",
-        ".composer",
-        "Pods",
-        "DerivedData",
-        "node_modules",
-        ".yarn",
-        ".npm",
-        ".pnpm-store",
-        // Testing & coverage
-        ".tox",
-        ".pytest_cache",
-        ".mypy_cache",
-        ".coverage",
-        ".nyc_output",
-        "coverage",
-        ".rcov",
-        // Language-specific
-        ".elixir_ls",
-        ".erlang_ls",
-        ".metals",
-        ".bloop",
-        "_build",
-        "deps",
-        ".mix",
-        ".rebar3",
-        "ebin",
-        "site-packages",
-        ".eggs",
-        ".eggs-info",
-        // OS
-        ".DS_Store",
-        ".AppleDouble",
-        ".LSOverride",
-        "Thumbs.db",
-        "$RECYCLE.BIN",
-        ".directory",
-        // Build systems
-        "cmake-build-debug",
-        "cmake-build-release",
-        "cmake-build-*",
-        ".scons",
-        ".scons_opt_cache",
-        // Documentation
-        "docs",
-        "doc",
-        "site",
-        "_site",
-        "gh-pages",
-        // Archives & misc
-        ".tmp",
-        ".cache",
-        ".temp",
-        "tmp",
-        "temp",
-        // Kaptaind
-        ".kaptaind",
-    ];
+    DEFAULT_SKIP_DIRS.contains(&dir_name) || dir_name.starts_with("cmake-build-")
+}
 
-    SKIP_DIRS.contains(&dir_name) || dir_name.starts_with("cmake-build-")
+/// Check whether a directory is excluded by the built-in skip list or a user-supplied
+/// blacklist.
+///
+/// - `dir_name`: the directory's basename (e.g. `"target"`).
+/// - `rel_path`: the directory's path relative to the trawl root (e.g.
+///   `"vendor/legacy"`); used for glob blacklist entries.
+/// - `blacklist`: compiled user globs. An entry matches if it matches the basename
+///   **or** the relative path.
+pub fn is_blacklisted(dir_name: &str, rel_path: &Path, blacklist: &[globset::Glob]) -> bool {
+    if should_skip_directory(dir_name) {
+        return true;
+    }
+    blacklist.iter().any(|g| {
+        let m = g.compile_matcher();
+        m.is_match(dir_name) || m.is_match(rel_path)
+    })
+}
+
+/// Classification of a `Cargo.toml` manifest found in a directory.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CargoManifestKind {
+    /// A regular package (`[package]` only).
+    Package,
+    /// A virtual workspace root (`[workspace]` only, no `[package]`).
+    Workspace,
+    /// A workspace root that is also a package (`[package]` + `[workspace]`).
+    PackageAndWorkspace,
+    /// No `Cargo.toml`, unparseable, or contains neither `[package]` nor `[workspace]`.
+    Invalid,
+}
+
+impl CargoManifestKind {
+    pub fn is_valid(self) -> bool {
+        !matches!(self, CargoManifestKind::Invalid)
+    }
+
+    pub fn is_workspace(self) -> bool {
+        matches!(
+            self,
+            CargoManifestKind::Workspace | CargoManifestKind::PackageAndWorkspace
+        )
+    }
+}
+
+/// Inspect the `Cargo.toml` in `dir` and classify it.
+///
+/// SOTA detection requires *parsing* the manifest rather than checking existence: a
+/// stray or malformed `Cargo.toml` (or one from a non-Rust tool) must not register as
+/// a Rust project. A directory is a Rust root iff its manifest parses and contains a
+/// `[package]` and/or `[workspace]` table.
+pub fn inspect_cargo_manifest(dir: &Path) -> CargoManifestKind {
+    let manifest_path = dir.join("Cargo.toml");
+    let content = match fs::read_to_string(&manifest_path) {
+        Ok(c) => c,
+        Err(_) => return CargoManifestKind::Invalid,
+    };
+    let value: toml::Value = match toml::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return CargoManifestKind::Invalid,
+    };
+
+    let has_package = value.get("package").and_then(|v| v.as_table()).is_some();
+    let has_workspace = value.get("workspace").and_then(|v| v.as_table()).is_some();
+
+    match (has_package, has_workspace) {
+        (true, true) => CargoManifestKind::PackageAndWorkspace,
+        (true, false) => CargoManifestKind::Package,
+        (false, true) => CargoManifestKind::Workspace,
+        (false, false) => CargoManifestKind::Invalid,
+    }
+}
+
+/// Resolve the member crate directories of a Cargo workspace root.
+///
+/// Reads `[workspace].members` (glob list) and honors `[workspace].exclude`. Only
+/// member paths that are directories containing a *valid* manifest are returned, so
+/// glob entries like `"crates/*"` that match non-crate dirs are filtered out. Returns
+/// an empty vec if `root` is not a workspace.
+pub fn workspace_members(root: &Path) -> Vec<PathBuf> {
+    if !inspect_cargo_manifest(root).is_workspace() {
+        return Vec::new();
+    }
+
+    let content = match fs::read_to_string(root.join("Cargo.toml")) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let value: toml::Value = match toml::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    let workspace = match value.get("workspace").and_then(|v| v.as_table()) {
+        Some(w) => w,
+        None => return Vec::new(),
+    };
+
+    let member_patterns = string_array(workspace.get("members"));
+    let exclude_patterns = string_array(workspace.get("exclude"));
+
+    let mut members = Vec::new();
+    for pattern in member_patterns {
+        let full = root.join(&pattern);
+        let full_str = match full.to_str() {
+            Some(s) => s.to_string(),
+            None => continue,
+        };
+        let paths = match glob::glob(&full_str) {
+            Ok(p) => p,
+            Err(_) => continue,
+        };
+        for entry in paths.flatten() {
+            if !entry.is_dir() {
+                continue;
+            }
+            if !inspect_cargo_manifest(&entry).is_valid() {
+                continue;
+            }
+            // Honor [workspace].exclude by matching against the path relative to root.
+            if let Ok(rel) = entry.strip_prefix(root) {
+                if exclude_patterns.iter().any(|ex| {
+                    globset::Glob::new(ex)
+                        .map(|g| g.compile_matcher().is_match(rel))
+                        .unwrap_or(false)
+                }) {
+                    continue;
+                }
+            }
+            members.push(entry);
+        }
+    }
+
+    members.sort();
+    members.dedup();
+    members
+}
+
+/// Extract a `Vec<String>` from a TOML array value, tolerating missing/non-array values.
+fn string_array(value: Option<&toml::Value>) -> Vec<String> {
+    value
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|item| item.as_str().map(|s| s.to_string()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
