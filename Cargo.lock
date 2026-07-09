@@ -577,6 +577,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "crossbeam-deque"
+version = "0.8.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5181e0de7b61eb03a81e347d6dd8797bae9da5146707b51077e2d71a54ec0ceb"
+dependencies = [
+ "crossbeam-epoch",
+ "crossbeam-utils",
+]
+
+[[package]]
+name = "crossbeam-epoch"
+version = "0.9.20"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2d6914041f254d6e9176c01941b21115dcfb7089e55135a35411081bd106ef3f"
+dependencies = [
+ "crossbeam-utils",
+]
+
+[[package]]
 name = "crossbeam-utils"
 version = "0.8.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -599,12 +618,10 @@ dependencies = [
  "anyhow",
  "chrono",
  "clap",
- "colored",
- "fs2",
+ "libc",
  "serde",
  "serde_json",
  "toml",
- "walkdir",
 ]
 
 [[package]]
@@ -1315,6 +1332,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "ignore"
+version = "0.4.27"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fe112b004901c62c2faa11f4f75e9864e0cc5af8da71c9115d184a3aa888749f"
+dependencies = [
+ "crossbeam-deque",
+ "globset",
+ "log",
+ "memchr",
+ "regex-automata",
+ "same-file",
+ "walkdir",
+ "winapi-util",
+]
+
+[[package]]
 name = "indexmap"
 version = "2.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1437,7 +1470,7 @@ dependencies = [
 
 [[package]]
 name = "kaptaind"
-version = "9.6.6"
+version = "9.6.8"
 dependencies = [
  "anyhow",
  "axum",
@@ -1455,6 +1488,7 @@ dependencies = [
  "glob",
  "globset",
  "hmac",
+ "ignore",
  "kaptaind-diff",
  "libc",
  "notify",
