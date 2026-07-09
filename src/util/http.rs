@@ -54,7 +54,11 @@ pub fn validate_outbound_url(raw: &str) -> Result<()> {
         == Some("1");
     match scheme {
         "https" => {}
-        "http" if loopback_dev && is_loopback_host(host) => {}
+        "http" if loopback_dev && is_loopback_host(host) => {
+            // Explicit loopback-dev opt-in: accept plain HTTP to a loopback host
+            // and skip the SSRF IP filter (which would otherwise reject 127.0.0.1).
+            return Ok(());
+        }
         "http" => bail!(
             "refusing non-TLS outbound URL {raw:?} \
              (set KAPTAIND_ALLOW_INSECURE_HTTP=1 only for loopback dev)"
@@ -89,6 +93,21 @@ pub fn validate_outbound_url(raw: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Validate an inference endpoint URL. Behaves like [`validate_outbound_url`]
+/// but additionally permits plaintext `http` to a loopback host (local model
+/// servers such as Ollama) without requiring the global dev opt-in. Remote
+/// hosts still require `https` and must pass the SSRF guard.
+pub fn validate_inference_url(raw: &str) -> Result<()> {
+    let url = Url::parse(raw).map_err(|e| anyhow!("invalid URL {raw:?}: {e}"))?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("URL has no host: {raw:?}"))?;
+    if url.scheme() == "http" && is_loopback_host(host) {
+        return Ok(());
+    }
+    validate_outbound_url(raw)
 }
 
 fn is_loopback_host(host: &str) -> bool {
@@ -140,6 +159,11 @@ fn v6_disallowed(ip: &Ipv6Addr) -> bool {
 mod tests {
     use super::*;
 
+    // `validate_outbound_url` reads the `KAPTAIND_ALLOW_INSECURE_HTTP` env var,
+    // which is process-global. Serialize every test that depends on its value so
+    // parallel test threads cannot race one another's set/remove_var.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn rejects_metadata_endpoint() {
         assert!(validate_outbound_url("http://169.254.169.254/latest/meta-data/").is_err());
@@ -157,6 +181,8 @@ mod tests {
 
     #[test]
     fn rejects_non_tls_http_by_default() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        std::env::remove_var("KAPTAIND_ALLOW_INSECURE_HTTP");
         assert!(validate_outbound_url("http://93.184.216.34/").is_err());
     }
 
@@ -173,7 +199,16 @@ mod tests {
     }
 
     #[test]
+    fn inference_url_allows_loopback_http_blocks_private_remote() {
+        assert!(validate_inference_url("http://localhost:11434/api/chat").is_ok());
+        assert!(validate_inference_url("http://127.0.0.1:11434/").is_ok());
+        assert!(validate_inference_url("http://10.0.0.1/").is_err());
+        assert!(validate_inference_url("https://93.184.216.34/").is_ok());
+    }
+
+    #[test]
     fn loopback_http_allowed_only_with_explicit_opt_in() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         std::env::remove_var("KAPTAIND_ALLOW_INSECURE_HTTP");
         assert!(validate_outbound_url("http://127.0.0.1:8080/health").is_err());
         std::env::set_var("KAPTAIND_ALLOW_INSECURE_HTTP", "1");

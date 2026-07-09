@@ -83,10 +83,7 @@ pub async fn generate_with_model_and_prompt(
     user_prompt: &str,
     model: &str,
 ) -> Option<String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(config.timeout_secs))
-        .build()
-        .ok()?;
+    let client = crate::util::http::hardened_client(Duration::from_secs(config.timeout_secs));
 
     let system_prompt = "You are a precise software commit message author. Write a single subject line (max 72 characters) describing what changed. Use conventional commit format (feat:, fix:, refactor:, chore:) when it fits. Output ONLY the subject line — no body, no explanation.";
 
@@ -105,12 +102,13 @@ pub async fn generate_with_model_and_prompt(
         ],
     };
 
-    let response = match client
-        .post(format!("{}/api/chat", config.ollama_base_url))
-        .json(&request)
-        .send()
-        .await
-    {
+    let url = format!("{}/api/chat", config.ollama_base_url);
+    if let Err(err) = crate::util::http::validate_inference_url(&url) {
+        tracing::warn!(error = %err, endpoint = %config.ollama_base_url, "refusing unsafe ollama endpoint");
+        return None;
+    }
+
+    let response = match client.post(&url).json(&request).send().await {
         Ok(resp) => resp,
         Err(e) => {
             tracing::warn!(error = %e, "ollama request failed");

@@ -55,9 +55,7 @@ pub fn validate_shell_command(cmd: &str) -> Result<(), ShellValidationError> {
         }
     }
     // Download piped to any command (e.g. `curl ... | sh`, `wget -O- ... | bash`).
-    if (lowered.contains("curl ") || lowered.contains("wget "))
-        && lowered.contains('|')
-    {
+    if (lowered.contains("curl ") || lowered.contains("wget ")) && lowered.contains('|') {
         return reject("download piped to a command");
     }
 

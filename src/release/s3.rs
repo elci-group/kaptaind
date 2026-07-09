@@ -6,7 +6,6 @@
 use crate::config::loader::S3DistConfig;
 use crate::release::packager::PackageResult;
 use anyhow::{anyhow, Context};
-use reqwest::Client;
 use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::SystemTime;
@@ -161,8 +160,12 @@ impl S3Distributor {
             format!("https://{}/{}", host, key)
         };
 
+        // Validate the final destination: require TLS and block
+        // private/loopback/link-local/cloud-metadata targets.
+        crate::util::http::validate_outbound_url(&url)?;
+
         // Send request
-        let client = Client::new();
+        let client = crate::util::http::hardened_client(std::time::Duration::from_secs(60));
         let response = client
             .put(&url)
             .header("Content-Type", content_type)

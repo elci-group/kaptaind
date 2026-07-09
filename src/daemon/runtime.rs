@@ -3,6 +3,7 @@ use crate::daemon::health::{start_health_server, DaemonEvent, HealthState, Metri
 use crate::daemon::notification::{notify_start, notify_stop};
 use crate::daemon::web::{start_web_server, WebState};
 use anyhow::Context;
+use rand::RngCore;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -120,11 +121,25 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
 
     // Spawn optional WebUI endpoint
     if config.web_port != 0 {
+        let auth_token = match &config.web.auth_token {
+            Some(t) if !t.is_empty() => t.clone(),
+            _ => {
+                let mut buf = [0u8; 32];
+                rand::thread_rng().fill_bytes(&mut buf);
+                crate::util::hex::encode(buf)
+            }
+        };
+        eprintln!(
+            "kaptaind WebUI: http://127.0.0.1:{}/?token={}",
+            config.web_port, auth_token
+        );
         let web_state = WebState {
             repo_path: config.repo_path.clone(),
             metrics: metrics.clone(),
             event_tx: event_tx.clone(),
             version: env!("CARGO_PKG_VERSION").to_string(),
+            auth_token,
+            allow_config_write: config.web.allow_config_write,
         };
         tokio::spawn(start_web_server(config.web_port, web_state));
     }

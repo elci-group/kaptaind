@@ -3,6 +3,34 @@ use crate::git::repo;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::path::{Path, PathBuf};
 
+/// Filename patterns that must never be committed, regardless of `kaptaind.toml`
+/// or `.gitignore`. Evaluated against every changed path (recursively).
+const SECRET_DENYLIST: &[&str] = &[
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "id_rsa",
+    "id_dsa",
+    "*.keystore",
+    "*.secret",
+];
+
+/// Expand patterns containing no `/` so they also match at any depth: a bare
+/// pattern like `.env*` then also covers `apps/api/.env`.
+fn expand_recursive(patterns: &[String]) -> Vec<String> {
+    let mut out = Vec::new();
+    for p in patterns {
+        out.push(p.clone());
+        if !p.contains('/') {
+            out.push(format!("**/{p}"));
+        }
+    }
+    out
+}
+
 /// Stage and commit with the default "all" strategy.
 pub fn commit(repo_path: &Path, msg: &str, commit_config: &CommitConfig) -> anyhow::Result<()> {
     commit_with_staging(
@@ -40,15 +68,10 @@ pub fn commit_with_staging(
             if staging.include.is_empty() {
                 repo::run_git(repo_path, &["add", "-A"])?;
             } else {
-                let include_globs = build_globset(&staging.include);
+                let include_globs = build_globset(&staging.include)?;
                 let paths: Vec<PathBuf> = repo::changed_paths(repo_path)?
                     .into_iter()
-                    .filter(|path| {
-                        include_globs
-                            .as_ref()
-                            .map(|gs| gs.is_match(path))
-                            .unwrap_or(true)
-                    })
+                    .filter(|path| include_globs.is_match(path))
                     .collect();
                 add_paths(repo_path, &paths)?;
             }
@@ -96,13 +119,13 @@ fn is_ignored(repo_path: &Path, path: &Path) -> bool {
 }
 
 fn unstage_excluded(repo_path: &Path, excludes: &[String]) -> anyhow::Result<()> {
-    if excludes.is_empty() {
-        return Ok(());
-    }
-
-    let Some(globset) = build_globset(excludes) else {
-        return Ok(());
-    };
+    // User-supplied excludes (recursive-expanded) plus a hardcoded secret
+    // denylist that cannot be turned off from config. Both are matched against
+    // the repo-relative changed paths.
+    let mut patterns = expand_recursive(excludes);
+    let deny: Vec<String> = SECRET_DENYLIST.iter().map(|s| s.to_string()).collect();
+    patterns.extend(expand_recursive(&deny));
+    let globset = build_globset(&patterns)?;
 
     for path in repo::changed_paths(repo_path)? {
         if globset.is_match(&path) {
@@ -116,14 +139,16 @@ fn unstage_excluded(repo_path: &Path, excludes: &[String]) -> anyhow::Result<()>
     Ok(())
 }
 
-fn build_globset(patterns: &[String]) -> Option<GlobSet> {
+fn build_globset(patterns: &[String]) -> anyhow::Result<GlobSet> {
+    // Fail closed: an invalid pattern aborts the commit rather than being
+    // silently dropped (which could stage a secret).
     let mut builder = GlobSetBuilder::new();
     for pattern in patterns {
-        if let Ok(glob) = Glob::new(pattern) {
-            builder.add(glob);
-        }
+        let glob = Glob::new(pattern)
+            .map_err(|e| anyhow::anyhow!("invalid staging glob {pattern:?}: {e}"))?;
+        builder.add(glob);
     }
-    builder.build().ok()
+    Ok(builder.build()?)
 }
 
 #[cfg(test)]

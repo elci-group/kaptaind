@@ -200,14 +200,15 @@ async fn system_speak(text: &str) -> anyhow::Result<()> {
         return Ok(());
     }
     if cfg!(target_os = "windows") {
-        let script = format!(
-            "Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.Speak('{}');",
-            text.replace('\'', "''")
-        );
+        // Deliver the text via an environment variable read by a fixed script, so
+        // no user-controlled text is interpolated into the PowerShell command
+        // (defeats injection via backtick, $(...), ;, |, &, or newlines).
+        let script = "Add-Type -AssemblyName System.Speech; $synth = New-Object System.Speech.Synthesis.SpeechSynthesizer; $synth.Speak($env:KAPTAIND_TTS_TEXT);";
         let _ = Command::new("powershell")
             .arg("-NoProfile")
             .arg("-Command")
             .arg(script)
+            .env("KAPTAIND_TTS_TEXT", text)
             .output()
             .await?;
         return Ok(());
@@ -222,7 +223,7 @@ async fn elevenlabs_speak(text: &str, voice: Option<&str>) -> anyhow::Result<()>
         .or_else(|| env::var("ELEVENLABS_VOICE_ID").ok())
         .unwrap_or_else(|| "21m00Tcm4TlvDq8ikWAM".to_string());
 
-    let client = reqwest::Client::new();
+    let client = crate::util::http::hardened_client(std::time::Duration::from_secs(30));
     let response = client
         .post(format!(
             "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
@@ -253,7 +254,7 @@ async fn openai_speak(text: &str, voice: Option<&str>) -> anyhow::Result<()> {
         .or_else(|| env::var("OPENAI_TTS_VOICE").ok())
         .unwrap_or_else(|| "alloy".to_string());
 
-    let client = reqwest::Client::new();
+    let client = crate::util::http::hardened_client(std::time::Duration::from_secs(30));
     let response = client
         .post("https://api.openai.com/v1/audio/speech")
         .bearer_auth(api_key)
@@ -277,6 +278,14 @@ async fn openai_speak(text: &str, voice: Option<&str>) -> anyhow::Result<()> {
 async fn azure_speak(text: &str, voice: Option<&str>) -> anyhow::Result<()> {
     let key = env::var("AZURE_SPEECH_KEY")?;
     let region = env::var("AZURE_SPEECH_REGION")?;
+    if region.is_empty()
+        || region.len() > 32
+        || !region
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    {
+        anyhow::bail!("invalid AZURE_SPEECH_REGION (expected [a-z0-9-]{{1,32}}): {region:?}");
+    }
     let voice = voice
         .map(|v| v.to_string())
         .unwrap_or_else(|| "en-US-AriaNeural".to_string());
@@ -286,7 +295,7 @@ async fn azure_speak(text: &str, voice: Option<&str>) -> anyhow::Result<()> {
         text = escape_xml(text)
     );
 
-    let client = reqwest::Client::new();
+    let client = crate::util::http::hardened_client(std::time::Duration::from_secs(30));
     let response = client
         .post(format!(
             "https://{region}.tts.speech.microsoft.com/cognitiveservices/v1"
@@ -323,12 +332,11 @@ async fn google_speak(text: &str, voice: Option<&str>) -> anyhow::Result<()> {
         "audioConfig": { "audioEncoding": "MP3" }
     });
 
-    let client = reqwest::Client::new();
+    let client = crate::util::http::hardened_client(std::time::Duration::from_secs(30));
     let response = if let Some(key) = api_key {
         client
-            .post(format!(
-                "https://texttospeech.googleapis.com/v1/text:synthesize?key={key}"
-            ))
+            .post("https://texttospeech.googleapis.com/v1/text:synthesize")
+            .header("X-Goog-Api-Key", key)
             .json(&request_body)
             .send()
             .await?
@@ -362,7 +370,7 @@ async fn cartesia_speak(text: &str, voice: Option<&str>) -> anyhow::Result<()> {
         .or_else(|| env::var("CARTESIA_VOICE_ID").ok())
         .unwrap_or_else(|| "5347fbd2-11b2-4f18-9c48-03a39978ace1".to_string());
 
-    let client = reqwest::Client::new();
+    let client = crate::util::http::hardened_client(std::time::Duration::from_secs(30));
     let response = client
         .post("https://api.cartesia.ai/tts/bytes")
         .header("Cartesia-Version", "2024-06-10")
@@ -460,6 +468,11 @@ fn escape_xml(s: &str) -> String {
 mod tests {
     use super::*;
 
+    // The rate limiter is process-global state (`reset_rate_limiter` /
+    // `is_rate_limited`). Serialize the tests that exercise it so parallel
+    // threads cannot reset the state out from under one another.
+    static RATE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn provider_parsing() {
         assert_eq!(
@@ -475,12 +488,14 @@ mod tests {
 
     #[test]
     fn rate_limiter_allows_first_utterance() {
+        let _g = RATE_LOCK.lock().unwrap();
         reset_rate_limiter();
         assert!(!is_rate_limited(5, "first"));
     }
 
     #[test]
     fn rate_limiter_blocks_duplicate_within_window() {
+        let _g = RATE_LOCK.lock().unwrap();
         reset_rate_limiter();
         assert!(!is_rate_limited(5, "dup"));
         assert!(is_rate_limited(5, "dup"));
@@ -488,6 +503,7 @@ mod tests {
 
     #[test]
     fn rate_limiter_disabled_when_zero() {
+        let _g = RATE_LOCK.lock().unwrap();
         reset_rate_limiter();
         assert!(!is_rate_limited(0, "zero"));
         assert!(!is_rate_limited(0, "zero"));

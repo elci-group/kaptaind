@@ -350,7 +350,7 @@ impl BaitManager {
         };
 
         if let Err(err) = crate::util::shell_validation::validate_shell_command(&bait.command) {
-            tracing::warn!(error = %err, bait = %bait.id, command = %bait.command, "shell command validation failed");
+            return BaitResult::failure(format!("rejected unsafe bait command: {err}"));
         }
 
         let mut cmd = Command::new(&bait.command);
@@ -375,7 +375,7 @@ impl BaitManager {
         };
 
         if let Err(err) = crate::util::shell_validation::validate_shell_command(&bait.command) {
-            tracing::warn!(error = %err, bait = %bait.id, command = %bait.command, "shell command validation failed");
+            return BaitResult::failure(format!("rejected unsafe bait command: {err}"));
         }
 
         let mut cmd = Command::new("sh");

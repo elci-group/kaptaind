@@ -166,7 +166,7 @@ pub async fn check_branch_protection(
         return local_ci_status_check(repo_path, protection).await;
     };
 
-    let client = reqwest::Client::new();
+    let client = crate::util::http::hardened_client(std::time::Duration::from_secs(20));
     let mut passing = HashSet::new();
 
     match query_combined_status(&client, &owner, &repo, &options.branch, &token).await {

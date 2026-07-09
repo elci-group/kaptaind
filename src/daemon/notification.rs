@@ -155,13 +155,22 @@ pub fn notify(config: &NotifyConfig, event: NotificationEvent<'_>, webhook_enabl
         if let Some(webhook_url) = config.webhook_url.clone() {
             let content = rendered.webhook;
             tokio::spawn(async move {
-                let payload = if webhook_url.contains("discord.com") {
+                if let Err(err) = crate::util::http::validate_outbound_url(&webhook_url) {
+                    tracing::warn!(error = %err, "refusing unsafe webhook URL");
+                    return;
+                }
+                let is_discord = reqwest::Url::parse(&webhook_url)
+                    .ok()
+                    .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))
+                    .map(|h| h == "discord.com" || h.ends_with(".discord.com"))
+                    .unwrap_or(false);
+                let payload = if is_discord {
                     serde_json::json!({ "content": content })
                 } else {
                     serde_json::json!({ "text": content })
                 };
 
-                let client = reqwest::Client::new();
+                let client = crate::util::http::hardened_client(std::time::Duration::from_secs(15));
                 if let Err(err) = client.post(&webhook_url).json(&payload).send().await {
                     tracing::warn!(error = %err, "failed to send webhook notification");
                 }

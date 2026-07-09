@@ -249,10 +249,8 @@ pub async fn generate(
     let endpoint = resolve_endpoint(config);
     let api_key = resolve_api_key(endpoint)?;
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(config.timeout_secs.max(30)))
-        .build()
-        .ok()?;
+    let client =
+        crate::util::http::hardened_client(Duration::from_secs(config.timeout_secs.max(30)));
 
     let model = resolve_model(config, endpoint);
     let system_prompt = build_system_prompt();
@@ -289,6 +287,15 @@ pub async fn generate(
         .as_deref()
         .unwrap_or_else(|| endpoint.base_url());
 
+    if base_url != endpoint.base_url() {
+        tracing::warn!(endpoint = %base_url, "kimi base_url override in use; ensure it is trusted");
+    }
+    let url = format!("{}/chat/completions", base_url);
+    if let Err(err) = crate::util::http::validate_inference_url(&url) {
+        tracing::warn!(error = %err, endpoint = %base_url, "refusing unsafe kimi endpoint");
+        return None;
+    }
+
     tracing::info!(
         endpoint = %base_url,
         model = model,
@@ -297,7 +304,7 @@ pub async fn generate(
     );
 
     let response = match client
-        .post(format!("{}/chat/completions", base_url))
+        .post(&url)
         .header("Authorization", format!("Bearer {}", api_key))
         .header("Content-Type", "application/json")
         .json(&request)

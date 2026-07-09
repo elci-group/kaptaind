@@ -67,6 +67,8 @@ pub struct Config {
     #[serde(default)]
     pub web_port: u16,
     #[serde(default)]
+    pub web: WebConfig,
+    #[serde(default)]
     pub capabilities: CapabilitiesConfig,
     #[serde(default)]
     pub strict_shell_validation: bool,
@@ -846,6 +848,19 @@ pub struct StagingConfig {
     pub exclude: Vec<String>,
 }
 
+/// `[web]` configuration for the optional WebUI server.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct WebConfig {
+    /// Bearer token required by the WebUI. When unset (or empty), a random
+    /// token is generated at startup and printed once to stderr.
+    #[serde(default)]
+    pub auth_token: Option<String>,
+    /// Allow `POST /api/config` to rewrite `kaptaind.toml`. Disabled by default;
+    /// enabling it exposes a config-write endpoint and is not recommended.
+    #[serde(default)]
+    pub allow_config_write: bool,
+}
+
 /// `[commit]` configuration for git commit behavior.
 #[derive(Debug, Clone, Deserialize)]
 pub struct CommitConfig {
@@ -1478,6 +1493,7 @@ impl Default for Config {
             air_gapped: false,
             health_port: default_health_port(),
             web_port: 0,
+            web: WebConfig::default(),
             capabilities: CapabilitiesConfig::default(),
             strict_shell_validation: false,
         }

@@ -1,8 +1,8 @@
 use axum::{
     body::Body,
     extract::{Path, Query, State},
-    http::{header, HeaderValue, Method, Request, StatusCode},
-    middleware::{from_fn, Next},
+    http::{header, Request, StatusCode},
+    middleware::{from_fn_with_state, Next},
     response::{sse::Event as SseEvent, Html, IntoResponse, Json, Response, Sse},
     routing::get,
     Router,
@@ -30,6 +30,8 @@ pub struct WebState {
     pub metrics: Arc<Metrics>,
     pub event_tx: broadcast::Sender<DaemonEvent>,
     pub version: String,
+    pub auth_token: String,
+    pub allow_config_write: bool,
 }
 
 pub async fn start_web_server(port: u16, state: WebState) -> anyhow::Result<()> {
@@ -37,7 +39,9 @@ pub async fn start_web_server(port: u16, state: WebState) -> anyhow::Result<()> 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!(%addr, "web UI server listening");
 
-    let app = routes().layer(from_fn(cors_middleware)).with_state(state);
+    let app = routes()
+        .layer(from_fn_with_state(state.clone(), auth_middleware))
+        .with_state(state);
     axum::serve(listener, app).await?;
     Ok(())
 }
@@ -62,49 +66,122 @@ fn routes() -> Router<WebState> {
         .route("/api/graph/commits", get(commit_graph_handler))
 }
 
-async fn cors_middleware(request: Request<Body>, next: Next) -> Response {
-    if request.method() == Method::OPTIONS {
-        return cors_headers().into_response();
+/// Authentication + CSRF middleware.
+///
+/// Every route except the static HTML shell (`GET /`) requires a valid bearer
+/// token (header `Authorization: Bearer <token>`, or `?token=` for EventSource,
+/// which cannot set headers). State-changing requests (POST) must additionally
+/// present a loopback `Origin` when one is supplied, which a cross-origin page
+/// cannot forge. No CORS headers are emitted, so cross-origin browser access is
+/// blocked outright.
+async fn auth_middleware(
+    State(state): State<WebState>,
+    request: Request<Body>,
+    next: Next,
+) -> Response {
+    if request.uri().path() == "/" {
+        return next.run(request).await;
     }
-    let mut response = next.run(request).await;
-    let headers = response.headers_mut();
-    append_cors(headers);
-    response
+
+    let authorized = extract_token(&request)
+        .as_deref()
+        .map(|t| {
+            crate::util::constant_time::constant_time_eq(t.as_bytes(), state.auth_token.as_bytes())
+        })
+        .unwrap_or(false);
+    if !authorized {
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": "unauthorized" })),
+        )
+            .into_response();
+    }
+
+    if request.method() == axum::http::Method::POST {
+        let origin_ok = request
+            .headers()
+            .get(header::ORIGIN)
+            .and_then(|v| v.to_str().ok())
+            .map(origin_is_loopback)
+            .unwrap_or(true);
+        if !origin_ok {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(json!({ "error": "cross-origin request blocked" })),
+            )
+                .into_response();
+        }
+    }
+
+    next.run(request).await
 }
 
-fn cors_headers() -> impl IntoResponse {
-    (
-        StatusCode::OK,
-        [
-            (
-                header::ACCESS_CONTROL_ALLOW_ORIGIN,
-                HeaderValue::from_static("*"),
-            ),
-            (
-                header::ACCESS_CONTROL_ALLOW_METHODS,
-                HeaderValue::from_static("GET, POST, OPTIONS"),
-            ),
-            (
-                header::ACCESS_CONTROL_ALLOW_HEADERS,
-                HeaderValue::from_static("Content-Type"),
-            ),
-        ],
-    )
+fn extract_token(request: &Request<Body>) -> Option<String> {
+    if let Some(v) = request
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    {
+        if let Some(t) = v.strip_prefix("Bearer ") {
+            return Some(t.to_string());
+        }
+    }
+    // EventSource cannot set headers, so the SSE deep-link carries the token in
+    // the query string. Generated tokens are hex and need no decoding.
+    if let Some(q) = request.uri().query() {
+        for pair in q.split('&') {
+            if let Some(t) = pair.strip_prefix("token=") {
+                return Some(t.to_string());
+            }
+        }
+    }
+    None
 }
 
-fn append_cors(headers: &mut axum::http::HeaderMap) {
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, POST, OPTIONS"),
-    );
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("Content-Type"),
-    );
+fn origin_is_loopback(origin: &str) -> bool {
+    let lower = origin.to_ascii_lowercase();
+    for host in [
+        "http://127.0.0.1",
+        "http://localhost",
+        "http://[::1]",
+        "https://127.0.0.1",
+        "https://localhost",
+        "https://[::1]",
+    ] {
+        if let Some(rest) = lower.strip_prefix(host) {
+            if rest.is_empty() || rest.starts_with(':') {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Recursively redact secret-shaped keys in a JSON value before it leaves the
+/// daemon. A key is treated as secret if its lowercase name contains
+/// `secret`/`token`/`password`/`api_key`/`apikey`, ends with `_key`, or is `key`.
+fn redact_value(v: &mut serde_json::Value) {
+    match v {
+        serde_json::Value::Object(map) => {
+            for (k, val) in map.iter_mut() {
+                let kl = k.to_ascii_lowercase();
+                let secret = kl.contains("secret")
+                    || kl.contains("token")
+                    || kl.contains("password")
+                    || kl.contains("api_key")
+                    || kl.contains("apikey")
+                    || kl.ends_with("_key")
+                    || kl == "key";
+                if secret {
+                    *val = serde_json::Value::String("<redacted>".to_string());
+                } else {
+                    redact_value(val);
+                }
+            }
+        }
+        serde_json::Value::Array(arr) => arr.iter_mut().for_each(redact_value),
+        _ => {}
+    }
 }
 
 async fn index_handler() -> Html<&'static str> {
@@ -123,8 +200,8 @@ async fn api_handler() -> Json<serde_json::Value> {
             { "method": "GET", "path": "/api/usage", "description": "Per-provider and per-model usage" },
             { "method": "GET", "path": "/api/commits?limit=N", "description": "Commit history summary" },
             { "method": "GET", "path": "/api/commits/:id", "description": "Single analysis artifact" },
-            { "method": "GET", "path": "/api/config", "description": "Current raw and parsed config" },
-            { "method": "POST", "path": "/api/config", "description": "Validate and save config TOML" },
+            { "method": "GET", "path": "/api/config", "description": "Current (redacted) parsed config" },
+            { "method": "POST", "path": "/api/config", "description": "Validate and save config TOML (requires [web].allow_config_write)" },
             { "method": "GET", "path": "/api/metrics", "description": "Daemon metrics counters" },
             { "method": "GET", "path": "/api/events", "description": "SSE stream of daemon events" },
             { "method": "GET", "path": "/api/version", "description": "Repository VERSION and daemon version" },
@@ -183,11 +260,18 @@ async fn commit_detail_handler(
     State(state): State<WebState>,
     Path(id): Path<String>,
 ) -> Result<Json<AnalysisArtifact>, StatusCode> {
-    let path = state
-        .repo_path
-        .join(".kaptaind")
-        .join("analysis")
-        .join(format!("{id}.json"));
+    // Reject path-traversal / unusual ids: only a conservative allowlist is
+    // accepted, and the resolved path must stay inside the analysis dir.
+    if id.is_empty()
+        || id.len() > 64
+        || !id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let base = state.repo_path.join(".kaptaind").join("analysis");
+    let path = base.join(format!("{id}.json"));
     std::fs::read_to_string(&path)
         .ok()
         .and_then(|c| serde_json::from_str(&c).ok())
@@ -198,16 +282,27 @@ async fn commit_detail_handler(
 async fn config_handler(State(state): State<WebState>) -> Json<serde_json::Value> {
     let path = state.repo_path.join("kaptaind.toml");
     let raw = std::fs::read_to_string(&path).unwrap_or_default();
-    let parsed: serde_json::Value = toml::from_str(&raw)
+    let mut parsed: serde_json::Value = toml::from_str(&raw)
         .map(|v: toml::Value| serde_json::to_value(v).unwrap_or_default())
         .unwrap_or_default();
-    Json(json!({ "raw": raw, "parsed": parsed }))
+    redact_value(&mut parsed);
+    // Raw TOML may contain secrets; never return it over the API.
+    Json(json!({ "raw": "<redacted: read kaptaind.toml locally>", "parsed": parsed }))
 }
 
 async fn config_update_handler(
     State(state): State<WebState>,
     body: String,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    if !state.allow_config_write {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(
+                json!({ "error": "config writes disabled (set [web].allow_config_write = true to enable)" }),
+            ),
+        ));
+    }
+
     // Ensure the content is valid TOML.
     if let Err(err) = body.parse::<toml_edit::DocumentMut>() {
         return Err((
@@ -404,7 +499,7 @@ fn parse_cargo_lock(lock: &toml::Value) -> GraphData {
             id_by_name.insert(name.clone(), idx);
             nodes.push(GraphNode {
                 id: idx,
-                label: name,
+                label: name.clone(),
                 version,
             });
         }
@@ -444,7 +539,7 @@ fn parse_package_json(pkg: &serde_json::Value) -> GraphData {
     id_by_name.insert(root_name.clone(), 0);
     nodes.push(GraphNode {
         id: 0,
-        label: root_name,
+        label: root_name.clone(),
         version: pkg
             .get("version")
             .and_then(|v| v.as_str())
@@ -544,6 +639,8 @@ mod tests {
             metrics: Arc::new(Metrics::default()),
             event_tx: tx,
             version: "9.6.6".to_string(),
+            auth_token: "test-token".to_string(),
+            allow_config_write: true,
         }
     }
 
@@ -609,13 +706,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn config_handler_reads_toml() {
+    async fn config_handler_redacts_secrets() {
         let dir = tempdir().unwrap();
-        std::fs::write(dir.path().join("kaptaind.toml"), "repo_path = \"./\"\n").unwrap();
+        std::fs::write(
+            dir.path().join("kaptaind.toml"),
+            "repo_path = \"./\"\n[notify]\nwebhook_url = \"https://x\"\nsecret = \"TOPSECRET\"\n",
+        )
+        .unwrap();
         let state = test_state(dir.path().to_path_buf());
         let Json(body) = config_handler(State(state)).await;
-        assert!(body["raw"].as_str().unwrap().contains("repo_path"));
-        assert_eq!(body["parsed"]["repo_path"], "./");
+        // Raw TOML is never returned.
+        assert_ne!(body["raw"].as_str().unwrap(), "");
+        assert!(!body["raw"].as_str().unwrap().contains("TOPSECRET"));
+        // Secret-shaped key is redacted in parsed form.
+        let serialized = serde_json::to_string(&body).unwrap();
+        assert!(!serialized.contains("TOPSECRET"));
     }
 
     #[tokio::test]
@@ -627,6 +732,17 @@ mod tests {
         let (status, Json(body)) = result.unwrap_err();
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert!(body["error"].as_str().unwrap().contains("invalid TOML"));
+    }
+
+    #[tokio::test]
+    async fn config_update_forbidden_when_disabled() {
+        let dir = tempdir().unwrap();
+        let mut state = test_state(dir.path().to_path_buf());
+        state.allow_config_write = false;
+        let result = config_update_handler(State(state), "repo_path = \"./\"\n".to_string()).await;
+        assert!(result.is_err());
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -673,6 +789,47 @@ required = true
         let state = test_state(dir.path().to_path_buf());
         let result = commit_detail_handler(State(state), Path("no-such-id".to_string())).await;
         assert_eq!(result.unwrap_err(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn commit_detail_rejects_traversal_ids() {
+        let dir = tempdir().unwrap();
+        let state = test_state(dir.path().to_path_buf());
+        for bad in ["../etc/passwd", "..%2F..%2Fetc%2Ffoo", "a/b", "x y", ""] {
+            let result = commit_detail_handler(State(state.clone()), Path(bad.to_string())).await;
+            assert!(
+                matches!(
+                    result,
+                    Err(StatusCode::BAD_REQUEST) | Err(StatusCode::NOT_FOUND)
+                ),
+                "id {bad:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn origin_check_accepts_loopback_only() {
+        assert!(origin_is_loopback("http://127.0.0.1:8080"));
+        assert!(origin_is_loopback("http://localhost:8080"));
+        assert!(!origin_is_loopback("http://evil.example"));
+        assert!(!origin_is_loopback("http://127.0.0.1.evil.example"));
+    }
+
+    #[test]
+    fn redact_value_masks_secret_keys() {
+        let mut v = json!({
+            "webhook_url": "https://hooks.example/abc",
+            "secret": "S",
+            "nested": { "api_key": "K", "name": "keep" },
+            "list": [{ "token": "T" }],
+        });
+        redact_value(&mut v);
+        let s = serde_json::to_string(&v).unwrap();
+        assert!(!s.contains("\"S\""));
+        assert!(!s.contains("\"K\""));
+        assert!(!s.contains("\"T\""));
+        assert!(s.contains("keep"));
+        assert!(s.contains("https://hooks.example/abc"));
     }
 
     #[test]

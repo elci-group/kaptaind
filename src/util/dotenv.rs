@@ -149,7 +149,10 @@ mod tests {
         load_from(temp.path()).unwrap();
         // PATH must be unchanged (never set from file, and not allowlisted).
         assert_eq!(std::env::var_os("PATH"), before_path);
-        assert!(std::env::var_os("LD_PRELOAD").is_none() || std::env::var("LD_PRELOAD").unwrap() != "/tmp/evil.so");
+        assert!(
+            std::env::var_os("LD_PRELOAD").is_none()
+                || std::env::var("LD_PRELOAD").unwrap() != "/tmp/evil.so"
+        );
         assert!(std::env::var_os("RANDOM").is_none());
     }
 

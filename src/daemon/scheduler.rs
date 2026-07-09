@@ -1380,7 +1380,11 @@ pub async fn run_test_hook_for_config(test: &TestConfig, repo_path: &Path) -> Te
     };
 
     if let Err(err) = crate::util::shell_validation::validate_shell_command(command) {
-        tracing::warn!(error = %err, command = command, "shell command validation failed");
+        return TestOutcome::Failed {
+            code: None,
+            stderr: format!("rejected unsafe test hook command: {err}"),
+            failed_tests: Vec::new(),
+        };
     }
 
     match Command::new("sh")

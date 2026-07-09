@@ -419,8 +419,20 @@
     if (v === 'config') loadConfig();
   }));
 
+  const KAPTAIND_TOKEN = (() => {
+    const fromUrl = new URLSearchParams(location.search).get('token');
+    if (fromUrl) { try { sessionStorage.setItem('kaptaind_token', fromUrl); } catch (e) {} return fromUrl; }
+    try { return sessionStorage.getItem('kaptaind_token') || ''; } catch (e) { return ''; }
+  })();
+  function kfetch(url, opts) {
+    opts = opts || {}; opts.headers = opts.headers || {};
+    if (KAPTAIND_TOKEN) opts.headers['Authorization'] = 'Bearer ' + KAPTAIND_TOKEN;
+    return fetch(url, opts);
+  }
+  function tokenQuery() { return KAPTAIND_TOKEN ? ('?token=' + encodeURIComponent(KAPTAIND_TOKEN)) : ''; }
+
   async function api(path) {
-    const r = await fetch('/api' + path);
+    const r = await kfetch('/api' + path);
     if (!r.ok) throw new Error(`${path}: ${r.status}`);
     return r.json();
   }
@@ -646,7 +658,7 @@
     const raw = document.getElementById('config-editor').value;
     const fb = document.getElementById('config-feedback');
     try {
-      const r = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: raw });
+      const r = await kfetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: raw });
       const data = await r.json();
       if (r.ok) { fb.innerHTML = '<span class="status-ok">✓ Saved</span>'; toast('Config saved'); }
       else { fb.innerHTML = `<span class="status-fail">✗ ${data.error || 'Validation failed'}</span>`; }
@@ -692,7 +704,7 @@
   }
 
   function connectEvents() {
-    const es = new EventSource('/api/events');
+    const es = new EventSource('/api/events' + tokenQuery());
     es.onmessage = e => {
       const ev = JSON.parse(e.data);
       const log = document.getElementById('events');

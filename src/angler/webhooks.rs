@@ -133,10 +133,7 @@ pub struct WebhookManager {
 impl WebhookManager {
     /// Create a new webhook manager.
     pub fn new(config: &WebhooksConfig) -> Result<Self> {
-        let client = reqwest::Client::builder()
-            .timeout(Duration::from_secs(30))
-            .build()
-            .context("Failed to create HTTP client")?;
+        let client = crate::util::http::hardened_client(Duration::from_secs(30));
 
         Ok(Self {
             config: config.clone(),
@@ -194,6 +191,19 @@ impl WebhookManager {
                     response_body: None,
                 };
             }
+        }
+
+        // Re-validate at send time so a private/metadata target cannot be
+        // reached even if config changed since validation or was never validated.
+        if let Err(err) = crate::util::http::validate_outbound_url(&endpoint.url) {
+            return DeliveryResult {
+                success: false,
+                status_code: None,
+                attempts: 0,
+                duration_ms: start.elapsed().as_millis() as u64,
+                error: Some(format!("unsafe webhook URL: {err}")),
+                response_body: None,
+            };
         }
 
         // Build payload
@@ -308,11 +318,11 @@ impl WebhookManager {
     pub fn validate_endpoint(&self, endpoint: &WebhookEndpoint) -> Vec<String> {
         let mut errors = Vec::new();
 
-        // Validate URL
+        // Validate URL (scheme, host reachability, and SSRF safety).
         if endpoint.url.is_empty() {
             errors.push("URL is required".to_string());
-        } else if !endpoint.url.starts_with("http://") && !endpoint.url.starts_with("https://") {
-            errors.push("URL must start with http:// or https://".to_string());
+        } else if let Err(err) = crate::util::http::validate_outbound_url(&endpoint.url) {
+            errors.push(format!("unsafe webhook URL: {err}"));
         }
 
         // Validate ID
