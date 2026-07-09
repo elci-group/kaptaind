@@ -1470,7 +1470,7 @@ dependencies = [
 
 [[package]]
 name = "kaptaind"
-version = "9.7.13"
+version = "9.7.15"
 dependencies = [
  "anyhow",
  "axum",
