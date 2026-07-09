@@ -91,10 +91,16 @@ pub struct TrawlResult {
     pub very_high_confidence_count: usize,
 }
 
-/// Trawl a directory tree for codebases and optionally initialize them
+/// Trawl a directory tree for codebases and optionally initialize them.
+///
+/// Root-down, ignore-aware discovery:
+/// 1. Walk with `ignore::WalkBuilder` so `.gitignore`/`.ignore`/global gitignore,
+///    `DEFAULT_SKIP_DIRS` and the user blacklist prune heavy subtrees.
+/// 2. Detect candidates, gating Rust on a *valid* parsed `Cargo.toml`.
+/// 3. Reduce root-down: the outermost valid project wins; Cargo workspace roots also
+///    yield their member crates (reported, initialized only with `expand_workspaces`).
 pub fn trawl(options: &TrawlOptions) -> anyhow::Result<TrawlResult> {
-    let mut projects = Vec::new();
-    let mut errors = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
 
     let root = &options.root;
     if !root.exists() {
@@ -104,20 +110,20 @@ pub fn trawl(options: &TrawlOptions) -> anyhow::Result<TrawlResult> {
         anyhow::bail!("Root path is not a directory: {}", root.display());
     }
 
-    // Track visited directories to avoid cycles
-    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let root_abs = absolutize(root)?;
+    let blacklist = compile_blacklist(&options.blacklist, &mut errors);
 
-    // Perform the recursive scan
-    scan_directory(root, 0, options, &mut visited, &mut projects, &mut errors)?;
-
-    // Filter by confidence threshold
-    let filtered_projects: Vec<_> = projects
+    // Walk + detect candidates.
+    let dirs = collect_dirs(&root_abs, options, &blacklist);
+    let candidates: Vec<DiscoveredProject> = dirs
         .iter()
-        .filter(|p| p.confidence_score >= options.min_confidence)
-        .cloned()
+        .filter_map(|dir| detect_candidate(dir, &root_abs, options))
         .collect();
 
-    // Calculate confidence metrics
+    // Root-down reduction (outermost wins; workspaces yield members).
+    let filtered_projects = root_down_reduce(candidates);
+
+    // Confidence metrics over the accepted projects.
     let avg_confidence = if !filtered_projects.is_empty() {
         filtered_projects
             .iter()
@@ -137,23 +143,27 @@ pub fn trawl(options: &TrawlOptions) -> anyhow::Result<TrawlResult> {
         .filter(|p| p.confidence_score >= 0.95)
         .count();
 
-    // Initialize projects that need it
+    // Initialize projects that need it. Workspace members are reported but only
+    // initialized when explicitly requested.
     let mut initialized_count = 0;
     let mut registered_count = 0;
     let mut skipped_count = 0;
 
     for project in &filtered_projects {
+        if project.workspace_root.is_some() && !options.expand_workspaces {
+            // Informational member crate: the workspace root owns initialization.
+            continue;
+        }
+
         if project.is_initialized && options.skip_initialized {
             skipped_count += 1;
             continue;
         }
 
-        // Initialize the project
         match initialize_project(project) {
             Ok(_) => {
                 initialized_count += 1;
 
-                // Register for auto-start if enabled
                 if options.auto_register {
                     if let Err(e) = register_project(&project.path) {
                         errors.push(format!(
@@ -187,6 +197,173 @@ pub fn trawl(options: &TrawlOptions) -> anyhow::Result<TrawlResult> {
         very_high_confidence_count,
     })
 }
+
+/// Make `root` absolute without resolving symlinks (consistent with `follow_links`).
+fn absolutize(root: &Path) -> anyhow::Result<PathBuf> {
+    if root.is_absolute() {
+        Ok(root.to_path_buf())
+    } else {
+        Ok(std::env::current_dir()?.join(root))
+    }
+}
+
+/// Compile user blacklist patterns into globs, recording invalid patterns as errors.
+fn compile_blacklist(patterns: &[String], errors: &mut Vec<String>) -> Vec<globset::Glob> {
+    let mut globs = Vec::new();
+    for pattern in patterns {
+        let trimmed = pattern.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match globset::Glob::new(trimmed) {
+            Ok(g) => globs.push(g),
+            Err(e) => errors.push(format!("Invalid blacklist pattern {:?}: {}", trimmed, e)),
+        }
+    }
+    globs
+}
+
+/// Walk `root` and collect every directory that is not pruned by the built-in skip
+/// list, the user blacklist, or ignore files. The root itself is always included so a
+/// project sitting exactly at the trawl root is detected.
+fn collect_dirs(root: &Path, options: &TrawlOptions, blacklist: &[globset::Glob]) -> Vec<PathBuf> {
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .max_depth(options.max_depth)
+        .hidden(true)
+        .follow_links(options.follow_links)
+        .parents(options.respect_ignore_files)
+        .ignore(options.respect_ignore_files)
+        .git_ignore(options.respect_ignore_files)
+        .git_global(options.respect_ignore_files)
+        .git_exclude(options.respect_ignore_files);
+
+    let found: Arc<Mutex<Vec<PathBuf>>> = Arc::new(Mutex::new(vec![root.to_path_buf()]));
+    let root_arc: Arc<Path> = Arc::from(root.to_path_buf());
+    let blacklist = blacklist.to_vec();
+
+    builder.build_parallel().run(|| {
+        let found = found.clone();
+        let root = root_arc.clone();
+        let blacklist = blacklist.clone();
+        Box::new(move |entry| {
+            let entry = match entry {
+                Ok(e) => e,
+                Err(_) => return WalkState::Continue,
+            };
+            let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
+            if !is_dir {
+                return WalkState::Continue;
+            }
+            let path = entry.path();
+            let rel = path.strip_prefix(root.as_ref()).unwrap_or(Path::new(""));
+            if !rel.as_os_str().is_empty() {
+                let name = entry.file_name().to_string_lossy();
+                if is_blacklisted(&name, rel, &blacklist) {
+                    return WalkState::Skip;
+                }
+            }
+            if let Ok(mut v) = found.lock() {
+                v.push(path.to_path_buf());
+            }
+            WalkState::Continue
+        })
+    });
+
+    match Arc::try_unwrap(found) {
+        Ok(mutex) => mutex.into_inner().unwrap_or_default(),
+        Err(shared) => shared.lock().map(|v| v.clone()).unwrap_or_default(),
+    }
+}
+
+/// Run detection on a single directory, applying confidence/type/git filters and gating
+/// Rust on a valid manifest. Returns `None` if the directory is not a candidate.
+fn detect_candidate(dir: &Path, root: &Path, options: &TrawlOptions) -> Option<DiscoveredProject> {
+    let detection = detect_project_type_with_confidence(dir);
+    if detection.project_type == ProjectType::Unknown {
+        return None;
+    }
+    if detection.confidence.score() < options.min_confidence {
+        return None;
+    }
+    if !options.filter_types.is_empty() && !options.filter_types.contains(&detection.project_type) {
+        return None;
+    }
+
+    let cargo_kind = if detection.project_type == ProjectType::Rust {
+        let kind = inspect_cargo_manifest(dir);
+        if !kind.is_valid() {
+            return None;
+        }
+        Some(kind)
+    } else {
+        None
+    };
+
+    let is_git = is_git_repo(dir);
+    if options.require_git && !is_git {
+        return None;
+    }
+
+    let depth = dir
+        .strip_prefix(root)
+        .map(|r| r.components().count())
+        .unwrap_or(0);
+
+    Some(DiscoveredProject {
+        path: dir.to_path_buf(),
+        project_type: detection.project_type,
+        confidence: detection.confidence,
+        confidence_score: detection.confidence.score(),
+        detection_indicators: detection.indicators,
+        is_git_repo: is_git,
+        is_initialized: is_kaptaind_initialized(dir),
+        depth,
+        workspace_root: None,
+        cargo_kind,
+    })
+}
+
+/// Root-down reduction: sort candidates shallowest-first, then keep a candidate only if
+/// no already-accepted project is its ancestor — except Cargo workspace member crates,
+/// which are kept and linked to their workspace root. Outermost project always wins.
+fn root_down_reduce(mut candidates: Vec<DiscoveredProject>) -> Vec<DiscoveredProject> {
+    candidates.sort_by(|a, b| a.depth.cmp(&b.depth).then_with(|| a.path.cmp(&b.path)));
+
+    let mut accepted: Vec<DiscoveredProject> = Vec::new();
+    let mut accepted_roots: Vec<PathBuf> = Vec::new();
+    let mut member_dirs: HashSet<PathBuf> = HashSet::new();
+
+    for c in candidates.into_iter() {
+        let ancestor = accepted_roots
+            .iter()
+            .find(|a| c.path != **a && c.path.starts_with(a))
+            .cloned();
+
+        match ancestor {
+            None => {
+                if c.cargo_kind.map(|k| k.is_workspace()).unwrap_or(false) {
+                    for m in workspace_members(&c.path) {
+                        member_dirs.insert(m);
+                    }
+                }
+                accepted_roots.push(c.path.clone());
+                accepted.push(c);
+            }
+            Some(root) if member_dirs.contains(&c.path) => {
+                let mut member = c;
+                member.workspace_root = Some(root);
+                accepted.push(member);
+            }
+            _ => {
+                // Nested beneath a non-workspace project: outermost wins, drop it.
+            }
+        }
+    }
+
+    accepted
+}
+
 
 /// Recursively scan a directory for projects
 fn scan_directory(
