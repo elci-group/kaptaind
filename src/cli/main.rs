@@ -242,15 +242,26 @@ Options:
     -t, --type <TYPES>           Filter by project types (comma-separated).
     -f, --format <FORMAT>        Output format: text (default) or json.
         --dry-run                Discover but do not initialize anything.
+        --blacklist <GLOBS>      Extra dir names or globs to skip (comma-separated),
+                                 layered on the built-in skip list and ignore files.
+        --no-ignore              Do not honor .gitignore/.ignore files.
+        --follow-links           Follow symbolic links while walking.
+        --expand-workspaces      Also initialize Cargo workspace member crates.
 
 Examples:
     kaptaind-cli trawl
     kaptaind-cli trawl --path ~/projects
     kaptaind-cli trawl --max-depth 3
     kaptaind-cli trawl --type rust,go --dry-run
+    kaptaind-cli trawl --blacklist scratch,vendor/* --type rust
 
 Notes:
-    By default, projects with an existing kaptaind.toml are skipped."#,
+    Discovery is root-down and ignore-aware: .gitignore/.ignore files are honored, the
+    outermost valid project wins, and Cargo workspaces report their member crates.
+    Rust projects require a valid Cargo.toml ([package] and/or [workspace]); stray or
+    empty manifests are ignored. Workspace members are reported but only initialized
+    with --expand-workspaces. By default, projects with an existing kaptaind.toml are
+    skipped."#,
         after_help = r#"See the kaptaind-cli(1) man page and kaptaind.toml(5) for details.
 Relevant config section: [trawler] (if present)."#
     )]
@@ -282,6 +293,19 @@ Relevant config section: [trawler] (if present)."#
         /// Dry run: discover but do not initialize.
         #[arg(long)]
         dry_run: bool,
+        /// Additional directory names or globs to skip (comma-separated), layered on top
+        /// of the built-in skip list and any .gitignore/.ignore files.
+        #[arg(long, value_name = "GLOBS", value_delimiter = ',')]
+        blacklist: Vec<String>,
+        /// Do not honor .gitignore/.ignore files (surface projects in ignored dirs).
+        #[arg(long)]
+        no_ignore: bool,
+        /// Follow symbolic links while walking.
+        #[arg(long)]
+        follow_links: bool,
+        /// Also initialize Cargo workspace member crates (always reported regardless).
+        #[arg(long)]
+        expand_workspaces: bool,
     },
 
     /// 📊 Live terminal dashboard
@@ -1371,6 +1395,10 @@ async fn main() -> anyhow::Result<()> {
             r#type,
             format,
             dry_run,
+            blacklist,
+            no_ignore,
+            follow_links,
+            expand_workspaces,
         } => {
             let rbac_config = loader::load().map(|c| c.rbac).unwrap_or_default();
             kaptaind::rbac::check_permission(&rbac_config, "config.edit")?;
@@ -1385,6 +1413,10 @@ async fn main() -> anyhow::Result<()> {
                 auto_register: !no_register && !dry_run,
                 filter_types: parse_project_types(r#type),
                 min_confidence: 0.55, // Medium confidence minimum
+                blacklist: blacklist.clone(),
+                respect_ignore_files: !no_ignore,
+                follow_links: *follow_links,
+                expand_workspaces: *expand_workspaces,
             };
             handle_trawl(&options, format, *dry_run)?;
             return Ok(());
