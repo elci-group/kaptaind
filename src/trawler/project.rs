@@ -828,7 +828,10 @@ name = "root"
         // Plain package
         let temp = TempDir::new().unwrap();
         std::fs::write(temp.path().join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
-        assert_eq!(inspect_cargo_manifest(temp.path()), CargoManifestKind::Package);
+        assert_eq!(
+            inspect_cargo_manifest(temp.path()),
+            CargoManifestKind::Package
+        );
 
         // Virtual workspace
         let temp = TempDir::new().unwrap();
@@ -856,16 +859,25 @@ name = "root"
         // Empty / neither table
         let temp = TempDir::new().unwrap();
         std::fs::write(temp.path().join("Cargo.toml"), "").unwrap();
-        assert_eq!(inspect_cargo_manifest(temp.path()), CargoManifestKind::Invalid);
+        assert_eq!(
+            inspect_cargo_manifest(temp.path()),
+            CargoManifestKind::Invalid
+        );
 
         // Malformed TOML
         let temp = TempDir::new().unwrap();
         std::fs::write(temp.path().join("Cargo.toml"), "this is = not valid = =").unwrap();
-        assert_eq!(inspect_cargo_manifest(temp.path()), CargoManifestKind::Invalid);
+        assert_eq!(
+            inspect_cargo_manifest(temp.path()),
+            CargoManifestKind::Invalid
+        );
 
         // No manifest at all
         let temp = TempDir::new().unwrap();
-        assert_eq!(inspect_cargo_manifest(temp.path()), CargoManifestKind::Invalid);
+        assert_eq!(
+            inspect_cargo_manifest(temp.path()),
+            CargoManifestKind::Invalid
+        );
     }
 
     #[test]
@@ -934,11 +946,7 @@ name = "root"
         ));
 
         let none = globset::Glob::new("nope").unwrap();
-        assert!(!is_blacklisted(
-            "src",
-            std::path::Path::new("src"),
-            &[none]
-        ));
+        assert!(!is_blacklisted("src", std::path::Path::new("src"), &[none]));
 
         // Built-in skip list always applies, even with an empty user blacklist.
         assert!(is_blacklisted(
