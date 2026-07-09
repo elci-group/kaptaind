@@ -170,7 +170,7 @@ Example:
 
 ## trawl
 
-**kaptaind-cli trawl** [**--path** *PATH*] [**--max-depth** *N*] [**--include-existing**] [**--require-git**] [**--type** *TYPES*] [**--format** *FORMAT*] [**--dry-run**]
+**kaptaind-cli trawl** [**--path** *PATH*] [**--max-depth** *N*] [**--include-existing**] [**--require-git**] [**--type** *TYPES*] [**--format** *FORMAT*] [**--dry-run**] [**--blacklist** *GLOBS*] [**--no-ignore**] [**--follow-links**] [**--expand-workspaces**]
 
 Recursively discover and auto-initialize codebases.
 
@@ -194,6 +194,26 @@ Recursively discover and auto-initialize codebases.
 
 **--dry-run**
 :   Discover projects without initializing them.
+
+**--blacklist**=*GLOBS*
+:   Comma-separated directory names or globs to skip (e.g. **scratch,vendor/\***),
+    layered on top of the built-in skip list and any **.gitignore**/**.ignore** files.
+
+**--no-ignore**
+:   Do not honor **.gitignore**/**.ignore** files; surface projects inside ignored dirs.
+
+**--follow-links**
+:   Follow symbolic links while walking (default: off).
+
+**--expand-workspaces**
+:   Also initialize Cargo workspace member crates with their own **kaptaind.toml**.
+    Members are always *reported*; this only controls initialization.
+
+Discovery is **root-down** and **ignore-aware**: **.gitignore**/**.ignore** files are
+honored, the outermost valid project wins, and Cargo workspaces report their member
+crates. A directory only counts as a Rust project when its **Cargo.toml** parses and
+contains a **[package]** and/or **[workspace]** table, so stray or empty manifests are
+ignored.
 
 Example:
 

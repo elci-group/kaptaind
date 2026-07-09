@@ -1040,6 +1040,15 @@ pub struct TrawlConfig {
     /// Project types to look for (empty = all)
     #[serde(default)]
     pub project_types: Vec<String>,
+    /// Extra directory names or globs to skip (layered on the built-in list and ignore files)
+    #[serde(default)]
+    pub blacklist: Vec<String>,
+    /// Honor .gitignore/.ignore files while trawling (default: true)
+    #[serde(default = "default_trawl_respect_ignore")]
+    pub respect_ignore_files: bool,
+    /// Also initialize Cargo workspace member crates (default: false)
+    #[serde(default)]
+    pub expand_workspaces: bool,
     /// Interval between auto-trawls in seconds (0 = only on startup)
     #[serde(default)]
     pub interval_secs: u64,
@@ -1054,6 +1063,9 @@ fn default_trawl_skip_initialized() -> bool {
 fn default_trawl_auto_register() -> bool {
     true
 }
+fn default_trawl_respect_ignore() -> bool {
+    true
+}
 
 impl Default for TrawlConfig {
     fn default() -> Self {
@@ -1065,6 +1077,9 @@ impl Default for TrawlConfig {
             require_git: false,
             auto_register: default_trawl_auto_register(),
             project_types: Vec::new(),
+            blacklist: Vec::new(),
+            respect_ignore_files: default_trawl_respect_ignore(),
+            expand_workspaces: false,
             interval_secs: 0,
         }
     }
