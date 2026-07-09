@@ -365,124 +365,6 @@ fn root_down_reduce(mut candidates: Vec<DiscoveredProject>) -> Vec<DiscoveredPro
 }
 
 
-/// Recursively scan a directory for projects
-fn scan_directory(
-    path: &Path,
-    depth: usize,
-    options: &TrawlOptions,
-    visited: &mut HashSet<PathBuf>,
-    projects: &mut Vec<DiscoveredProject>,
-    errors: &mut Vec<String>,
-) -> anyhow::Result<()> {
-    // Check depth limit
-    if let Some(max) = options.max_depth {
-        if depth > max {
-            return Ok(());
-        }
-    }
-
-    // Canonicalize to avoid symlink cycles
-    let canonical = match path.canonicalize() {
-        Ok(p) => p,
-        Err(e) => {
-            errors.push(format!("Failed to canonicalize {}: {}", path.display(), e));
-            return Ok(());
-        }
-    };
-
-    if !visited.insert(canonical.clone()) {
-        return Ok(()); // Already visited
-    }
-
-    // Check if this directory is a project with confidence scoring
-    let detection = detect_project_type_with_confidence(path);
-    let is_git = is_git_repo(path);
-    let is_initialized = is_kaptaind_initialized(path);
-
-    let is_valid_project = match detection.project_type {
-        ProjectType::Unknown => false,
-        _ => {
-            // Check if we're filtering by type
-            if options.filter_types.is_empty() {
-                true
-            } else {
-                options.filter_types.contains(&detection.project_type)
-            }
-        }
-    };
-
-    if is_valid_project && detection.confidence.score() >= options.min_confidence {
-        // Check git requirement
-        if !options.require_git || is_git {
-            projects.push(DiscoveredProject {
-                path: path.to_path_buf(),
-                project_type: detection.project_type,
-                confidence: detection.confidence,
-                confidence_score: detection.confidence.score(),
-                detection_indicators: detection.indicators,
-                is_git_repo: is_git,
-                is_initialized,
-                depth,
-            });
-
-            // Don't recurse into project directories - each project is its own root
-            return Ok(());
-        }
-    }
-
-    // Recurse into subdirectories
-    let entries = match std::fs::read_dir(path) {
-        Ok(entries) => entries,
-        Err(e) => {
-            errors.push(format!(
-                "Failed to read directory {}: {}",
-                path.display(),
-                e
-            ));
-            return Ok(());
-        }
-    };
-
-    for entry in entries {
-        let entry = match entry {
-            Ok(e) => e,
-            Err(e) => {
-                errors.push(format!("Failed to read entry in {}: {}", path.display(), e));
-                continue;
-            }
-        };
-
-        let file_type = match entry.file_type() {
-            Ok(ft) => ft,
-            Err(_) => continue,
-        };
-
-        if !file_type.is_dir() {
-            continue;
-        }
-
-        let dir_name = entry.file_name();
-        let dir_name = dir_name.to_string_lossy();
-
-        if should_skip_directory(&dir_name) {
-            continue;
-        }
-
-        // Skip hidden directories (starting with .)
-        if dir_name.starts_with('.') {
-            continue;
-        }
-
-        let subdir = entry.path();
-
-        if let Err(e) = scan_directory(&subdir, depth + 1, options, visited, projects, errors) {
-            errors.push(format!("Error scanning {}: {}", subdir.display(), e));
-        }
-    }
-
-    Ok(())
-}
-
 /// Initialize a discovered project with kaptaind.toml and .kaptainignore
 fn initialize_project(project: &DiscoveredProject) -> anyhow::Result<()> {
     let root = &project.path;
@@ -657,6 +539,10 @@ pub fn generate_report(result: &TrawlResult) -> String {
                 status
             )
             .unwrap();
+
+            if let Some(root) = &project.workspace_root {
+                writeln!(report, "      └─ workspace member of {}", root.display()).unwrap();
+            }
 
             // Show detection indicators for lower-confidence projects
             if project.confidence < Confidence::High && !project.detection_indicators.is_empty() {
