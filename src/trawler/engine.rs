@@ -200,11 +200,30 @@ pub fn trawl(options: &TrawlOptions) -> anyhow::Result<TrawlResult> {
 
 /// Make `root` absolute without resolving symlinks (consistent with `follow_links`).
 fn absolutize(root: &Path) -> anyhow::Result<PathBuf> {
-    if root.is_absolute() {
-        Ok(root.to_path_buf())
+    let abs = if root.is_absolute() {
+        root.to_path_buf()
     } else {
-        Ok(std::env::current_dir()?.join(root))
+        std::env::current_dir()?.join(root)
+    };
+    Ok(normalize_lexical(&abs))
+}
+
+/// Collapse `.` and lexical `..` components without touching the filesystem, so
+/// reported paths are clean (e.g. `cwd/.` -> `cwd`). Symlinks are intentionally not
+/// resolved, staying consistent with `follow_links = false`.
+fn normalize_lexical(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
     }
+    out
 }
 
 /// Compile user blacklist patterns into globs, recording invalid patterns as errors.
@@ -236,7 +255,10 @@ fn collect_dirs(root: &Path, options: &TrawlOptions, blacklist: &[globset::Glob]
         .ignore(options.respect_ignore_files)
         .git_ignore(options.respect_ignore_files)
         .git_global(options.respect_ignore_files)
-        .git_exclude(options.respect_ignore_files);
+        .git_exclude(options.respect_ignore_files)
+        // Honor .gitignore even outside a git repository: trawling is not limited to
+        // repos, and users expect ignore files to apply anywhere.
+        .require_git(false);
 
     let found: Arc<Mutex<Vec<PathBuf>>> = Arc::new(Mutex::new(vec![root.to_path_buf()]));
     let root_arc: Arc<Path> = Arc::from(root.to_path_buf());
@@ -270,10 +292,15 @@ fn collect_dirs(root: &Path, options: &TrawlOptions, blacklist: &[globset::Glob]
         })
     });
 
-    match Arc::try_unwrap(found) {
+    let mut dirs = match Arc::try_unwrap(found) {
         Ok(mutex) => mutex.into_inner().unwrap_or_default(),
         Err(shared) => shared.lock().map(|v| v.clone()).unwrap_or_default(),
-    }
+    };
+    // The walker yields the root entry in addition to our seed; de-duplicate so a
+    // single directory is never detected twice.
+    dirs.sort();
+    dirs.dedup();
+    dirs
 }
 
 /// Run detection on a single directory, applying confidence/type/git filters and gating
@@ -363,7 +390,6 @@ fn root_down_reduce(mut candidates: Vec<DiscoveredProject>) -> Vec<DiscoveredPro
 
     accepted
 }
-
 
 /// Initialize a discovered project with kaptaind.toml and .kaptainignore
 fn initialize_project(project: &DiscoveredProject) -> anyhow::Result<()> {
@@ -710,7 +736,7 @@ mod tests {
 
         let result = trawl(&opts(temp.path())).unwrap();
 
-        let mut roots = result
+        let roots = result
             .projects
             .iter()
             .filter(|p| p.workspace_root.is_none())
