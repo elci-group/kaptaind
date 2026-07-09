@@ -1,9 +1,11 @@
 use crate::trawler::project::{
-    detect_project_type_with_confidence, is_git_repo, is_kaptaind_initialized,
-    should_skip_directory, Confidence, ProjectType,
+    detect_project_type_with_confidence, inspect_cargo_manifest, is_blacklisted, is_git_repo,
+    is_kaptaind_initialized, workspace_members, CargoManifestKind, Confidence, ProjectType,
 };
+use ignore::{WalkBuilder, WalkState};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 /// Options for the trawling operation
 #[derive(Debug, Clone)]
@@ -22,6 +24,19 @@ pub struct TrawlOptions {
     pub filter_types: Vec<ProjectType>,
     /// Minimum confidence threshold (0.0-1.0)
     pub min_confidence: f32,
+    /// User-supplied blacklist of directory names or globs to skip, layered on top of
+    /// `DEFAULT_SKIP_DIRS` and any `.gitignore`/`.ignore` files. Entries may be plain
+    /// basenames (`"scratch"`) or globs matched against the path relative to `root`
+    /// (`"vendor/*"`).
+    pub blacklist: Vec<String>,
+    /// Honor `.gitignore`, `.ignore`, global gitignore and parent gitignore files while
+    /// walking (default: true). Disable to surface projects inside ignored directories.
+    pub respect_ignore_files: bool,
+    /// Follow symbolic links while walking (default: false).
+    pub follow_links: bool,
+    /// Also *initialize* Cargo workspace member crates with their own `kaptaind.toml`.
+    /// Members are always *reported*; this only controls initialization (default: false).
+    pub expand_workspaces: bool,
 }
 
 impl Default for TrawlOptions {
@@ -34,6 +49,10 @@ impl Default for TrawlOptions {
             auto_register: true,
             filter_types: Vec::new(),
             min_confidence: 0.55, // Medium confidence minimum
+            blacklist: Vec::new(),
+            respect_ignore_files: true,
+            follow_links: false,
+            expand_workspaces: false,
         }
     }
 }
@@ -49,6 +68,11 @@ pub struct DiscoveredProject {
     pub is_git_repo: bool,
     pub is_initialized: bool,
     pub depth: usize,
+    /// For Cargo workspace member crates, the workspace root they belong to.
+    /// `None` for standalone roots (including the workspace root itself).
+    pub workspace_root: Option<PathBuf>,
+    /// Parsed classification of the Rust manifest, when `project_type == Rust`.
+    pub cargo_kind: Option<CargoManifestKind>,
 }
 
 /// Result of a trawling operation
