@@ -1,0 +1,70 @@
+# cargo-deny v2 configuration. See https://embarkstudios.github.io/cargo-deny/
+
+[advisories]
+version = 2
+# cargo-deny >= 0.18 denies vulnerabilities by default (the per-category
+# `vulnerability` lint key was removed in PR #611). `unmaintained` is a scope
+# selector ("all" | "workspace" | "transitive" | "none"); "transitive" warns on
+# unmaintained registry dependencies.
+unmaintained = "transitive"
+# Accepted-risk advisory allow-list. Each entry is ID-scoped (never a blanket
+# pass) and must be re-evaluated on the relevant dependency upgrade.
+ignore = [
+    # git2 0.19.0 — three "unsound" UB advisories in the libgit2 bindings
+    # (Buf deref, Remote::list(), BlameHunk Signature-from-buffer). Remediation
+    # requires the git2 0.20 / libgit2 1.9 major upgrade, which is out of scope
+    # for the stable cut and tracked as a post-stable follow-up. Accepted for
+    # v9.7.16; re-assess and drop these entries on the git2 upgrade.
+    "RUSTSEC-2026-0008",
+    "RUSTSEC-2026-0183",
+    "RUSTSEC-2026-0184",
+    # ttf-parser 0.25.1 (unmaintained) — only pulled by the optional `gui`
+    # feature (fltk installer UI). Not compiled into the default/stable server
+    # or CLI artifacts. Re-evaluate if/when the GUI is promoted to default.
+    "RUSTSEC-2026-0192",
+    # quick-xml 0.37.5 — duplicate-attr quadratic time / namespace-decl DoS,
+    # reached only via the optional desktop-notification path
+    # (notify-rust -> tauri-winrt-notification), which is Windows-only and not
+    # part of the default/stable Linux build. Re-evaluate on notify-rust upgrade.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+    # quinn-proto 0.11.14 — QUIC out-of-order reassembly memory exhaustion.
+    # Only compiled when reqwest's `http3`/QUIC feature is enabled; kaptaind's
+    # default/stable HTTP uses rustls + hyper over TCP/TLS and never enables
+    # http3, so quinn is locked but not built. Re-evaluate if http3 is enabled.
+    "RUSTSEC-2026-0185",
+]
+
+[licenses]
+version = 2
+# `unlicensed` defaults to deny in cargo-deny >= 0.18 (key removed in PR #611).
+confidence-threshold = 0.8
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "CC0-1.0",
+    "MPL-2.0",
+    "BSL-1.0",
+    "0BSD",
+    # webpki-root-certs (Mozilla/WebPKI root CA data) is distributed under the
+    # permissive Community Data License Agreement; pulled in via rustls/reqwest.
+    "CDLA-Permissive-2.0",
+]
+
+[bans]
+multiple-versions = "warn"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+# deckhand is consumed as a pinned git dependency (see Cargo.toml); allow that
+# single git source explicitly so `unknown-git = "deny"` can stay on.
+allow-git = ["https://github.com/elci-group/deckhand"]

@@ -544,8 +544,7 @@ pub fn verify_signature(
     };
 
     // Constant-time comparison to prevent timing attacks
-    use subtle::ConstantTimeEq;
-    signature.as_bytes().ct_eq(expected.as_bytes()).into()
+    crate::util::constant_time::constant_time_eq(signature.as_bytes(), expected.as_bytes())
 }
 
 #[cfg(test)]

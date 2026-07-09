@@ -1,0 +1,183 @@
+//! Hardened outbound HTTP client and SSRF guard.
+//!
+//! All outbound requests in kaptaind (webhooks, LLM/TTS providers, S3, GitHub)
+//! must go through [`hardened_client`] and must call [`validate_outbound_url`]
+//! on the destination first. URLs are sourced from `kaptaind.toml` / `.env` and
+//! are therefore attacker-influenced (a cloned repo can ship a malicious config),
+//! so we:
+//!   * require TLS (`https`) except for explicit loopback dev opt-in,
+//!   * refuse destinations that resolve to loopback / private / link-local /
+//!     cloud-metadata ranges,
+//!   * disable automatic redirects so a 30x cannot re-target a signed request to
+//!     an internal host,
+//!   * ignore proxy environment variables (a hijacked `HTTPS_PROXY` cannot
+//!     reroute traffic) — outbound connections go direct.
+
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
+use std::time::Duration;
+
+use anyhow::{anyhow, bail, Result};
+use reqwest::redirect::Policy;
+use reqwest::Url;
+
+/// Build a `reqwest::Client` with kaptaind's hardened defaults.
+///
+/// The client enforces a connect + overall request timeout, never follows
+/// redirects, validates TLS certificates (rustls default), and ignores proxy
+/// environment variables.
+pub fn hardened_client(timeout: Duration) -> reqwest::Client {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(timeout)
+        .redirect(Policy::none())
+        .no_proxy()
+        .build()
+        .expect("hardened reqwest client builder is always valid")
+}
+
+/// Validate that `raw` is a safe destination for an outbound request.
+///
+/// Returns `Ok(())` only if the URL parses, uses an acceptable scheme, and its
+/// host does not resolve to a disallowed (loopback/private/link-local/metadata)
+/// address. DNS failures are treated as a rejection (fail closed).
+pub fn validate_outbound_url(raw: &str) -> Result<()> {
+    let url = Url::parse(raw).map_err(|e| anyhow!("invalid URL {raw:?}: {e}"))?;
+
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow!("URL has no host: {raw:?}"))?;
+
+    let scheme = url.scheme();
+    let loopback_dev = std::env::var("KAPTAIND_ALLOW_INSECURE_HTTP")
+        .ok()
+        .as_deref()
+        == Some("1");
+    match scheme {
+        "https" => {}
+        "http" if loopback_dev && is_loopback_host(host) => {}
+        "http" => bail!(
+            "refusing non-TLS outbound URL {raw:?} \
+             (set KAPTAIND_ALLOW_INSECURE_HTTP=1 only for loopback dev)"
+        ),
+        other => bail!("refusing outbound URL with unsupported scheme {other:?}: {raw:?}"),
+    }
+
+    // IP literal: classify directly, no DNS.
+    if let Ok(ip) = host.parse::<IpAddr>() {
+        if is_disallowed_ip(&ip) {
+            bail!("refusing outbound URL {raw:?}: host {ip} is a disallowed address");
+        }
+        return Ok(());
+    }
+
+    // Hostname: resolve and reject if *any* address is disallowed.
+    let port = url.port_or_known_default().unwrap_or(443);
+    let addrs: Vec<_> = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| anyhow!("DNS resolution failed for {host:?}: {e}"))?
+        .collect();
+    if addrs.is_empty() {
+        bail!("DNS resolved no addresses for {host:?}");
+    }
+    for addr in &addrs {
+        if is_disallowed_ip(&addr.ip()) {
+            bail!(
+                "refusing outbound URL {raw:?}: {host:?} resolves to disallowed address {}",
+                addr.ip()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn is_loopback_host(host: &str) -> bool {
+    host.eq_ignore_ascii_case("localhost")
+        || host
+            .parse::<IpAddr>()
+            .map(|ip| ip.is_loopback())
+            .unwrap_or(false)
+}
+
+fn is_disallowed_ip(ip: &IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => v4_disallowed(*v4),
+        IpAddr::V6(v6) => v6_disallowed(v6),
+    }
+}
+
+fn v4_disallowed(ip: Ipv4Addr) -> bool {
+    let [a, b, _, _] = ip.octets();
+    if ip.is_loopback() || ip.is_unspecified() || ip.is_broadcast() {
+        return true;
+    }
+    // RFC 1918.
+    let rfc1918 = a == 10 || (a == 172 && (16..=31).contains(&b)) || (a == 192 && b == 168);
+    // 169.254.0.0/16 link-local (includes 169.254.169.254 metadata).
+    let link_local = a == 169 && b == 254;
+    // Carrier-grade NAT 100.64.0.0/10.
+    let cgnat = a == 100 && (64..=127).contains(&b);
+    // Multicast / reserved / future-use 224.0.0.0+.
+    let multicast_reserved = a >= 224;
+    rfc1918 || link_local || cgnat || multicast_reserved
+}
+
+fn v6_disallowed(ip: &Ipv6Addr) -> bool {
+    if let Some(v4) = ip.to_ipv4_mapped() {
+        return v4_disallowed(v4);
+    }
+    if ip.is_loopback() || ip.is_unspecified() {
+        return true;
+    }
+    let seg0 = ip.segments()[0];
+    let link_local = seg0 & 0xffc0 == 0xfe80; // fe80::/10
+    let unique_local = seg0 & 0xfe00 == 0xfc00; // fc00::/7
+    let multicast = seg0 & 0xff00 == 0xff00; // ff00::/8
+    link_local || unique_local || multicast
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rejects_metadata_endpoint() {
+        assert!(validate_outbound_url("http://169.254.169.254/latest/meta-data/").is_err());
+        assert!(validate_outbound_url("https://169.254.169.254/").is_err());
+    }
+
+    #[test]
+    fn rejects_loopback_and_private_over_tls() {
+        assert!(validate_outbound_url("https://127.0.0.1/").is_err());
+        assert!(validate_outbound_url("https://10.0.0.1/").is_err());
+        assert!(validate_outbound_url("https://192.168.1.1/").is_err());
+        assert!(validate_outbound_url("https://172.16.0.1/").is_err());
+        assert!(validate_outbound_url("https://100.64.0.1/").is_err());
+    }
+
+    #[test]
+    fn rejects_non_tls_http_by_default() {
+        assert!(validate_outbound_url("http://93.184.216.34/").is_err());
+    }
+
+    #[test]
+    fn allows_public_https_ip_literal() {
+        // Public IP literal: no DNS required, deterministic offline.
+        assert!(validate_outbound_url("https://93.184.216.34/").is_ok());
+    }
+
+    #[test]
+    fn rejects_unsupported_scheme() {
+        assert!(validate_outbound_url("ftp://example.com/").is_err());
+        assert!(validate_outbound_url("file:///etc/passwd").is_err());
+    }
+
+    #[test]
+    fn loopback_http_allowed_only_with_explicit_opt_in() {
+        std::env::remove_var("KAPTAIND_ALLOW_INSECURE_HTTP");
+        assert!(validate_outbound_url("http://127.0.0.1:8080/health").is_err());
+        std::env::set_var("KAPTAIND_ALLOW_INSECURE_HTTP", "1");
+        assert!(validate_outbound_url("http://127.0.0.1:8080/health").is_ok());
+        std::env::remove_var("KAPTAIND_ALLOW_INSECURE_HTTP");
+    }
+}

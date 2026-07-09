@@ -1,8 +1,8 @@
 use crate::config::loader::{Config, SharkMode};
 use crate::daemon::health::{DaemonEvent, Metrics};
+use crate::util::file_lock::FileLockExt;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
-use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::path::{Path, PathBuf};

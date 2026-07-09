@@ -51,3 +51,6 @@ apps/desktop/src-tauri/gen/schemas/*.json
 
 # Playwright
 playwright-report/
+
+# Local Cargo path overrides (e.g. paths = ["../deckhand"]); do not commit
+.cargo/config.toml

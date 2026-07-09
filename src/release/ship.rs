@@ -3,8 +3,8 @@ use crate::qualification::engine::{evaluate, QualificationResult};
 use crate::release::index::{append_ship_index, load_index, load_ship_index};
 use crate::release::packager;
 use crate::schedule::next_fire_after;
+use crate::util::style::*;
 use anyhow::{anyhow, Context};
-use colored::*;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 use tokio::process::Command;
@@ -602,8 +602,8 @@ pub fn print_ship_status(repo_path: &Path, format: OutputFormat) -> anyhow::Resu
                 .map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string())
                 .unwrap_or_else(|| "unknown".to_string());
             println!("{} {}", "🚢".cyan(), "Last ship".bold().cyan());
-            println!("   Kind:     {}", last.kind.yellow());
-            println!("   Version:  {}", last.version.magenta());
+            println!("   Kind:     {}", last.kind.clone().yellow());
+            println!("   Version:  {}", last.version.clone().magenta());
             println!("   When:     {}", dt.bright_black());
             println!("   Targets:  {}", last.targets.join(", ").yellow());
             println!("   Channels: {}", last.channels.join(", ").yellow());
@@ -688,8 +688,8 @@ fn print_auto_kind_status(
     if cfg.enabled {
         println!(
             "      Schedule:  {} ({})",
-            cfg.schedule.yellow(),
-            cfg.cron_timezone.yellow()
+            cfg.schedule.clone().yellow(),
+            cfg.cron_timezone.clone().yellow()
         );
         let next_str = next_fire
             .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())

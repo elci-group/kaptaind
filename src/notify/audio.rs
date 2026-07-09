@@ -350,8 +350,7 @@ async fn google_speak(text: &str, voice: Option<&str>) -> anyhow::Result<()> {
     let audio_base64 = data["audioContent"]
         .as_str()
         .ok_or_else(|| anyhow::anyhow!("missing audioContent in Google TTS response"))?;
-    use base64::Engine;
-    let audio = base64::engine::general_purpose::STANDARD.decode(audio_base64)?;
+    let audio = crate::util::base64::decode(audio_base64)?;
     play_audio_bytes(&audio).await?;
     Ok(())
 }

@@ -199,10 +199,11 @@ If kaptaind commits something problematic:
 
 ## Known Limitations
 
-1. **No commit signing**: Commits are created without GPG signing. If you require signed commits, manually enable in git config or post-process commits.
-2. **No branch protection**: Kaptaind bypasses GitHub/GitLab branch protection rules (it commits directly). Use `[push].enabled = false` if branch protection is required.
-3. **Test hook failures are blocking**: If `[test].required = true` and tests fail intermittently, kaptaind will repeatedly fail to commit. Use `required = false` or fix the test flakiness.
-4. **No conflict resolution**: If kaptaind attempts to commit on a stale branch, the commit may fail with a merge conflict. The daemon logs the error and retries.
+1. **Test hook failures are blocking**: If `[test].required = true` and tests fail intermittently, kaptaind will repeatedly fail to commit. Use `required = false` or fix the test flakiness.
+2. **No conflict resolution**: If kaptaind attempts to commit on a stale branch, the commit may fail with a merge conflict. The daemon logs the error and retries.
+3. **Push requires explicit opt-in and credentials**: Pushes are disabled by default. When enabled, kaptaind pushes `refs/heads/<branch>` to `origin`; configure authentication (credential helper / SSH) separately.
+
+> Note: GPG-signed commits (`[commit] sign = true`) and branch-protection / required-CI enforcement (`[push.protection]`) are implemented and configurable — see "GPG-Signed Commits" and "Branch Protection / Required CI" above. Earlier revisions of this document listed them as unsupported; that is no longer accurate.
 
 ## Best Practices
 

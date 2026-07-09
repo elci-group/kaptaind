@@ -1,6 +1,53 @@
 # Changelog
 
-All notable changes to kaptaind are documented here.
+All notable changes to kaptaind are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/), and the project uses
+[Semantic Versioning](https://semver.org/).
+
+> **Version-line note (stable reset).** Early development auto-bumped the
+> `VERSION` file on every daemon commit, which is why the file advanced far
+> ahead of this changelog (the daemon previously dogfood-versioned its own
+> repository without cutting git tags). From the stable line onward, releases
+> are created explicitly via CI (annotated, signed tags on `VERSION` changes —
+> see `.github/workflows/release.yml`), and each release gets a changelog entry
+> here. Per-commit detail for the `v0.1.44 → v9.x` range lives in `git log`;
+> the consolidated capability set is summarized under `[9.7.16]` below.
+
+## [9.7.16] — stable candidate
+
+Consolidated summary of the capability set present at the stable line. See
+`README.md` and `AGENTS.md` for full details; the sections below de-duplicate
+the accumulated `Unreleased` notes.
+
+### Added
+- Multi-language semantic diff (Rust, Go, Swift, Kotlin, Java, TypeScript,
+  JavaScript, Python, Ruby, Elixir, PHP, .NET/C#, C++, plus Lua, Scala,
+  Clojure, Haskell, Julia, R, Perl) with version-aware parsing (LV-SCL) and
+  parser confidence scoring.
+- Five-dimension scoring (structural, API, dependencies, runtime, opt-in bundle)
+  with configurable weights and thresholds.
+- Deterministic semantic auto-versioning (Major/Minor/Patch/None) writing
+  `VERSION` (and `Cargo.toml` when present).
+- Aim of Change (AoC) sessions, traces, and agent interception.
+- Post-commit qualification, stability scoring (confidence- and flaky-test
+  aware), and an opt-in release pipeline (stable/nightly, daemon cron).
+- `kaptaind-cli` companion: `status`, `log`, `analyze`, `dashboard`, `ci-hint`,
+  `aoc`, `ship`, `trawl`, `monitor`, `service`, `shark`, `trace`, `vacs`,
+  `storage`, and `rollback`.
+- Angler hook & selective capture system (git hooks, webhooks with HMAC,
+  selective capture, bait plugins).
+- Supply-chain features: GPG-signed commits (`[commit] sign`), required-CI
+  branch protection (`[push.protection]`), SPDX SBOMs, SLSA provenance, and
+  signed release artifacts (behind `[ship]` config).
+- Observability: health/metrics server with Prometheus exposition, SSE events,
+  status/telemetry/stability artifacts, and an embedded `--web` dashboard.
+- HA leadership (`shark`), RBAC, storage hygiene (`deckhand`), and intelligent
+  project discovery (`trawl`).
+
+### Changed
+- Release engineering is now CI-driven: multi-arch artifacts, SHA256 checksums,
+  SBOMs, and keyless (Sigstore) signatures are produced by the GitHub release
+  workflow rather than by the daemon dogfooding itself.
 
 ## [Unreleased]
 
@@ -241,4 +288,7 @@ Old format (no weights section) defaults to: `s=0.35, a=0.3, d=0.2, r=0.15`. Exp
 
 ---
 
-**Note**: This changelog is maintained automatically by kaptaind itself. Each version entry reflects commits tagged in git history.
+**Note**: From the stable line onward this changelog is curated per release and
+each entry corresponds to an annotated, signed git tag produced by the CI
+release workflow (see `.github/workflows/release.yml`). Earlier auto-bump noise
+is preserved in `git log` but is not reproduced verbatim here.

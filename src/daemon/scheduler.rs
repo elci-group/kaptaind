@@ -15,7 +15,6 @@ use crate::version::Bump;
 use crate::watcher::FsEvent;
 use chrono::{DateTime, Utc};
 use globset::{Glob, GlobSet, GlobSetBuilder};
-use regex::Regex;
 use semver::Version;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -1413,12 +1412,13 @@ pub async fn run_test_hook_for_config(test: &TestConfig, repo_path: &Path) -> Te
 /// Parse test output for lines like `test foo::bar ... FAILED`.
 /// Works for `cargo test` output and similar formats.
 fn parse_failed_tests(output: &str) -> Vec<String> {
-    let re = Regex::new(r"^test\s+(.+?)\s+\.\.\.\s+FAILED$").expect("valid regex");
     let mut tests: Vec<String> = output
         .lines()
         .filter_map(|line| {
-            re.captures(line.trim())
-                .map(|caps| caps[1].trim().to_string())
+            let line = line.trim();
+            let rest = line.strip_prefix("test ")?;
+            let name = rest.strip_suffix(" ... FAILED")?;
+            Some(name.to_string())
         })
         .collect();
     tests.sort();

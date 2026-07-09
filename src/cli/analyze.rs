@@ -1,6 +1,6 @@
 use chrono::Utc;
-use colored::*;
 use kaptaind::config::loader::Config;
+use kaptaind::util::style::*;
 
 pub fn handle_analyze(config: &Config) -> anyhow::Result<()> {
     let repo = match kaptaind::git::repo::Repo::open(&config.repo_path) {

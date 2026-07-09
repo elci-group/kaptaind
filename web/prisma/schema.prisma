@@ -296,3 +296,10 @@ model Policy {
 
   project                        Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }
+
+// NOTE: `npx prisma migrate deploy` is required to create this table.
+model ProcessedWebhookEvent {
+  id          String   @id @default(cuid())
+  eventId     String   @unique
+  processedAt DateTime @default(now())
+}

@@ -1,0 +1,30 @@
+# cargo-audit configuration. Mirrors the ID-scoped allow-list in deny.toml so
+# `cargo audit` (run by scripts/security-audit.sh and CI) stays meaningful while
+# documenting accepted-risk advisories. Never a blanket pass: each ID is named
+# explicitly and must be re-evaluated on the relevant dependency upgrade.
+#
+# Scope note: the stable artifacts are built with DEFAULT features
+# (`cargo build --release --bin kaptaind --bin kaptaind-cli`). Several advisories
+# below only affect crates compiled under OPTIONAL features (gui installer,
+# desktop notifications, reqwest http3) that are not part of the stable build;
+# they are in Cargo.lock but not in the shipped binaries.
+
+[advisories]
+ignore = [
+    # git2 0.19.0 — three "unsound" UB advisories in the libgit2 bindings.
+    # Fix = git2 0.20 / libgit2 1.9 major upgrade (post-stable follow-up).
+    # Accepted for v9.7.16; drop on the git2 upgrade.
+    "RUSTSEC-2026-0008",
+    "RUSTSEC-2026-0183",
+    "RUSTSEC-2026-0184",
+    # ttf-parser 0.25.1 (unmaintained) — optional `gui` feature (fltk) only;
+    # not in the default/stable server or CLI binaries.
+    "RUSTSEC-2026-0192",
+    # quick-xml 0.37.5 — optional desktop-notification path (notify-rust ->
+    # tauri-winrt-notification), Windows-only; not in the stable Linux build.
+    "RUSTSEC-2026-0194",
+    "RUSTSEC-2026-0195",
+    # quinn-proto 0.11.14 — only built with reqwest http3/QUIC, which kaptaind
+    # does not enable (stable HTTP = rustls + hyper over TCP/TLS).
+    "RUSTSEC-2026-0185",
+]

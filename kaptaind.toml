@@ -195,3 +195,50 @@ rate_limit_seconds = 5
 # Structured audit logging for compliance and incident response.
 # [audit]
 # enabled = true
+
+# ---------------------------------------------------------------------------
+# Build step used by `kaptaind-cli ship` to produce the host-target binaries.
+# The host build reuses this command; cross targets use `cargo build --target`.
+# ---------------------------------------------------------------------------
+[build]
+command = "cargo build --release --bin kaptaind --bin kaptaind-cli"
+artifact_path = "target/release/kaptaind"
+timeout_secs = 1200
+
+# ---------------------------------------------------------------------------
+# Release pipeline. `kaptaind-cli ship stable` builds the configured targets,
+# packages tarballs + SHA256 checksums, and publishes a GitHub release.
+#
+# Signing is disabled here because no GPG key is present on this host; the
+# canonical multi-arch, keyless-signed (cosign/Sigstore) release is produced by
+# `.github/workflows/release.yml`. Targets are host-only locally — the CI matrix
+# builds linux x86_64/arm64, macOS x86_64/arm64, and Windows x86_64.
+# ---------------------------------------------------------------------------
+[ship]
+enabled = true
+sign = false
+require_qualification = false
+targets = ["x86_64-unknown-linux-gnu"]
+
+[ship.installers]
+shell = false
+tauri = false
+
+[ship.stable]
+push_tag = false            # annotated tag is created and pushed before ship runs
+prerelease = false
+draft = false
+release_notes = true
+require_qualification = false
+
+[ship.nightly]
+push_tag = false
+draft = true
+require_qualification = false
+release_notes = true
+retain_count = 7
+
+[[ship.app_stores]]
+kind = "github-releases"
+draft = false
+prerelease = false

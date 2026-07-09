@@ -221,6 +221,7 @@ kaptaind-cli ship status --format json
 | `kaptaind-cli ship run` | Build and publish release | `[ship]`, `[distribution]` |
 | `kaptaind-cli ci-hint` | Release/hold recommendation | `[qualification]` |
 | `kaptaind-cli shark status` | HA leadership state | `[shark]` |
+| `kaptaind-cli rollback` | Revert the last kaptaind commit | — |
 
 | File / Directory | Purpose |
 |------------------|---------|
@@ -610,7 +611,6 @@ interval_minutes = 360
 sweep_keep_days = 30
 
 [trawl]
-auto_trawl = false
 max_depth = 3
 
 [vacs]
@@ -1021,12 +1021,16 @@ kaptaind-cli ci-hint --format github
 
 - name: Release
   if: steps.kaptaind.outputs.qualified == 'true'
-  run: ./scripts/release.sh ${{ steps.kaptaind.outputs.version }}
+  run: kaptaind-cli ship stable
+  # Artifacts, checksums, SBOMs, and the signed tag are produced by the
+  # repository's GitHub release workflow (see .github/workflows/release.yml).
 ```
 
 ## Multi-Provider Inference Routing
 
 Kaptaind and its web dashboard intelligently route inference requests to the best available LLM provider. No manual configuration needed—the system auto-detects from environment variables.
+
+**Offline-first by default.** With no provider API keys set and no local Ollama running, kaptaind makes **no network calls** and emits deterministic, metadata-only commit messages. Network inference only happens when you explicitly provide a key (or run Ollama locally).
 
 ### Quick Setup
 

@@ -4,6 +4,19 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { getStripe } from "@/lib/stripe";
 
+// Server-side allowlist of Stripe price IDs that may be checked out.
+// Built from env so a client can never submit an arbitrary price ID.
+function allowedPriceIds(): Set<string> {
+  return new Set(
+    [
+      process.env.STRIPE_PRICE_ID_PRO,
+      process.env.STRIPE_PRICE_ID_TEAM,
+      process.env.STRIPE_PRICE_ID_ENTERPRISE,
+      process.env.STRIPE_PRICE_ID,
+    ].filter((value): value is string => Boolean(value))
+  );
+}
+
 export async function POST(req: Request) {
   try {
     const session = await getServerSession(authOptions);
@@ -29,11 +42,10 @@ export async function POST(req: Request) {
       }
     }
 
-    if (!priceId) {
-      return NextResponse.json(
-        { error: "Price ID is required" },
-        { status: 400 }
-      );
+    // Reject any price that is not in the server-side allowlist, including
+    // a client-supplied priceId that does not match a configured env price.
+    if (!priceId || !allowedPriceIds().has(priceId)) {
+      return NextResponse.json({ error: "invalid price" }, { status: 400 });
     }
 
     let billingCustomer = await prisma.billingCustomer.findUnique({

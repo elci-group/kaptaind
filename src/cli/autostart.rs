@@ -1,4 +1,4 @@
-use colored::*;
+use kaptaind::util::style::*;
 
 pub fn handle_enable_autostart() -> anyhow::Result<()> {
     eprintln!(

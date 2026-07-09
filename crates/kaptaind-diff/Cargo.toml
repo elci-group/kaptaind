@@ -2,6 +2,7 @@
 name = "kaptaind-diff"
 version = "9.6.3"
 edition = "2021"
+license = "MIT"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }

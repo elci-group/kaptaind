@@ -1016,12 +1016,9 @@ impl Default for VacsConfig {
 // ---------------------------------------------------------------------------
 
 /// `[trawl]` block in `kaptaind.toml`.
-/// Configures automatic codebase discovery and initialization.
+/// Configures codebase discovery and initialization for `kaptaind-cli trawl`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TrawlConfig {
-    /// Enable automatic trawling on daemon startup
-    #[serde(default)]
-    pub auto_trawl: bool,
     /// Root directory to trawl from (default: parent of repo_path)
     #[serde(default)]
     pub root: Option<PathBuf>,
@@ -1049,9 +1046,6 @@ pub struct TrawlConfig {
     /// Also initialize Cargo workspace member crates (default: false)
     #[serde(default)]
     pub expand_workspaces: bool,
-    /// Interval between auto-trawls in seconds (0 = only on startup)
-    #[serde(default)]
-    pub interval_secs: u64,
 }
 
 fn default_trawl_depth() -> usize {
@@ -1070,7 +1064,6 @@ fn default_trawl_respect_ignore() -> bool {
 impl Default for TrawlConfig {
     fn default() -> Self {
         Self {
-            auto_trawl: false,
             root: None,
             max_depth: default_trawl_depth(),
             skip_initialized: default_trawl_skip_initialized(),
@@ -1080,7 +1073,6 @@ impl Default for TrawlConfig {
             blacklist: Vec::new(),
             respect_ignore_files: default_trawl_respect_ignore(),
             expand_workspaces: false,
-            interval_secs: 0,
         }
     }
 }

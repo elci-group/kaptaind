@@ -1,5 +1,5 @@
-use colored::*;
 use kaptaind::monitor::{load_registry, save_registry};
+use kaptaind::util::style::*;
 use std::path::Path;
 
 pub use kaptaind::monitor::{add, remove, set_enabled};

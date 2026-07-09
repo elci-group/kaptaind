@@ -1,21 +1,40 @@
+# Self-hosting stack for the kaptaind DAEMON.
+#
+# Notes:
+# - The Rust daemon does not require PostgreSQL. The `postgres` service exists
+#   to back the optional Next.js dashboard when you deploy it alongside.
+# - The `web` service below serves the STATIC marketing/download site from
+#   deploy/web via nginx. It cannot serve the Next.js API routes (/api/*) or the
+#   authenticated dashboard. Deploy the Next.js app separately (it builds with
+#   `output: "standalone"`); see web/ and docs/planning/STABLE_RELEASE_ROADMAP.md.
+# - Secrets are read from the environment; there are no hardcoded credentials.
+#   Create a `.env` next to this file (never commit it) with at least:
+#       POSTGRES_PASSWORD=<strong-random>
+#
+# Bring up just the daemon:  docker compose up -d daemon
+# Bring up the static site too: docker compose --profile web up -d
+
 version: "3.8"
 
 services:
   postgres:
     image: postgres:15-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_USER: kaptaind
-      POSTGRES_PASSWORD: kaptaind
-      POSTGRES_DB: kaptaind
+      POSTGRES_USER: ${POSTGRES_USER:-kaptaind}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in the environment}
+      POSTGRES_DB: ${POSTGRES_DB:-kaptaind}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # No host port binding by default — the DB is internal to the stack.
+    # Uncomment temporarily for local debugging only:
+    # ports:
+    #   - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U kaptaind"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-kaptaind}"]
       interval: 5s
       timeout: 5s
       retries: 5
-    ports:
-      - "5432:5432"
 
   daemon:
     build:
@@ -23,12 +42,16 @@ services:
       dockerfile: Dockerfile
     container_name: kaptaind-daemon
     restart: unless-stopped
+    environment:
+      KAPTAIND_HEALTH_PORT: "9090"
     volumes:
       - ./kaptaind.toml:/opt/kaptaind/kaptaind.toml:ro
       - daemon-data:/opt/kaptaind/.kaptaind
     working_dir: /opt/kaptaind
+    # The daemon's health server is probed by the image HEALTHCHECK.
 
   web:
+    profiles: ["web"]
     image: nginx:alpine
     container_name: kaptaind-web
     restart: unless-stopped
@@ -40,8 +63,6 @@ services:
     depends_on:
       daemon:
         condition: service_started
-      postgres:
-        condition: service_healthy
 
 volumes:
   daemon-data:

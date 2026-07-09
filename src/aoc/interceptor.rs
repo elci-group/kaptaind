@@ -1,6 +1,6 @@
 use crate::aoc::tracer::AgentEvent;
+use crate::util::file_lock::FileLockExt;
 use chrono::Utc;
-use fs2::FileExt;
 use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::Path;

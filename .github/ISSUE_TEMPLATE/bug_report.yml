@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a reproducible problem with kaptaind
+title: "[bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: "Thanks for taking the time to file a bug. Please include a minimal reproduction."
+  - type: input
+    id: version
+    attributes:
+      label: kaptaind version
+      description: Output of `kaptaind --version`
+      placeholder: 9.7.16
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - daemon / watcher
+        - cli
+        - web dashboard
+        - ship / release
+        - install / packaging
+        - docs
+        - other
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS / platform
+      placeholder: "Ubuntu 24.04 x86_64 / macOS 15 arm64 / Windows 11"
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. ...\n2. ...\n3. ..."
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs / config
+      description: Paste `.kaptaind/daemon.err`, status.json, or redacted kaptaind.toml. Do NOT include secrets.
+      render: shell

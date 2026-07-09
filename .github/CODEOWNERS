@@ -1,0 +1,27 @@
+# CODEOWNERS — default reviewers for kaptaind.
+# Replace the team handles below with the real maintainer team(s) once created
+# on GitHub (e.g. @elci-group/maintainers). Until then, the listed user is the
+# fallback owner.
+
+*                                   @elci-group
+
+# Core daemon / CLI (Rust)
+/src/                               @elci-group
+/crates/                            @elci-group
+/Cargo.toml                         @elci-group
+/Cargo.lock                         @elci-group
+
+# Web / SaaS
+/web/                               @elci-group
+
+# Release engineering & supply chain
+/.github/workflows/                 @elci-group
+/packaging/                         @elci-group
+/Dockerfile                         @elci-group
+/docker-compose.yml                 @elci-group
+/deny.toml                          @elci-group
+
+# Security-sensitive surface
+/SECURITY.md                        @elci-group
+/src/rbac*                          @elci-group
+/src/release/                       @elci-group

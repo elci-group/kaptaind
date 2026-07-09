@@ -22,7 +22,8 @@
 | Path | Responsibility |
 |------|----------------|
 | `src/main.rs` | Daemon startup wiring, `--config` handling, tracing init. |
-| `src/cli/main.rs` | CLI binary (`kaptaind-cli`): `status`, `log`, `analyze`, `init`, `aoc`, `ship`, `trawl`. |
+| `src/cli/main.rs` | CLI binary (`kaptaind-cli`): argument parsing, `Commands` enum, and dispatch. |
+| `src/cli/commands/` | Per-command handler modules (`status`, `log`, `analyze`, `init`, `aoc`, `ship`, `trawl`, etc.). |
 | `src/config/` | Config loading, path normalization, defaults, structs for staging/bundle/notify/etc. |
 | `src/watcher/` | Filesystem event types and notify-based watcher thread. |
 | `src/daemon/` | Async runtime, scheduler loop, telemetry, health/metrics server, optional WebUI (`web.rs`, `web_ui.html`), storage hygiene (`deckhand`), HA leadership (`shark`), notifications, audit logging. |
@@ -213,4 +214,8 @@ RUST_LOG=kaptaind=debug cargo run
 - When no `VERSION` file exists, the scheduler starts from `0.1.0`.
 - `ClusterEngine` groups events only while the time delta is strictly less than the configured window.
 - Ignore matching checks whether any path in an event matches; one ignored path suppresses the whole event.
-- No repository-specific lint, formatter, CI, or agent rule files were found during inspection.
+- Pre-commit gate is `cargo fmt --all -- --check` and `cargo clippy --all-targets -- -D warnings` (enforced in `.github/workflows/rust.yml`).
+- Supply-chain checks run in `.github/workflows/security-audit.yml`: `cargo audit`, `cargo deny check` (config in `deny.toml`), and `npm audit` for `web/`.
+- The Rust toolchain is pinned via `rust-toolchain.toml` (stable, clippy + rustfmt). Keep code building on stable.
+- Do not run the kaptaind daemon against this repository during release work — it dogfood-versions `VERSION` and creates noisy auto-commits. Keep `VERSION`, `Cargo.toml`, `CHANGELOG.md`, and git tags in agreement; tags are cut by CI, not by the daemon.
+- `deckhand` is a pinned git dependency (`Cargo.toml`). To hack on it against a sibling checkout, create a local, gitignored `.cargo/config.toml` with `paths = ["../deckhand"]`; bump the `rev` in `Cargo.toml` to ship a newer deckhand.

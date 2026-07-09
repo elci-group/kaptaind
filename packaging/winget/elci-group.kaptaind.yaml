@@ -1,0 +1,30 @@
+# TEMPLATE — release-time scaffold, NOT self-publishing.
+#
+# Submit to https://github.com/microsoft/winget-pkgs as a pull request under
+# manifests/e/elci-group/kaptaind/<VERSION>/ (a 1.6 multi-file layout is
+# preferred for new submissions; this singleton is a convenient authoring
+# starting point). Replace every <...> placeholder with the real per-release
+# values from the release workflow (the version and the zip SHA256 from
+# SHA256SUMS.txt).
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.1.6.0.schema.json
+PackageIdentifier: elci-group.kaptaind
+PackageVersion: <VERSION>
+PackageLocale: en-US
+Publisher: elci-group
+PackageName: kaptaind
+License: MIT
+ShortDescription: Repository change-watcher that ships semantic releases.
+PackageUrl: https://github.com/elci-group/kaptaind
+InstallerType: zip
+NestedInstallerType: portable
+NestedInstallerFiles:
+  - RelativeFilePath: kaptaind.exe
+    PortableCommandAlias: kaptaind
+  - RelativeFilePath: kaptaind-cli.exe
+    PortableCommandAlias: kaptaind-cli
+Installers:
+  - Architecture: x64
+    InstallerUrl: https://github.com/elci-group/kaptaind/releases/download/v<VERSION>/kaptaind-<VERSION>-x86_64-pc-windows-msvc.zip
+    InstallerSha256: <SHA256_X86_64_PC_WINDOWS_MSVC_ZIP>
+ManifestType: singleton
+ManifestVersion: 1.6.0

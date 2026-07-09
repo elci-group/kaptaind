@@ -1,4 +1,9 @@
 import Stripe from "stripe";
+import { assertEnv } from "./env";
+
+// Fail loudly at boot in production if required env (incl. webhook secret
+// whenever Stripe is configured) is missing.
+assertEnv();
 
 let _stripe: Stripe | null = null;
 

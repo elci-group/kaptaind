@@ -6,6 +6,7 @@ resolver = "2"
 name = "kaptaind"
 version = "9.7.16"
 edition = "2021"
+license = "MIT"
 default-run = "kaptaind"
 
 [[bin]]
@@ -23,7 +24,11 @@ required-features = ["gui"]
 
 [dependencies]
 kaptaind-diff = { path = "crates/kaptaind-diff" }
-deckhand = { path = "../deckhand" }
+# deckhand is consumed as a pinned git dependency so the project builds on a
+# clean machine (CI, Docker, release). Bump `rev` deliberately to advance it.
+# For local development against a sibling checkout, create a gitignored
+# `.cargo/config.toml` with: paths = ["../deckhand"]
+deckhand = { git = "https://github.com/elci-group/deckhand", rev = "02fa6906e40c57f9abbbf62893cee5a387b882a6" }
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 notify = "6"
@@ -43,12 +48,8 @@ glob = "0.3"
 ignore = "0.4"
 clap = { version = "4", features = ["derive"] }
 libc = "0.2.184"
-colored = "3.1.1"
 toml_edit = "0.25.10"
-fs2 = "0.4.3"
 reqwest = { version = "0.13.2", features = ["json"] }
-dotenvy = "0.15"
-base64 = "0.22"
 regex = "1"
 syn = { version = "2", features = ["full", "visit"] }
 sha2 = "0.10"
@@ -70,3 +71,24 @@ git2 = ["dep:git2"]
 
 [dev-dependencies]
 tempfile = "3"
+divan = "0.1"
+
+[[bench]]
+name = "bench_cluster"
+path = "tests/benches/bench_cluster.rs"
+harness = false
+
+[[bench]]
+name = "bench_diff"
+path = "tests/benches/bench_diff.rs"
+harness = false
+
+[[bench]]
+name = "bench_adapters"
+path = "tests/benches/bench_adapters.rs"
+harness = false
+
+[[bench]]
+name = "bench_weight_version"
+path = "tests/benches/bench_weight_version.rs"
+harness = false

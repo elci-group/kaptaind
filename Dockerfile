@@ -1,38 +1,56 @@
 # syntax=docker/dockerfile:1
+#
+# kaptaind daemon container.
+#
+# Build context requirement: the manifest depends on `deckhand` as a pinned git
+# dependency (`deckhand = { git = "...", rev = "..." }` in Cargo.toml), so the
+# builder stage needs network access to fetch it from GitHub during
+# `cargo build`. The supported, reproducible multi-arch release artifacts are
+# produced by `.github/workflows/release.yml`; this image is a convenience for
+# self-hosting the daemon.
+#
+# The container starts as root so the entrypoint can fix ownership of the
+# `.kaptaind` data volume, then drops to the unprivileged `kaptaind` user.
 
-# Build stage
 FROM rust:1.82-bookworm AS builder
-
-# Create non-root user for build
-RUN useradd -m -u 1000 kaptaind
-
 WORKDIR /build
 
+# Warm the dependency layer. Manifests first so this layer is cached unless
+# dependencies change. `cargo fetch` only needs manifests, not sources.
 COPY Cargo.toml Cargo.lock ./
-COPY src/main.rs src/cli/main.rs ./src/
-RUN mkdir -p src && echo "fn main() {}" > src/lib.rs
-# Build dependencies only (this layer caches if deps don't change)
-RUN cargo build --release --bin kaptaind --bin kaptaind-cli || true
+COPY crates/kaptaind-diff/Cargo.toml crates/kaptaind-diff/Cargo.toml
+RUN mkdir -p src/cli src/installer crates/kaptaind-diff/src \
+    && printf 'fn main(){}\n' > src/main.rs \
+    && printf 'fn main(){}\n' > src/cli/main.rs \
+    && printf 'fn main(){}\n' > src/installer/gui.rs \
+    && printf '' > crates/kaptaind-diff/src/lib.rs \
+    && cargo fetch || true
 
-# Now copy full source
+# Full source, then the authoritative build.
 COPY . .
 RUN cargo build --release --bin kaptaind --bin kaptaind-cli
 
-# Runtime stage
+# --- runtime ---
 FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates git libssl3 && rm -rf /var/lib/apt/lists/*
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates git libssl3 curl util-linux \
+    && rm -rf /var/lib/apt/lists/*
 
-# Create non-root user
 RUN useradd -m -u 1000 kaptaind
 
 COPY --from=builder --chown=kaptaind:kaptaind /build/target/release/kaptaind /usr/local/bin/kaptaind
 COPY --from=builder --chown=kaptaind:kaptaind /build/target/release/kaptaind-cli /usr/local/bin/kaptaind-cli
+COPY --chown=root:root docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
-USER kaptaind
 WORKDIR /opt/kaptaind
+ENV KAPTAIND_HEALTH_PORT=9090
 
-HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD kaptaind-cli status || exit 1
+# Probe the daemon health server (served on KAPTAIND_HEALTH_PORT) rather than
+# `kaptaind-cli status`, which fails before the daemon has written status.json.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD curl -fsS "http://localhost:${KAPTAIND_HEALTH_PORT}/health" >/dev/null || exit 1
 
+ENTRYPOINT ["docker-entrypoint.sh"]
 CMD ["kaptaind"]

@@ -12,63 +12,184 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            tool: cargo
+          - name: linux-arm64
+            os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            tool: cross
+          - name: macos-x86_64
+            os: macos-13
+            target: x86_64-apple-darwin
+            tool: cargo
+          - name: macos-arm64
+            os: macos-latest
+            target: aarch64-apple-darwin
+            tool: cargo
+          - name: windows-x86_64
+            os: windows-latest
+            target: x86_64-pc-windows-msvc
+            tool: cargo
     steps:
       - uses: actions/checkout@v4
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}-${{ matrix.target }}
+
       - name: Read version
         id: version
-        run: echo "version=$(cat VERSION)" >> "$GITHUB_OUTPUT"
+        shell: bash
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Install cross (Linux arm64)
+        if: matrix.tool == 'cross'
+        run: cargo install cross --locked
+
+      - name: Build (cargo)
+        if: matrix.tool != 'cross'
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Build (cross)
+        if: matrix.tool == 'cross'
+        run: cross build --release --target ${{ matrix.target }}
+
+      - name: Package (unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          TARGET="${{ matrix.target }}"
+          STAGE="pkg"
+          rm -rf "$STAGE"
+          mkdir -p "$STAGE"
+          cp "target/${TARGET}/release/kaptaind" "$STAGE/kaptaind"
+          cp "target/${TARGET}/release/kaptaind-cli" "$STAGE/kaptaind-cli"
+          tar -czf "kaptaind-${VERSION}-${TARGET}.tar.gz" -C "$STAGE" kaptaind kaptaind-cli
+
+      - name: Package (windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $VERSION = "${{ steps.version.outputs.version }}"
+          $TARGET = "${{ matrix.target }}"
+          $STAGE = "pkg"
+          Remove-Item -Recurse -Force $STAGE -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Force $STAGE | Out-Null
+          Copy-Item "target/$TARGET/release/kaptaind.exe" "$STAGE/kaptaind.exe"
+          Copy-Item "target/$TARGET/release/kaptaind-cli.exe" "$STAGE/kaptaind-cli.exe"
+          Compress-Archive -Path "$STAGE/kaptaind.exe", "$STAGE/kaptaind-cli.exe" `
+            -DestinationPath "kaptaind-$VERSION-$TARGET.zip" -Force
+
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: kaptaind-${{ steps.version.outputs.version }}-${{ matrix.target }}
+          path: kaptaind-${{ steps.version.outputs.version }}-${{ matrix.target }}.*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version
+        id: version
+        run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Compute SHA256SUMS
+        working-directory: dist
+        run: sha256sum *.tar.gz *.zip > SHA256SUMS.txt
 
       - uses: dtolnay/rust-toolchain@stable
 
-      - name: Build Rust binaries
-        run: cargo build --release
+      - name: Install cargo-cyclonedx
+        run: cargo install cargo-cyclonedx --locked
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
-          cache: npm
-          cache-dependency-path: web/package-lock.json
-
-      - name: Install web dependencies
-        working-directory: web
-        run: npm ci
-
-      - name: Build web static export
-        working-directory: web
+      - name: Generate CycloneDX SBOM (sbom-rust.json)
         run: |
-          # Temporarily enable static export
-          sed -i "s|const nextConfig: NextConfig = {|const nextConfig: NextConfig = {\n  output: 'export',\n  distDir: 'dist',|" next.config.ts
-          # Exclude server-side routes that cannot be statically exported
-          mkdir -p _excluded
-          mv app/api _excluded/
-          mv app/dashboard _excluded/
-          npm run build
-          # Restore original structure
-          mv _excluded/api app/
-          mv _excluded/dashboard app/
-          rmdir _excluded
+          set -euo pipefail
+          cargo cyclonedx --format json --output-pattern bom
+          SBOM="$(find . -type f \( -name '*.cdx.json' -o -name 'bom.json' \) \
+            -not -path './dist/*' | head -n1 || true)"
+          if [ -z "$SBOM" ]; then
+            echo "error: cargo cyclonedx produced no JSON SBOM" >&2
+            exit 1
+          fi
+          cp "$SBOM" dist/sbom-rust.json
+          echo "SBOM copied from $SBOM -> dist/sbom-rust.json"
 
-      - name: Package release artifacts
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Keyless-sign packages and checksums
+        working-directory: dist
         run: |
+          set -euo pipefail
+          for f in *.tar.gz *.zip; do
+            cosign sign-blob --yes "$f" \
+              --output-signature "$f.sig" \
+              --output-certificate "$f.cert"
+          done
+          cosign sign-blob --yes SHA256SUMS.txt \
+            --output-signature SHA256SUMS.txt.sig \
+            --output-certificate SHA256SUMS.txt.cert
+
+      - name: Create and push annotated tag
+        run: |
+          set -euo pipefail
           VERSION="${{ steps.version.outputs.version }}"
-          mkdir -p release
-          cp target/release/kaptaind release/
-          cp target/release/kaptaind-cli release/
-          tar -czf "release/kaptaind-${VERSION}-linux-x86_64.tar.gz" -C release kaptaind kaptaind-cli
-          tar -czf "release/web-static-${VERSION}.tar.gz" -C web/dist .
+          TAG="v${VERSION}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists; skipping."
+          else
+            git tag -a "$TAG" -m "Kaptaind ${TAG}"
+            git push origin "$TAG"
+          fi
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: Kaptaind v${{ steps.version.outputs.version }}
+          generate_release_notes: true
           files: |
-            release/kaptaind-*-linux-x86_64.tar.gz
-            release/web-static-*.tar.gz
+            dist/*.tar.gz
+            dist/*.zip
+            dist/SHA256SUMS.txt
+            dist/SHA256SUMS.txt.sig
+            dist/SHA256SUMS.txt.cert
+            dist/sbom-rust.json
+            dist/*.sig
+            dist/*.cert
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

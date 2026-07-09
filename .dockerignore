@@ -2,15 +2,20 @@
 .git/
 .gitignore
 
+# Secrets & local runtime state (must never enter an image layer)
+.env
+.env.*
+*.local
+.kaptaind/
+
 # Web
 web/node_modules/
 web/.next/
 web/dist/
 web/test-results/
 
-# Rust
+# Rust (keep Cargo.lock so image builds are reproducible)
 target/
-Cargo.lock
 
 # Docs
 *.md

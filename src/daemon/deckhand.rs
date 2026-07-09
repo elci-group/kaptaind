@@ -139,7 +139,10 @@ fn should_skip_due_to_free_space(repo_path: &Path, min_free_percent: u64) -> boo
     if min_free_percent == 0 {
         return false;
     }
-    match (fs2::available_space(repo_path), fs2::total_space(repo_path)) {
+    match (
+        crate::util::disk::available_space(repo_path),
+        crate::util::disk::total_space(repo_path),
+    ) {
         (Ok(available), Ok(total)) if total > 0 => {
             let free_percent = (available as f64 / total as f64 * 100.0) as u64;
             free_percent > min_free_percent

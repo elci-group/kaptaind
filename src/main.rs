@@ -1,5 +1,5 @@
 use clap::Parser;
-use colored::*;
+use kaptaind::util::style::*;
 use std::fs::File;
 
 #[derive(Parser)]
@@ -120,7 +120,7 @@ struct Cli {
 fn main() -> anyhow::Result<()> {
     // Load optional `.env` file so provider API keys and other secrets can live
     // outside of `kaptaind.toml`.
-    let _ = dotenvy::dotenv();
+    let _ = kaptaind::util::dotenv::load();
     let cli = Cli::parse();
     if let Some(path) = cli.config.as_ref() {
         std::env::set_var("KAPTAIND_CONFIG", path);
