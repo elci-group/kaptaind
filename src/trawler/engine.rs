@@ -569,26 +569,30 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    #[test]
-    fn trawl_finds_rust_project() {
-        let temp = TempDir::new().unwrap();
-
-        // Create a Rust project
-        let project_dir = temp.path().join("my-rust-app");
-        std::fs::create_dir(&project_dir).unwrap();
-        std::fs::write(project_dir.join("Cargo.toml"), "[package]").unwrap();
-
-        let options = TrawlOptions {
-            root: temp.path().to_path_buf(),
-            max_depth: Some(3),
+    fn opts(root: &Path) -> TrawlOptions {
+        TrawlOptions {
+            root: root.to_path_buf(),
+            max_depth: Some(6),
             skip_initialized: false,
             require_git: false,
             auto_register: false,
             filter_types: Vec::new(),
             min_confidence: 0.55,
-        };
+            ..Default::default()
+        }
+    }
 
-        let result = trawl(&options).unwrap();
+    fn write_pkg(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("Cargo.toml"), "[package]\nname = \"x\"\n").unwrap();
+    }
+
+    #[test]
+    fn trawl_finds_rust_project() {
+        let temp = TempDir::new().unwrap();
+        write_pkg(&temp.path().join("my-rust-app"));
+
+        let result = trawl(&opts(temp.path())).unwrap();
         assert_eq!(result.projects.len(), 1);
         assert_eq!(result.projects[0].project_type, ProjectType::Rust);
         assert!(result.projects[0].path.ends_with("my-rust-app"));
@@ -597,26 +601,13 @@ mod tests {
     #[test]
     fn trawl_confidence_scoring() {
         let temp = TempDir::new().unwrap();
-
-        // Create Rust project with multiple confidence indicators
         let project_dir = temp.path().join("rust-app");
-        std::fs::create_dir(&project_dir).unwrap();
-        std::fs::write(project_dir.join("Cargo.toml"), "[package]").unwrap();
+        write_pkg(&project_dir);
         std::fs::write(project_dir.join("Cargo.lock"), "").unwrap();
         std::fs::create_dir(project_dir.join("src")).unwrap();
         std::fs::write(project_dir.join("src/main.rs"), "fn main() {}").unwrap();
 
-        let options = TrawlOptions {
-            root: temp.path().to_path_buf(),
-            max_depth: Some(3),
-            skip_initialized: false,
-            require_git: false,
-            auto_register: false,
-            filter_types: Vec::new(),
-            min_confidence: 0.55,
-        };
-
-        let result = trawl(&options).unwrap();
+        let result = trawl(&opts(temp.path())).unwrap();
         assert_eq!(result.projects.len(), 1);
         assert!(result.projects[0].confidence >= Confidence::High);
         assert!(result.avg_confidence >= 0.80);
@@ -625,22 +616,12 @@ mod tests {
     #[test]
     fn trawl_skips_initialized_when_configured() {
         let temp = TempDir::new().unwrap();
-
-        // Create a Rust project with kaptaind.toml
         let project_dir = temp.path().join("existing-project");
-        std::fs::create_dir(&project_dir).unwrap();
-        std::fs::write(project_dir.join("Cargo.toml"), "[package]").unwrap();
+        write_pkg(&project_dir);
         std::fs::write(project_dir.join("kaptaind.toml"), "").unwrap();
 
-        let options = TrawlOptions {
-            root: temp.path().to_path_buf(),
-            max_depth: Some(3),
-            skip_initialized: true,
-            require_git: false,
-            auto_register: false,
-            filter_types: Vec::new(),
-            min_confidence: 0.55,
-        };
+        let mut options = opts(temp.path());
+        options.skip_initialized = true;
 
         let result = trawl(&options).unwrap();
         assert_eq!(result.projects.len(), 1);
@@ -652,55 +633,157 @@ mod tests {
     fn trawl_respects_max_depth() {
         let temp = TempDir::new().unwrap();
 
-        // Create nested projects
         let level1 = temp.path().join("level1");
-        std::fs::create_dir(&level1).unwrap();
-        std::fs::write(level1.join("Cargo.toml"), "").unwrap();
+        write_pkg(&level1);
 
         let level2 = level1.join("level2");
         std::fs::create_dir(&level2).unwrap();
         std::fs::write(level2.join("package.json"), "{}").unwrap();
 
-        let options = TrawlOptions {
-            root: temp.path().to_path_buf(),
-            max_depth: Some(1),
-            skip_initialized: false,
-            require_git: false,
-            auto_register: false,
-            filter_types: Vec::new(),
-            min_confidence: 0.55,
-        };
+        let mut options = opts(temp.path());
+        options.max_depth = Some(1);
 
         let result = trawl(&options).unwrap();
         assert_eq!(result.projects.len(), 1); // Only level1
+        assert!(result.projects[0].path.ends_with("level1"));
     }
 
     #[test]
     fn trawl_filters_by_project_type() {
         let temp = TempDir::new().unwrap();
 
-        // Create Rust project
-        let rust_dir = temp.path().join("rust-project");
-        std::fs::create_dir(&rust_dir).unwrap();
-        std::fs::write(rust_dir.join("Cargo.toml"), "").unwrap();
+        write_pkg(&temp.path().join("rust-project"));
 
-        // Create Node project
         let node_dir = temp.path().join("node-project");
         std::fs::create_dir(&node_dir).unwrap();
         std::fs::write(node_dir.join("package.json"), "{}").unwrap();
 
-        let options = TrawlOptions {
-            root: temp.path().to_path_buf(),
-            max_depth: Some(3),
-            skip_initialized: false,
-            require_git: false,
-            auto_register: false,
-            filter_types: vec![ProjectType::Rust],
-            min_confidence: 0.55,
-        };
+        let mut options = opts(temp.path());
+        options.filter_types = vec![ProjectType::Rust];
 
         let result = trawl(&options).unwrap();
         assert_eq!(result.projects.len(), 1);
         assert_eq!(result.projects[0].project_type, ProjectType::Rust);
+    }
+
+    #[test]
+    fn trawl_rejects_invalid_cargo_manifest() {
+        let temp = TempDir::new().unwrap();
+        // Empty Cargo.toml is not a valid Rust manifest.
+        let bogus = temp.path().join("bogus");
+        std::fs::create_dir(&bogus).unwrap();
+        std::fs::write(bogus.join("Cargo.toml"), "").unwrap();
+
+        let result = trawl(&opts(temp.path())).unwrap();
+        assert!(result.projects.is_empty());
+    }
+
+    #[test]
+    fn trawl_root_down_outermost_wins() {
+        let temp = TempDir::new().unwrap();
+
+        // A package with a nested, standalone Cargo.toml under examples/. The nested
+        // manifest is NOT a workspace member, so only the outermost root is reported.
+        let pkg = temp.path().join("pkg");
+        write_pkg(&pkg);
+        write_pkg(&pkg.join("examples/nested"));
+
+        let result = trawl(&opts(temp.path())).unwrap();
+        assert_eq!(result.projects.len(), 1);
+        assert!(result.projects[0].path.ends_with("pkg"));
+        assert!(result.projects[0].workspace_root.is_none());
+    }
+
+    #[test]
+    fn trawl_expands_cargo_workspace_members() {
+        let temp = TempDir::new().unwrap();
+
+        std::fs::write(
+            temp.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/*\"]\nresolver = \"2\"\n",
+        )
+        .unwrap();
+        write_pkg(&temp.path().join("crates/a"));
+        write_pkg(&temp.path().join("crates/b"));
+        // Not a crate: no manifest -> must not be reported as a member.
+        std::fs::create_dir_all(temp.path().join("crates/notacrate")).unwrap();
+
+        let result = trawl(&opts(temp.path())).unwrap();
+
+        let mut roots = result
+            .projects
+            .iter()
+            .filter(|p| p.workspace_root.is_none())
+            .collect::<Vec<_>>();
+        let members = result
+            .projects
+            .iter()
+            .filter(|p| p.workspace_root.is_some())
+            .collect::<Vec<_>>();
+
+        assert_eq!(roots.len(), 1, "exactly one workspace root");
+        assert_eq!(
+            roots[0].cargo_kind,
+            Some(CargoManifestKind::Workspace),
+            "root is a virtual workspace"
+        );
+        assert_eq!(members.len(), 2, "two member crates reported");
+        for m in &members {
+            assert_eq!(m.workspace_root.as_deref(), Some(roots[0].path.as_path()));
+        }
+        // No project may come from the empty dir.
+        assert!(result
+            .projects
+            .iter()
+            .all(|p| !p.path.ends_with("notacrate")));
+    }
+
+    #[test]
+    fn trawl_blacklist_skips_dir() {
+        let temp = TempDir::new().unwrap();
+        write_pkg(&temp.path().join("keep"));
+        write_pkg(&temp.path().join("skipme"));
+
+        let mut options = opts(temp.path());
+        options.blacklist = vec!["skipme".to_string()];
+
+        let result = trawl(&options).unwrap();
+        assert_eq!(result.projects.len(), 1);
+        assert!(result.projects[0].path.ends_with("keep"));
+    }
+
+    #[test]
+    fn trawl_blacklist_glob_skips_relative_path() {
+        let temp = TempDir::new().unwrap();
+        write_pkg(&temp.path().join("vendor/legacy"));
+        write_pkg(&temp.path().join("src"));
+
+        let mut options = opts(temp.path());
+        options.blacklist = vec!["vendor/*".to_string()];
+
+        let result = trawl(&options).unwrap();
+        assert!(result
+            .projects
+            .iter()
+            .all(|p| !p.path.to_string_lossy().contains("vendor")));
+    }
+
+    #[test]
+    fn trawl_respects_gitignore() {
+        let temp = TempDir::new().unwrap();
+        std::fs::write(temp.path().join(".gitignore"), "ignored-dir/\n").unwrap();
+        write_pkg(&temp.path().join("ignored-dir/hidden-project"));
+        write_pkg(&temp.path().join("visible-project"));
+
+        // Default: ignore files honored -> ignored-dir is pruned.
+        let result = trawl(&opts(temp.path())).unwrap();
+        assert_eq!(result.projects.len(), 1);
+        assert!(result.projects[0].path.ends_with("visible-project"));
+
+        // With ignore files disabled, the previously-ignored project surfaces.
+        let mut options = opts(temp.path());
+        options.respect_ignore_files = false;
+        let result = trawl(&options).unwrap();
+        assert_eq!(result.projects.len(), 2);
     }
 }
