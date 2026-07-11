@@ -39,7 +39,7 @@ fn substantial_edit(project: &Path) {
 /// stopped only by killing the daemon).
 #[test]
 fn daemon_does_not_cascade_on_version_writeback() {
-    let fixture = MonorepoFixture::new();
+    let fixture = MonorepoFixture::new(19099);
     assert_eq!(fixture.kaptaind_commits(), 0);
 
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
@@ -129,7 +129,7 @@ fn daemon_does_not_cascade_on_version_writeback() {
 /// startup into exactly one catch-up commit through the normal pipeline.
 #[test]
 fn daemon_reconciles_pending_changes_on_startup() {
-    let fixture = MonorepoFixture::new();
+    let fixture = MonorepoFixture::new(19101);
 
     // Edit while no daemon is running.
     substantial_edit(&fixture.project());
@@ -171,7 +171,7 @@ fn daemon_reconciles_pending_changes_on_startup() {
 /// "no_bump" record carrying the achieved score instead of vanishing.
 #[test]
 fn decisions_log_records_commit_and_skip() {
-    let fixture = MonorepoFixture::new();
+    let fixture = MonorepoFixture::new(19103);
 
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(fixture.project())
@@ -218,6 +218,104 @@ fn decisions_log_records_commit_and_skip() {
         assert!(
             skip.scores.is_some(),
             "skip record must carry the achieved score"
+        );
+    }));
+
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+/// Finding #11: editing `.kaptainignore` hot-reloads the ignore matcher —
+/// a subsequently ignored file must never cluster, while normal edits
+/// still commit.
+#[test]
+fn daemon_hot_reloads_ignore_file() {
+    let fixture = MonorepoFixture::new(19105);
+
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
+        .current_dir(fixture.project())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("daemon spawns");
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        std::thread::sleep(Duration::from_secs(2));
+
+        // Baseline: a genuine change commits.
+        substantial_edit(&fixture.project());
+        wait_for(Duration::from_secs(30), || fixture.kaptaind_commits() >= 1);
+        assert_eq!(fixture.kaptaind_commits(), 1);
+
+        // Extend the ignore file and let the reload event land.
+        std::fs::write(
+            fixture.project().join(".kaptainignore"),
+            ".git\n.kaptaind\ntarget\nsrc/frozen.rs\n",
+        )
+        .expect("edit ignore file");
+        std::thread::sleep(Duration::from_secs(3));
+
+        // A change confined to the now-ignored file must not commit.
+        std::fs::write(
+            fixture.project().join("src/frozen.rs"),
+            "/// Frozen.\npub fn frozen(a: i64, b: i64) -> i64 { a - b }\n",
+        )
+        .expect("edit ignored file");
+        std::thread::sleep(Duration::from_secs(8));
+        assert_eq!(
+            fixture.kaptaind_commits(),
+            1,
+            "hot-reloaded ignore pattern was not honored"
+        );
+
+        // Clustering still works for non-ignored paths afterwards.
+        std::fs::write(
+            fixture.project().join("src/util.rs"),
+            "/// Adds three integers.\npub fn add3(a: i64, b: i64, c: i64) -> i64 { a + b + c }\n",
+        )
+        .expect("edit source again");
+        wait_for(Duration::from_secs(30), || fixture.kaptaind_commits() >= 2);
+        assert_eq!(fixture.kaptaind_commits(), 2);
+    }));
+
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+/// Finding #11: a corrupt kaptaind.toml edit must not take the daemon down —
+/// it keeps the previous config and keeps committing.
+#[test]
+fn daemon_survives_invalid_config_edit() {
+    let fixture = MonorepoFixture::new(19107);
+
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
+        .current_dir(fixture.project())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("daemon spawns");
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        std::thread::sleep(Duration::from_secs(2));
+
+        std::fs::write(fixture.project().join("kaptaind.toml"), "not [valid")
+            .expect("corrupt config");
+        std::thread::sleep(Duration::from_secs(3));
+
+        substantial_edit(&fixture.project());
+        wait_for(Duration::from_secs(30), || fixture.kaptaind_commits() >= 1);
+        assert_eq!(
+            fixture.kaptaind_commits(),
+            1,
+            "daemon died or stopped committing after an invalid config edit"
         );
     }));
 

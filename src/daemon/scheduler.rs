@@ -97,7 +97,7 @@ impl SelfWriteGuard {
 
 pub async fn run(
     mut rx: Receiver<FsEvent>,
-    config: Config,
+    mut config: Config,
     mut shutdown: crate::daemon::shutdown::ShutdownToken,
     metrics: Arc<Metrics>,
     event_tx: tokio::sync::broadcast::Sender<DaemonEvent>,
@@ -149,7 +149,7 @@ pub async fn run(
         }
     };
 
-    let ignore_matcher = IgnoreMatcher::load(&config.repo_path, &config.watch.ignore_file);
+    let mut ignore_matcher = IgnoreMatcher::load(&config.repo_path, &config.watch.ignore_file);
     let mut last_commit_at: Option<DateTime<Utc>> = None;
     let mut self_writes = SelfWriteGuard::new();
 
@@ -234,6 +234,27 @@ pub async fn run(
                         if ignore_matcher.is_ignored(&event.paths) {
                             tracing::trace!(?event.paths, "event ignored");
                             continue;
+                        }
+
+                        // Config files are watched as config, never clustered
+                        // (C3): a kaptaind.toml or ignore-file edit reloads
+                        // thresholds, weights, rate limits, and the ignore
+                        // matcher in place. Mixed events still cluster their
+                        // non-config remainder.
+                        let mut saw_config_change = false;
+                        event.paths.retain(|p| {
+                            if is_config_path(&config, p) {
+                                saw_config_change = true;
+                                false
+                            } else {
+                                true
+                            }
+                        });
+                        if saw_config_change {
+                            reload_config(&mut config, &mut ignore_matcher);
+                            if event.paths.is_empty() {
+                                continue;
+                            }
                         }
 
                         // Suppress events caused by the daemon's own writes
@@ -342,6 +363,34 @@ pub async fn run(
     status.set_task(State::Stopped, "Stopped", None);
     write_status(&config.repo_path, &status);
     tracing::info!("scheduler shutdown complete");
+}
+
+/// True when `path` is the project's kaptaind.toml or its configured ignore
+/// file — the two files the daemon watches as configuration (C3).
+fn is_config_path(config: &Config, path: &Path) -> bool {
+    *path == config.repo_path.join("kaptaind.toml")
+        || *path == config.repo_path.join(&config.watch.ignore_file)
+}
+
+/// Hot-reload the operator-tunable config surfaces from kaptaind.toml:
+/// version thresholds, weights, rate limits, and the ignore matcher. A
+/// parse failure keeps the running config and warns — a half-written
+/// editor save must never take the daemon down (C3).
+fn reload_config(config: &mut Config, ignore_matcher: &mut IgnoreMatcher) {
+    let path = config.repo_path.join("kaptaind.toml");
+    match crate::config::loader::load_from_path(&path) {
+        Ok(fresh) => {
+            config.version_thresholds = fresh.version_thresholds;
+            config.weights = fresh.weights;
+            config.ratelimit = fresh.ratelimit;
+            config.watch.ignore_file = fresh.watch.ignore_file;
+            *ignore_matcher = IgnoreMatcher::load(&config.repo_path, &config.watch.ignore_file);
+            tracing::info!("config reloaded: thresholds, weights, rate limits, ignore matcher");
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "config reload failed; keeping previous config");
+        }
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2036,10 +2085,11 @@ impl TestFailureStreak {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_test_outcome, cluster_is_docs_only, format_commit, looks_like_glob,
-        parse_failed_tests, persist_analysis_artifact, rate_limit_allows, run_test_hook,
-        save_version, should_block_commit, should_run_tests, AnalysisArtifact, IgnoreMatcher,
-        SelfWriteGuard, TestFailureStreak, TestOutcome, SELF_WRITE_CAP, SELF_WRITE_TTL,
+        apply_test_outcome, cluster_is_docs_only, format_commit, is_config_path, looks_like_glob,
+        parse_failed_tests, persist_analysis_artifact, rate_limit_allows, reload_config,
+        run_test_hook, save_version, should_block_commit, should_run_tests, AnalysisArtifact,
+        IgnoreMatcher, SelfWriteGuard, TestFailureStreak, TestOutcome, SELF_WRITE_CAP,
+        SELF_WRITE_TTL,
     };
     use crate::cluster::engine::Cluster;
     use crate::config::loader::{Config, TestCommandOn, TestConfig};
@@ -2048,6 +2098,7 @@ mod tests {
     use crate::weight::WeightResult;
     use chrono::{Duration as ChronoDuration, Utc};
     use semver::Version;
+    use std::path::{Path, PathBuf};
     use std::time::Duration;
     use tempfile::tempdir;
     use uuid::Uuid;
@@ -2382,6 +2433,94 @@ anyhow = "1"
         assert!(!version_path.exists());
         let cargo = std::fs::read_to_string(repo_root.join("Cargo.toml")).expect("read");
         assert!(cargo.contains("version = \"1.5.0\""));
+    }
+
+    #[test]
+    fn reload_config_swaps_thresholds_weights_and_ratelimit() {
+        let dir = tempdir().expect("temp dir");
+        std::fs::write(
+            dir.path().join("kaptaind.toml"),
+            r#"
+health_port = 19099
+
+[watch]
+path = "."
+recursive = true
+ignore_file = ".kaptainignore"
+
+[cluster]
+window = 1
+
+[test]
+required = false
+
+[push]
+enabled = false
+branch = "master"
+
+[weights]
+s = 0.1
+a = 0.2
+d = 0.3
+r = 0.4
+
+[ratelimit]
+min_commit_interval = 42
+
+[staging]
+mode = "cluster"
+
+[angler.git_hooks]
+enabled = false
+
+[version_thresholds]
+minor = 0.9
+patch = 0.5
+"#,
+        )
+        .expect("write kaptaind.toml");
+
+        let mut config = Config {
+            repo_path: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+        let mut matcher = IgnoreMatcher::load(dir.path(), Path::new(".kaptainignore"));
+
+        reload_config(&mut config, &mut matcher);
+        assert_eq!(config.version_thresholds.patch, 0.5);
+        assert_eq!(config.version_thresholds.minor, 0.9);
+        assert_eq!(config.weights.s, 0.1);
+        assert_eq!(
+            config.ratelimit.min_commit_interval,
+            Duration::from_secs(42)
+        );
+    }
+
+    #[test]
+    fn reload_config_keeps_previous_config_on_invalid_toml() {
+        let dir = tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("kaptaind.toml"), "not [valid").expect("write");
+
+        let mut config = Config {
+            repo_path: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+        let before = config.version_thresholds.patch;
+        let mut matcher = IgnoreMatcher::load(dir.path(), Path::new(".kaptainignore"));
+
+        reload_config(&mut config, &mut matcher);
+        assert_eq!(config.version_thresholds.patch, before);
+    }
+
+    #[test]
+    fn config_path_detection_covers_toml_and_ignore_file() {
+        let config = Config {
+            repo_path: PathBuf::from("/repo"),
+            ..Config::default()
+        };
+        assert!(is_config_path(&config, Path::new("/repo/kaptaind.toml")));
+        assert!(is_config_path(&config, Path::new("/repo/.kaptainignore")));
+        assert!(!is_config_path(&config, Path::new("/repo/src/main.rs")));
     }
 
     #[test]

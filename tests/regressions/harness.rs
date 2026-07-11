@@ -15,7 +15,9 @@ pub struct MonorepoFixture {
 }
 
 impl MonorepoFixture {
-    pub fn new() -> Self {
+    /// Each test passes a distinct health port: tests in one binary run on
+    /// parallel threads, and two daemons cannot bind the same port.
+    pub fn new(health_port: u16) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
         run(root, &["git", "init", "-q", "-b", "master"]);
@@ -41,8 +43,9 @@ impl MonorepoFixture {
             .expect(".kaptainignore");
         std::fs::write(
             proj.join("kaptaind.toml"),
-            r#"
-health_port = 19099
+            format!(
+                r#"
+health_port = {health_port}
 
 [watch]
 path = "."
@@ -73,7 +76,8 @@ mode = "cluster"
 
 [angler.git_hooks]
 enabled = true
-"#,
+"#
+            ),
         )
         .expect("kaptaind.toml");
 
