@@ -13,6 +13,62 @@ All notable changes to kaptaind are documented here. The format follows
 > here. Per-commit detail for the `v0.1.44 → v9.x` range lives in `git log`;
 > the consolidated capability set is summarized under `[9.7.16]` below.
 
+## [9.8.0] — 2026-07-11
+
+Workstreams B (repo model & version consistency) and C (operability) of the
+autonomous-commit safety plan. Monorepo-subdirectory projects are now
+first-class, the version state is a single coherent triple, and every
+decision the daemon makes is observable. Operator docs: `docs/RUNBOOK.md`.
+
+### Fixed — repo model & version consistency
+- **`RepoContext` everywhere.** The daemon distinguishes the git root (where
+  git commands anchor) from the project root (where `kaptaind.toml`/`VERSION`
+  live). Previously commits ran against the git root, so in a monorepo the
+  meta files were resolved against the wrong directory and silently never
+  staged — the commit claimed a bump its tree didn't contain. All staging is
+  now scoped to the project subtree; `kaptaind analyze` reports only
+  in-project paths.
+- **Version triple consistency.** `save_version` syncs `VERSION`,
+  `Cargo.toml`, **and** `Cargo.lock`'s own-package entry, and cluster
+  meta-staging includes all three — after any auto-commit the triple agrees
+  and no drift is left uncommitted (validated across a 20-commit synthetic
+  workload).
+- **Startup reconciliation.** `[watch] rescan_on_start` (default `true`):
+  changes made while the daemon was down form a single catch-up cluster
+  through the normal scored/tested/gated pipeline.
+- **Manifest scoring calibration.** Metadata-only manifest edits (a
+  repository-URL or version-key change) no longer score the entire
+  dependency graph; dependency sections are compared against HEAD and only
+  real dependency changes feed the `deps` score.
+
+### Added — operability
+- **Graceful shutdown.** `[daemon] shutdown_grace_secs` (default 10) bounds
+  the task drain on SIGTERM/SIGINT; the runtime waits grace + 5s before
+  forcing exit; the pid file is removed on clean shutdown.
+- **Crash-safe state.** Stale `daemon.pid` files are detected and removed at
+  startup; `status.json` writes are atomic (tmp + rename) and the startup
+  `Idle` write lands before any cluster processing, so a crashed run never
+  shows a frozen mid-state.
+- **Decision transparency.** Every cluster decision — commit or skip —
+  appends one JSON line to `.kaptaind/decisions.jsonl` (scores, thresholds,
+  bump, reason, paths). `kaptaind-cli explain [--last N]` renders skips with
+  the exact unmet threshold; `kaptaind --dry-run` prints the full decision
+  (bump, next version, exact commit message) without writing anything.
+  `kaptaind init` now emits `[version_thresholds]` explicitly.
+- **Test-gate backpressure.** `[test] command_on = "always" | "code_only"`
+  lets docs-only clusters skip the suite; ≥3 consecutive required-test
+  failures log and broadcast a "commits blocked" warning.
+- **Config hot reload.** `kaptaind.toml` and the ignore file are watched as
+  configuration (never clustered): edits reload thresholds, weights, rate
+  limits, and the ignore matcher within one cluster window; invalid TOML
+  keeps the previous config and warns.
+
+### Added — regression suite
+- Five daemon-level regression tests on a monorepo fixture (parallel, one
+  health port per test): cascade suppression + version-triple consistency +
+  no fake `.git`; startup catch-up; decisions log records commit and skip;
+  ignore-file hot reload; invalid-config survival.
+
 ## [9.7.17] — 2026-07-11
 
 Security hardening pass (audit remediation) plus the M0 milestone of the
