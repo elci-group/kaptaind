@@ -191,6 +191,11 @@ fn decisions_log_records_commit_and_skip() {
                 .map(|records| records.iter().any(|r| r.outcome == "commit"))
                 .unwrap_or(false)
         });
+        // The bump commit moved VERSION; remember where it landed.
+        let bumped_version = fixture
+            .git(&["show", "HEAD:proj/VERSION"])
+            .trim()
+            .to_string();
 
         // Trivial docs edit: below the patch threshold, so it must be logged
         // as a skip rather than silently dropped.
@@ -218,6 +223,155 @@ fn decisions_log_records_commit_and_skip() {
         assert!(
             skip.scores.is_some(),
             "skip record must carry the achieved score"
+        );
+
+        // Default behavior (`require_bump` unset ⇒ true): the below-threshold
+        // docs edit is logged but NOT committed, and VERSION does not move.
+        std::thread::sleep(Duration::from_secs(3));
+        assert_eq!(
+            fixture.kaptaind_commits(),
+            1,
+            "below-threshold edit must not commit while require_bump is on"
+        );
+        assert_eq!(
+            fixture.git(&["show", "HEAD:proj/VERSION"]).trim(),
+            bumped_version,
+            "no_bump must never move VERSION"
+        );
+    }));
+
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+/// D1 (#7): with `require_bump = false`, a below-threshold docs edit is
+/// captured by a real git commit whose subject starts with `chore:` instead
+/// of being left uncommitted forever (and resurfacing on every rescan).
+#[test]
+fn chore_commit_captures_docs() {
+    let fixture = MonorepoFixture::with_config(19109, "\n[commit]\nrequire_bump = false\n");
+
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
+        .current_dir(fixture.project())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("daemon spawns");
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // Let the watcher settle before editing.
+        std::thread::sleep(Duration::from_secs(2));
+
+        // Trivial docs edit: scores below the patch threshold.
+        std::fs::write(fixture.project().join("README.md"), "# proj\n").expect("docs edit");
+
+        wait_for(Duration::from_secs(30), || fixture.chore_commits() >= 1);
+        assert_eq!(
+            fixture.chore_commits(),
+            1,
+            "expected exactly one chore commit for the docs edit"
+        );
+        assert_eq!(
+            fixture.kaptaind_commits(),
+            0,
+            "below-threshold work must not produce a bumping commit"
+        );
+
+        // The chore commit actually captured the docs edit.
+        let committed = fixture.git(&["show", "--name-only", "--format=", "HEAD"]);
+        assert!(
+            committed
+                .lines()
+                .any(|line| line.trim() == "proj/README.md"),
+            "chore commit did not include the docs edit:\n{committed}"
+        );
+
+        // The decision log records the new outcome, not no_bump.
+        wait_for(Duration::from_secs(10), || {
+            kaptaind::daemon::decisions::tail_decisions(&fixture.project(), 10)
+                .map(|records| records.iter().any(|r| r.outcome == "chore_commit"))
+                .unwrap_or(false)
+        });
+
+        // VERSION is untouched, both at HEAD and in the worktree.
+        assert_eq!(fixture.git(&["show", "HEAD:proj/VERSION"]).trim(), "0.1.0");
+        assert_eq!(
+            std::fs::read_to_string(fixture.project().join("VERSION"))
+                .expect("VERSION")
+                .trim(),
+            "0.1.0"
+        );
+    }));
+
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+/// D1 (#17): with `require_bump = false`, capturing below-threshold docs
+/// work must not inflate the version — the VERSION / Cargo.toml / Cargo.lock
+/// triple stays unchanged at HEAD and clean in the worktree.
+#[test]
+fn docs_edit_does_not_bump_when_require_bump_off() {
+    let fixture = MonorepoFixture::with_config(19111, "\n[commit]\nrequire_bump = false\n");
+
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
+        .current_dir(fixture.project())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("daemon spawns");
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // Let the watcher settle before editing.
+        std::thread::sleep(Duration::from_secs(2));
+
+        std::fs::write(fixture.project().join("README.md"), "# proj\n").expect("docs edit");
+
+        wait_for(Duration::from_secs(30), || fixture.chore_commits() >= 1);
+
+        // The version triple is unchanged at HEAD...
+        assert_eq!(
+            fixture.git(&["show", "HEAD:proj/VERSION"]).trim(),
+            "0.1.0",
+            "chore commit must not bump VERSION"
+        );
+        let toml = fixture.git(&["show", "HEAD:proj/Cargo.toml"]);
+        assert!(
+            toml.contains("version = \"0.1.0\""),
+            "chore commit must not bump Cargo.toml:\n{toml}"
+        );
+        let lock = fixture.git(&["show", "HEAD:proj/Cargo.lock"]);
+        assert!(
+            lock.contains("version = \"0.1.0\""),
+            "chore commit must not bump Cargo.lock:\n{lock}"
+        );
+
+        // ...and no version drift is left uncommitted.
+        let drift = fixture.git(&[
+            "status",
+            "--porcelain",
+            "--",
+            "proj/VERSION",
+            "proj/Cargo.toml",
+            "proj/Cargo.lock",
+        ]);
+        assert!(
+            drift.trim().is_empty(),
+            "version drift left uncommitted after chore commit:\n{drift}"
+        );
+
+        assert_eq!(
+            fixture.kaptaind_commits(),
+            0,
+            "no bumping commit may accompany the chore capture"
         );
     }));
 

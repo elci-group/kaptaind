@@ -1,7 +1,7 @@
 use crate::angler::{AnglerSystem, BaitContext, BaitEvent, WebhookEvent};
 use crate::aoc::tracer;
 use crate::cluster::engine::{Cluster, ClusterEngine};
-use crate::commit::message::format_commit;
+use crate::commit::message::{format_chore_commit, format_commit};
 use crate::config::loader::{TestCommandOn, TestConfig};
 use crate::config::Config;
 use crate::daemon::health::{DaemonEvent, Metrics};
@@ -676,22 +676,102 @@ async fn process_cluster(
     let bump = crate::version::decide(&weight, &config.version_thresholds);
 
     if bump == Bump::None {
-        tracing::debug!("no semantic version bump required");
-        write_trace_if_active(
-            &config.repo_path,
-            &cluster,
-            tracer::TraceResult::Skipped {
-                reason: "no_bump".to_string(),
-            },
-            test_outcome.trace_test(),
-            agent_event.clone(),
-        );
+        if config.commit.require_bump {
+            tracing::debug!("no semantic version bump required");
+            write_trace_if_active(
+                &config.repo_path,
+                &cluster,
+                tracer::TraceResult::Skipped {
+                    reason: "no_bump".to_string(),
+                },
+                test_outcome.trace_test(),
+                agent_event.clone(),
+            );
+            record_decision(
+                config,
+                &cluster,
+                crate::daemon::decisions::outcome::NO_BUMP,
+                format!(
+                    "score {:.3} below patch threshold {:.3}",
+                    weight.score, config.version_thresholds.patch
+                ),
+                Some(&diff),
+                Some(&weight),
+                None,
+                None,
+            );
+            status.set_idle();
+            write_status(&config.repo_path, status);
+            return;
+        }
+
+        // D1 (`require_bump = false`): capture below-threshold work with a
+        // non-bumping chore commit instead of leaving it uncommitted.
+        // Version files are never written here; staging reuses the exact
+        // same scoped machinery (RepoContext, secret denylist) as the
+        // bumping path below.
+        let msg = format_chore_commit(&cluster, &diff, &weight, &agent_event);
+        let msg = if policy.as_ref().map(|p| p.required_signoff).unwrap_or(false) {
+            format!("{}\n\nSigned-off-by: kaptaind <kaptaind@localhost>", msg)
+        } else {
+            msg
+        };
+
+        let repo_ctx = crate::git::repo::RepoContext::new(repo.root(), &config.repo_path);
+        if let Err(err) = crate::commit::orchestrator::commit_with_staging(
+            &repo_ctx,
+            &msg,
+            &config.staging,
+            &cluster_paths,
+            &config.commit,
+        ) {
+            tracing::error!(error = %err, "chore commit failed");
+            write_trace_if_active(
+                &config.repo_path,
+                &cluster,
+                tracer::TraceResult::Skipped {
+                    reason: "commit_failed".to_string(),
+                },
+                test_outcome.trace_test(),
+                agent_event.clone(),
+            );
+            record_decision(
+                config,
+                &cluster,
+                crate::daemon::decisions::outcome::COMMIT_FAILED,
+                err.to_string(),
+                Some(&diff),
+                Some(&weight),
+                None,
+                None,
+            );
+            status.set_failed(err.to_string());
+            write_status(&config.repo_path, status);
+            crate::daemon::notification::notify_warning(
+                &config.notify,
+                &err.to_string(),
+                "Commit failed",
+                config.capabilities.network_webhooks,
+            );
+            broadcast_event(
+                &event_tx,
+                "warning",
+                serde_json::json!({
+                    "title": err.to_string(),
+                    "source": "Commit failed",
+                }),
+            );
+            return;
+        }
+
+        metrics.commits_made.fetch_add(1, Ordering::Relaxed);
+
         record_decision(
             config,
             &cluster,
-            crate::daemon::decisions::outcome::NO_BUMP,
+            crate::daemon::decisions::outcome::CHORE_COMMIT,
             format!(
-                "score {:.3} below patch threshold {:.3}",
+                "score {:.3} below patch threshold {:.3}; committed without version bump",
                 weight.score, config.version_thresholds.patch
             ),
             Some(&diff),
@@ -699,6 +779,28 @@ async fn process_cluster(
             None,
             None,
         );
+
+        write_trace_if_active(
+            &config.repo_path,
+            &cluster,
+            tracer::TraceResult::Skipped {
+                reason: "chore_commit".to_string(),
+            },
+            test_outcome.trace_test(),
+            agent_event,
+        );
+
+        broadcast_event(
+            &event_tx,
+            "commit_succeeded",
+            serde_json::json!({
+                "chore": true,
+                "cluster_id": cluster.id.to_string(),
+                "score": weight.score,
+            }),
+        );
+
+        *last_commit_at = Some(now);
         status.set_idle();
         write_status(&config.repo_path, status);
         return;

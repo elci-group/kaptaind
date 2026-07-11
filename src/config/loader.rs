@@ -926,6 +926,15 @@ pub struct CommitConfig {
     /// Optional GPG key ID or email to use for signing.
     #[serde(default)]
     pub gpg_key_id: Option<String>,
+    /// Require a semantic version bump for a cluster to be committed (D1).
+    ///
+    /// When `true` (the v9.x default), below-threshold clusters are logged
+    /// as `no_bump` and left uncommitted. When `false`, they are captured
+    /// with a non-bumping `chore:` commit instead, leaving VERSION,
+    /// Cargo.toml and Cargo.lock untouched. The default flips to `false`
+    /// in v10.
+    #[serde(default = "default_true")]
+    pub require_bump: bool,
 }
 
 impl Default for CommitConfig {
@@ -933,6 +942,7 @@ impl Default for CommitConfig {
         Self {
             sign: false,
             gpg_key_id: None,
+            require_bump: true,
         }
     }
 }

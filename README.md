@@ -572,6 +572,7 @@ external_plugins = true
 [commit]
 # sign = false
 # gpg_key_id = "..."
+# require_bump = true  # false: below-threshold clusters commit as `chore:` without a version bump
 
 # [[rbac.roles]]
 # name = "release-engineers"

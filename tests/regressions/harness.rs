@@ -18,6 +18,13 @@ impl MonorepoFixture {
     /// Each test passes a distinct health port: tests in one binary run on
     /// parallel threads, and two daemons cannot bind the same port.
     pub fn new(health_port: u16) -> Self {
+        Self::with_config(health_port, "")
+    }
+
+    /// Like [`MonorepoFixture::new`], but appends extra TOML to the generated
+    /// `kaptaind.toml` (e.g. `[commit]\nrequire_bump = false`) before the
+    /// initial commit, so the daemon starts with it already in effect.
+    pub fn with_config(health_port: u16, extra_config: &str) -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
         let root = dir.path();
         run(root, &["git", "init", "-q", "-b", "master"]);
@@ -76,6 +83,7 @@ mode = "cluster"
 
 [angler.git_hooks]
 enabled = true
+{extra_config}
 "#
             ),
         )
@@ -113,6 +121,14 @@ enabled = true
         self.git(&["log", "--format=%s"])
             .lines()
             .filter(|subject| subject.starts_with("kaptaind:"))
+            .count()
+    }
+
+    /// Count of non-bumping chore commits (D1, `require_bump = false`).
+    pub fn chore_commits(&self) -> usize {
+        self.git(&["log", "--format=%s"])
+            .lines()
+            .filter(|subject| subject.starts_with("chore:"))
             .count()
     }
 }

@@ -416,6 +416,7 @@ mod tests {
         let commit_config = CommitConfig {
             sign: true,
             gpg_key_id: None,
+            ..CommitConfig::default()
         };
 
         assert_signing_attempted_or_succeeded(repo.path(), &commit_config);
@@ -429,6 +430,7 @@ mod tests {
         let commit_config = CommitConfig {
             sign: true,
             gpg_key_id: Some("test@example.com".to_string()),
+            ..CommitConfig::default()
         };
 
         assert_signing_attempted_or_succeeded(repo.path(), &commit_config);

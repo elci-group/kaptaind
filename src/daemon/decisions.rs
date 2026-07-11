@@ -12,6 +12,9 @@ use std::path::Path;
 pub mod outcome {
     pub const COMMIT: &str = "commit";
     pub const NO_BUMP: &str = "no_bump";
+    /// Below-threshold cluster captured with a non-bumping `chore:` commit
+    /// (`[commit] require_bump = false`, D1).
+    pub const CHORE_COMMIT: &str = "chore_commit";
     pub const TEST_FAILED: &str = "test_failed";
     pub const BLOCKED: &str = "blocked";
     pub const VERSION_WRITE_FAILED: &str = "version_write_failed";
@@ -121,6 +124,13 @@ pub fn render_decisions(records: &[DecisionRecord]) -> String {
                 ),
                 None => format!("[{ts}] skip: no_bump — {}", record.reason),
             },
+            outcome::CHORE_COMMIT => match score {
+                Some(s) => format!(
+                    "[{ts}] commit: chore (no bump) — score {s:.3} below patch threshold {:.3}",
+                    record.thresholds.patch
+                ),
+                None => format!("[{ts}] commit: chore (no bump) — {}", record.reason),
+            },
             other => {
                 let mut line = format!("[{ts}] skip: {other}");
                 if !record.reason.is_empty() {
@@ -201,6 +211,16 @@ mod tests {
         let rendered = render_decisions(&[r]);
         assert!(
             rendered.contains("skip: no_bump — score 0.042 below patch threshold 0.100"),
+            "unexpected render: {rendered}"
+        );
+    }
+
+    #[test]
+    fn render_chore_commit_line() {
+        let r = record(outcome::CHORE_COMMIT, "", Some(0.042));
+        let rendered = render_decisions(&[r]);
+        assert!(
+            rendered.contains("commit: chore (no bump) — score 0.042 below patch threshold 0.100"),
             "unexpected render: {rendered}"
         );
     }

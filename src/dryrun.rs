@@ -57,7 +57,15 @@ pub fn run(config: &Config) -> anyhow::Result<()> {
     );
 
     if bump == crate::version::Bump::None {
-        println!("decision: skip (no_bump — score below patch threshold)");
+        if config.commit.require_bump {
+            println!("decision: skip (no_bump — score below patch threshold)");
+        } else {
+            let message =
+                crate::commit::message::format_chore_commit(&cluster, &diff, &weight, &None);
+            println!("decision: chore commit (require_bump = false — no version bump)");
+            println!("commit message:");
+            println!("{message}");
+        }
         return Ok(());
     }
 
