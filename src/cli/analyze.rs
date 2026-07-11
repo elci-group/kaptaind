@@ -87,9 +87,6 @@ pub fn handle_analyze(config: &Config) -> anyhow::Result<()> {
         format!("{:.3}", weight.score).bold().yellow()
     );
 
-    let current_version = read_current_version(config);
-    let next_version = kaptaind::version::apply(current_version, bump);
-
     let bump_str = match bump {
         kaptaind::version::Bump::Major => "🚀 Major".red().bold(),
         kaptaind::version::Bump::Minor => "✨ Minor".cyan().bold(),
@@ -100,22 +97,11 @@ pub fn handle_analyze(config: &Config) -> anyhow::Result<()> {
     if bump == kaptaind::version::Bump::None {
         println!("{} {}", "📈 Projected Bump:".bold().cyan(), bump_str);
     } else {
+        let current_version = kaptaind::version::resolve_baseline(&config.repo_path)?;
+        let next_version = kaptaind::version::apply(current_version, bump);
         let bump_display = format!("{} -> v{}", bump_str, next_version);
         println!("{} {}", "📈 Projected Bump:".bold().cyan(), bump_display);
     }
 
     Ok(())
-}
-
-fn read_current_version(config: &Config) -> semver::Version {
-    let version_path = config.repo_path.join("VERSION");
-    let current_version_str = if version_path.exists() {
-        std::fs::read_to_string(&version_path)
-            .unwrap_or_else(|_| "0.1.0".to_string())
-            .trim()
-            .to_string()
-    } else {
-        "0.1.0".to_string()
-    };
-    semver::Version::parse(&current_version_str).unwrap_or_else(|_| semver::Version::new(0, 1, 0))
 }

@@ -496,8 +496,24 @@ async fn process_cluster(
         return;
     }
 
-    let previous =
-        load_version(&config.repo_path.join("VERSION")).unwrap_or_else(|| Version::new(0, 1, 0));
+    let previous = match crate::version::resolve_baseline(&config.repo_path) {
+        Ok(version) => version,
+        Err(err) => {
+            tracing::error!(error = %err, "cannot resolve baseline version; skipping commit");
+            write_trace_if_active(
+                &config.repo_path,
+                &cluster,
+                tracer::TraceResult::Skipped {
+                    reason: "version_baseline_unresolvable".to_string(),
+                },
+                test_outcome.trace_test(),
+                agent_event.clone(),
+            );
+            status.set_failed(err.to_string());
+            write_status(&config.repo_path, status);
+            return;
+        }
+    };
     let next = crate::version::apply(previous.clone(), bump);
 
     // Collect cluster paths early for staging and inference
@@ -1384,6 +1400,18 @@ pub(crate) fn load_version(path: &Path) -> Option<Version> {
 }
 
 fn save_version(path: &Path, version: &Version) -> anyhow::Result<()> {
+    // Monotonic guard: never write a version below the current baseline
+    // (VERSION file or manifest). A missing/unresolvable baseline skips
+    // the guard — the first save is what creates VERSION.
+    if let Some(repo_path) = path.parent() {
+        if let Ok(baseline) = crate::version::resolve_baseline(repo_path) {
+            anyhow::ensure!(
+                version >= &baseline,
+                "refusing version downgrade: next v{version} < current baseline v{baseline}"
+            );
+        }
+    }
+
     std::fs::write(path, version.to_string())?;
 
     // Update Cargo.toml version in common locations
@@ -1896,6 +1924,42 @@ anyhow = "1"
             std::fs::read_to_string(&cargo_toml_path).expect("read Cargo.toml");
         assert!(updated_cargo_toml.contains("version = \"0.2.0\""));
         assert!(updated_cargo_toml.contains("anyhow = \"1\""));
+    }
+
+    #[test]
+    fn test_save_version_refuses_downgrade() {
+        let dir = tempdir().expect("temp dir");
+        let repo_root = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_root).expect("create repo root");
+        std::fs::write(
+            repo_root.join("Cargo.toml"),
+            "[package]\nname = \"kaptaind\"\nversion = \"1.5.0\"\n",
+        )
+        .expect("write Cargo.toml");
+
+        let version_path = repo_root.join("VERSION");
+        let err = save_version(&version_path, &Version::new(1, 4, 0))
+            .expect_err("downgrade must be refused");
+        assert!(err.to_string().contains("downgrade"));
+
+        // Neither file may have been touched.
+        assert!(!version_path.exists());
+        let cargo = std::fs::read_to_string(repo_root.join("Cargo.toml")).expect("read");
+        assert!(cargo.contains("version = \"1.5.0\""));
+    }
+
+    #[test]
+    fn test_save_version_allows_first_write_without_baseline() {
+        let dir = tempdir().expect("temp dir");
+        let repo_root = dir.path().join("repo");
+        std::fs::create_dir_all(&repo_root).expect("create repo root");
+
+        let version_path = repo_root.join("VERSION");
+        save_version(&version_path, &Version::new(0, 1, 0)).expect("first save");
+        assert_eq!(
+            std::fs::read_to_string(&version_path).expect("read VERSION"),
+            "0.1.0"
+        );
     }
 
     fn sample_cluster() -> Cluster {
