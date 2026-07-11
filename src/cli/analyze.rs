@@ -13,7 +13,14 @@ pub fn handle_analyze(config: &Config) -> anyhow::Result<()> {
             );
         }
     };
-    let paths = repo.changed_paths()?;
+    let repo_ctx = kaptaind::git::repo::RepoContext::new(repo.root(), &config.repo_path);
+    // Status paths are git-root-relative; scope them to the project so a
+    // monorepo daemon doesn't analyze (and score) sibling projects.
+    let paths: Vec<std::path::PathBuf> = repo
+        .changed_paths()?
+        .into_iter()
+        .filter_map(|p| repo_ctx.to_project_relative(&p))
+        .collect();
 
     if paths.is_empty() {
         println!("Working tree is clean. No analysis generated.");

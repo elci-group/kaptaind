@@ -32,118 +32,141 @@ fn expand_recursive(patterns: &[String]) -> Vec<String> {
 }
 
 /// Stage and commit with the default "all" strategy.
-pub fn commit(repo_path: &Path, msg: &str, commit_config: &CommitConfig) -> anyhow::Result<()> {
-    commit_with_staging(
-        repo_path,
-        msg,
-        &StagingConfig::default(),
-        &[],
-        commit_config,
-    )
+pub fn commit(
+    ctx: &repo::RepoContext,
+    msg: &str,
+    commit_config: &CommitConfig,
+) -> anyhow::Result<()> {
+    commit_with_staging(ctx, msg, &StagingConfig::default(), &[], commit_config)
 }
 
 /// Stage and commit with configurable staging behavior.
+///
+/// All git operations anchor at `ctx.git_root`; existence checks and glob
+/// matching anchor at `ctx.project_root`. In a standalone repo the two are
+/// the same and behavior is unchanged; in a monorepo the daemon only ever
+/// stages paths inside its project.
 pub fn commit_with_staging(
-    repo_path: &Path,
+    ctx: &repo::RepoContext,
     msg: &str,
     staging: &StagingConfig,
     cluster_paths: &[PathBuf],
     commit_config: &CommitConfig,
 ) -> anyhow::Result<()> {
+    let git_root = &ctx.git_root;
     match staging.mode {
         StagingMode::All => {
-            add_all_guarded(repo_path)?;
+            add_all_guarded(ctx)?;
         }
         StagingMode::Cluster => {
-            add_paths(repo_path, cluster_paths)?;
-            let mut meta_paths = vec![PathBuf::from("VERSION")];
-            for cargo_rel in ["Cargo.toml", "src-tauri/Cargo.toml"] {
-                if repo_path.join(cargo_rel).exists() {
-                    meta_paths.push(PathBuf::from(cargo_rel));
+            add_paths(git_root, cluster_paths)?;
+            let mut meta_paths = Vec::new();
+            let prefix = ctx.project_prefix();
+            for rel in [
+                "VERSION",
+                "Cargo.toml",
+                "Cargo.lock",
+                "src-tauri/Cargo.toml",
+            ] {
+                // Existence is checked against the project root; staging uses
+                // the git-root-relative form.
+                if ctx.project_root.join(rel).exists() {
+                    meta_paths.push(prefix.join(rel));
                 }
             }
-            add_paths(repo_path, &meta_paths)?;
+            add_paths(git_root, &meta_paths)?;
         }
         StagingMode::Pattern => {
             if staging.include.is_empty() {
-                add_all_guarded(repo_path)?;
+                add_all_guarded(ctx)?;
             } else {
                 let include_globs = build_globset(&staging.include)?;
-                let paths: Vec<PathBuf> = repo::changed_paths(repo_path)?
+                let paths: Vec<PathBuf> = repo::changed_paths(git_root)?
                     .into_iter()
-                    .filter(|path| include_globs.is_match(path))
+                    .filter_map(|p| {
+                        ctx.to_project_relative(&p)
+                            .filter(|rel| include_globs.is_match(rel))
+                            .map(|_| p)
+                    })
                     .collect();
-                add_paths(repo_path, &paths)?;
+                add_paths(git_root, &paths)?;
             }
         }
     }
 
-    unstage_excluded(repo_path, &staging.exclude)?;
+    unstage_excluded(ctx, &staging.exclude)?;
 
     if commit_config.sign {
-        repo::commit_signed(repo_path, msg, commit_config.gpg_key_id.as_deref())?;
+        repo::commit_signed(git_root, msg, commit_config.gpg_key_id.as_deref())?;
     } else {
-        repo::run_git(repo_path, &["commit", "-m", msg])?;
+        repo::run_git(git_root, &["commit", "-m", msg])?;
     }
 
     Ok(())
 }
 
-/// `git add -A` with a fail-closed secret guard.
+/// `git add -A` with a fail-closed secret guard, scoped to the project.
 ///
-/// A bare `git add -A` stages the entire worktree, including untracked files.
-/// Before running it, refuse the commit outright if any changed path matches
-/// the built-in secret denylist: unstaging-after-the-fact (the old behavior)
-/// still let a denylisted file sit in the index between the add and the
-/// unstage, and silently "succeeding" while dropping files hid the problem
-/// from the operator. In cluster/pattern modes the explicit per-path staging
-/// plus `unstage_excluded` remains the guard; only the whole-worktree paths
-/// abort here.
-fn add_all_guarded(repo_path: &Path) -> anyhow::Result<()> {
+/// A bare `git add -A` stages the entire worktree, including untracked files
+/// and — in a monorepo — every sibling project. Before running it, refuse the
+/// commit outright if any changed in-project path matches the built-in secret
+/// denylist: unstaging-after-the-fact (the old behavior) still let a
+/// denylisted file sit in the index between the add and the unstage, and
+/// silently "succeeding" while dropping files hid the problem from the
+/// operator. In cluster/pattern modes the explicit per-path staging plus
+/// `unstage_excluded` remains the guard; only the whole-worktree paths abort
+/// here.
+fn add_all_guarded(ctx: &repo::RepoContext) -> anyhow::Result<()> {
     let deny: Vec<String> = SECRET_DENYLIST.iter().map(|s| s.to_string()).collect();
     let globset = build_globset(&expand_recursive(&deny))?;
-    let denied: Vec<PathBuf> = repo::changed_paths(repo_path)?
+    let denied: Vec<String> = repo::changed_paths(&ctx.git_root)?
         .into_iter()
-        .filter(|path| globset.is_match(path))
+        .filter_map(|p| ctx.to_project_relative(&p))
+        .filter(|rel| globset.is_match(rel))
+        .map(|p| p.to_string_lossy().into_owned())
         .collect();
     if !denied.is_empty() {
-        let names: Vec<String> = denied
-            .iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect();
         anyhow::bail!(
             "refusing to commit: whole-worktree staging (`git add -A`) would include \
              secret-pattern files: {}. Move them out of the worktree, add them to \
              .gitignore, or switch staging mode to \"cluster\"/\"pattern\".",
-            names.join(", ")
+            denied.join(", ")
         );
     }
-    repo::run_git(repo_path, &["add", "-A"])?;
+    let prefix = ctx.project_prefix();
+    if prefix.as_os_str().is_empty() {
+        repo::run_git(&ctx.git_root, &["add", "-A"])?;
+    } else {
+        repo::run_git(
+            &ctx.git_root,
+            &["add", "-A", "--", &prefix.to_string_lossy()],
+        )?;
+    }
     Ok(())
 }
 
-fn add_paths(repo_path: &Path, paths: &[PathBuf]) -> anyhow::Result<()> {
+fn add_paths(git_root: &Path, paths: &[PathBuf]) -> anyhow::Result<()> {
     for path in paths {
-        let full_path = repo_path.join(path);
+        let full_path = git_root.join(path);
         // Skip transient paths that no longer exist (e.g. git tmp objects).
         if !full_path.exists() {
             continue;
         }
         // Skip paths ignored by git (e.g. build outputs, caches, .git internals).
-        if is_ignored(repo_path, path) {
+        if is_ignored(git_root, path) {
             continue;
         }
-        repo::run_git(repo_path, &["add", "--", &path.to_string_lossy()])?;
+        repo::run_git(git_root, &["add", "--", &path.to_string_lossy()])?;
     }
     Ok(())
 }
 
 /// Returns true if git considers the path ignored.
 /// `git check-ignore` exits 0 for ignored, 1 for not ignored, 128 on error.
-fn is_ignored(repo_path: &Path, path: &Path) -> bool {
+fn is_ignored(git_root: &Path, path: &Path) -> bool {
     std::process::Command::new("git")
         .arg("-C")
-        .arg(repo_path)
+        .arg(git_root)
         .args(["check-ignore", "-q", "--"])
         .arg(path)
         .status()
@@ -151,19 +174,24 @@ fn is_ignored(repo_path: &Path, path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-fn unstage_excluded(repo_path: &Path, excludes: &[String]) -> anyhow::Result<()> {
+fn unstage_excluded(ctx: &repo::RepoContext, excludes: &[String]) -> anyhow::Result<()> {
     // User-supplied excludes (recursive-expanded) plus a hardcoded secret
     // denylist that cannot be turned off from config. Both are matched against
-    // the repo-relative changed paths.
+    // the project-relative changed paths; unstaging uses the git-root-relative
+    // form.
     let mut patterns = expand_recursive(excludes);
     let deny: Vec<String> = SECRET_DENYLIST.iter().map(|s| s.to_string()).collect();
     patterns.extend(expand_recursive(&deny));
     let globset = build_globset(&patterns)?;
 
-    for path in repo::changed_paths(repo_path)? {
-        if globset.is_match(&path) {
+    for path in repo::changed_paths(&ctx.git_root)? {
+        let matches = ctx
+            .to_project_relative(&path)
+            .map(|rel| globset.is_match(&rel))
+            .unwrap_or(false);
+        if matches {
             repo::run_git(
-                repo_path,
+                &ctx.git_root,
                 &["reset", "-q", "HEAD", "--", &path.to_string_lossy()],
             )?;
         }
@@ -202,7 +230,7 @@ mod tests {
         };
 
         commit_with_staging(
-            repo.path(),
+            &crate::git::repo::RepoContext::single(repo.path()),
             "all mode",
             &staging,
             &[],
@@ -230,7 +258,7 @@ mod tests {
         };
 
         let err = commit_with_staging(
-            repo.path(),
+            &crate::git::repo::RepoContext::single(repo.path()),
             "all mode with secret",
             &staging,
             &[],
@@ -269,7 +297,7 @@ mod tests {
         };
 
         commit_with_staging(
-            repo.path(),
+            &crate::git::repo::RepoContext::single(repo.path()),
             "cluster mode",
             &staging,
             &[PathBuf::from("src/a.rs")],
@@ -294,7 +322,7 @@ mod tests {
         };
 
         commit_with_staging(
-            repo.path(),
+            &crate::git::repo::RepoContext::single(repo.path()),
             "pattern mode",
             &staging,
             &[],
@@ -316,7 +344,7 @@ mod tests {
         };
 
         let err = commit_with_staging(
-            repo.path(),
+            &crate::git::repo::RepoContext::single(repo.path()),
             "nothing",
             &staging,
             &[],
@@ -343,7 +371,7 @@ mod tests {
         };
 
         commit_with_staging(
-            repo.path(),
+            &crate::git::repo::RepoContext::single(repo.path()),
             "cluster mode skips ignored",
             &staging,
             &[PathBuf::from("src/a.rs"), PathBuf::from("ignored/b.txt")],
@@ -366,7 +394,7 @@ mod tests {
         };
 
         commit_with_staging(
-            repo.path(),
+            &crate::git::repo::RepoContext::single(repo.path()),
             "cluster mode skips missing",
             &staging,
             &[
@@ -408,7 +436,7 @@ mod tests {
 
     fn assert_signing_attempted_or_succeeded(repo_path: &Path, commit_config: &CommitConfig) {
         let result = commit_with_staging(
-            repo_path,
+            &crate::git::repo::RepoContext::single(repo_path),
             "signed commit",
             &StagingConfig::default(),
             &[PathBuf::from("src/a.rs")],

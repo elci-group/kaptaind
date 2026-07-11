@@ -69,6 +69,39 @@ fn daemon_does_not_cascade_on_version_writeback() {
             "cascade: a second auto-commit followed the daemon's own writeback"
         );
 
+        // Finding #8: the committed version triple (VERSION, Cargo.toml,
+        // Cargo.lock) must agree, and no drift may be left uncommitted.
+        let committed_version = fixture
+            .git(&["show", "HEAD:proj/VERSION"])
+            .trim()
+            .to_string();
+        assert_ne!(
+            committed_version, "0.1.0",
+            "auto-commit did not include the VERSION bump"
+        );
+        let committed_toml = fixture.git(&["show", "HEAD:proj/Cargo.toml"]);
+        let committed_lock = fixture.git(&["show", "HEAD:proj/Cargo.lock"]);
+        assert!(
+            committed_toml.contains(&format!("version = \"{committed_version}\"")),
+            "Cargo.toml drifted from VERSION ({committed_version}):\n{committed_toml}"
+        );
+        assert!(
+            committed_lock.contains(&format!("version = \"{committed_version}\"")),
+            "Cargo.lock own-package entry drifted from VERSION ({committed_version}):\n{committed_lock}"
+        );
+        let drift = fixture.git(&[
+            "status",
+            "--porcelain",
+            "--",
+            "proj/VERSION",
+            "proj/Cargo.toml",
+            "proj/Cargo.lock",
+        ]);
+        assert!(
+            drift.trim().is_empty(),
+            "version drift left uncommitted after auto-commit:\n{drift}"
+        );
+
         // Finding #11: hook installation must never fabricate a .git
         // directory inside the watched subproject.
         assert!(

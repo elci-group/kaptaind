@@ -385,7 +385,7 @@ fn claim_staging_all_commits_everything_except_excluded() {
     };
 
     kaptaind::commit::orchestrator::commit_with_staging(
-        dir.path(),
+        &kaptaind::git::repo::RepoContext::single(dir.path()),
         "test commit",
         &staging,
         &[],
@@ -432,7 +432,7 @@ fn claim_staging_cluster_commits_only_cluster_paths() {
     };
 
     kaptaind::commit::orchestrator::commit_with_staging(
-        dir.path(),
+        &kaptaind::git::repo::RepoContext::single(dir.path()),
         "cluster test",
         &staging,
         &[PathBuf::from("in_cluster.rs")],

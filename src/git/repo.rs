@@ -6,6 +6,63 @@ pub struct Repo {
     root: PathBuf,
 }
 
+/// The two roots a daemon-scoped project lives between: the git worktree
+/// root (where `git` commands and status paths are anchored) and the
+/// project root (where `kaptaind.toml`, `VERSION`, and `Cargo.toml` live).
+/// In a standalone repo they coincide; in a monorepo the project root is a
+/// subdirectory of the git root, and conflating the two makes meta-file
+/// staging and path matching silently miss every project file.
+#[derive(Debug, Clone)]
+pub struct RepoContext {
+    pub git_root: PathBuf,
+    pub project_root: PathBuf,
+}
+
+impl RepoContext {
+    /// Build a context from known roots, canonicalizing both so prefix
+    /// stripping is reliable.
+    pub fn new(git_root: &Path, project_root: &Path) -> Self {
+        let canon = |p: &Path| std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf());
+        Self {
+            git_root: canon(git_root),
+            project_root: canon(project_root),
+        }
+    }
+
+    /// Standalone-repo convenience: both roots are the same directory.
+    pub fn single(root: &Path) -> Self {
+        Self::new(root, root)
+    }
+
+    /// Discover the git root for `project_root` via `git rev-parse`.
+    pub fn discover(project_root: &Path) -> anyhow::Result<Self> {
+        let repo = Repo::open(project_root)?;
+        Ok(Self::new(repo.root(), project_root))
+    }
+
+    /// Project root relative to the git root (empty in a standalone repo).
+    pub fn project_prefix(&self) -> PathBuf {
+        self.project_root
+            .strip_prefix(&self.git_root)
+            .map(Path::to_path_buf)
+            .unwrap_or_default()
+    }
+
+    /// Translate a git-root-relative status path into project-relative form.
+    /// Returns `None` for paths outside the project.
+    pub fn to_project_relative(&self, git_relative: &Path) -> Option<PathBuf> {
+        let prefix = self.project_prefix();
+        if prefix.as_os_str().is_empty() {
+            Some(git_relative.to_path_buf())
+        } else {
+            git_relative
+                .strip_prefix(&prefix)
+                .ok()
+                .map(Path::to_path_buf)
+        }
+    }
+}
+
 impl Repo {
     pub fn open(path: &Path) -> anyhow::Result<Self> {
         let output = git(path)
