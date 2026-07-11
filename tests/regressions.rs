@@ -169,9 +169,13 @@ fn daemon_reconciles_pending_changes_on_startup() {
 /// C4: the decisions log records commits AND skips — a substantial edit
 /// produces a "commit" record; a below-threshold docs edit produces a
 /// "no_bump" record carrying the achieved score instead of vanishing.
+///
+/// Since v10.0.0 `require_bump` defaults to false (below-threshold clusters
+/// are chore-committed), so this test opts back into the legacy skip
+/// behavior explicitly to keep covering the `require_bump = true` path.
 #[test]
 fn decisions_log_records_commit_and_skip() {
-    let fixture = MonorepoFixture::new(19103);
+    let fixture = MonorepoFixture::with_config(19103, "\n[commit]\nrequire_bump = true\n");
 
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(fixture.project())
@@ -225,8 +229,9 @@ fn decisions_log_records_commit_and_skip() {
             "skip record must carry the achieved score"
         );
 
-        // Default behavior (`require_bump` unset ⇒ true): the below-threshold
-        // docs edit is logged but NOT committed, and VERSION does not move.
+        // With `require_bump = true` (explicit above; no longer the default
+        // since v10.0.0): the below-threshold docs edit is logged but NOT
+        // committed, and VERSION does not move.
         std::thread::sleep(Duration::from_secs(3));
         assert_eq!(
             fixture.kaptaind_commits(),

@@ -7,11 +7,17 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
+    #[serde(default)]
     pub watch: WatchConfig,
+    #[serde(default)]
     pub cluster: ClusterConfig,
+    #[serde(default)]
     pub weights: crate::weight::WeightConfig,
+    #[serde(default)]
     pub push: PushConfig,
+    #[serde(default)]
     pub ratelimit: RateLimitConfig,
+    #[serde(default)]
     pub test: TestConfig,
     #[serde(default)]
     pub audit: AuditConfig,
@@ -531,8 +537,11 @@ pub struct ShipAppStoreConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct WatchConfig {
+    #[serde(default = "default_watch_path")]
     pub path: PathBuf,
+    #[serde(default = "default_true")]
     pub recursive: bool,
+    #[serde(default = "default_ignore_file")]
     pub ignore_file: PathBuf,
     /// On startup, reconcile working-tree changes made while the daemon was
     /// down into a single catch-up cluster (default true).
@@ -540,9 +549,28 @@ pub struct WatchConfig {
     pub rescan_on_start: bool,
 }
 
+fn default_watch_path() -> PathBuf {
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
+fn default_ignore_file() -> PathBuf {
+    PathBuf::from(".kaptainignore")
+}
+
+impl Default for WatchConfig {
+    fn default() -> Self {
+        Self {
+            path: default_watch_path(),
+            recursive: true,
+            ignore_file: default_ignore_file(),
+            rescan_on_start: true,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct ClusterConfig {
-    #[serde(with = "duration_secs")]
+    #[serde(default = "default_cluster_window", with = "duration_secs")]
     pub window: Duration,
     /// Enable adaptive window sizing based on event burst detection.
     #[serde(default)]
@@ -564,6 +592,24 @@ pub struct ClusterConfig {
     pub flush_after: Option<Duration>,
 }
 
+impl Default for ClusterConfig {
+    fn default() -> Self {
+        Self {
+            window: default_cluster_window(),
+            adaptive: false,
+            min_window_secs: default_min_window_secs(),
+            max_window_secs: default_max_window_secs(),
+            burst_threshold: default_burst_threshold(),
+            max_paths: default_max_paths(),
+            flush_after: None,
+        }
+    }
+}
+
+fn default_cluster_window() -> Duration {
+    Duration::from_secs(5)
+}
+
 fn default_min_window_secs() -> u64 {
     2
 }
@@ -579,7 +625,11 @@ fn default_max_paths() -> usize {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct PushConfig {
+    #[serde(default)]
     pub enabled: bool,
+    /// Branch to push to. The default (`"main"`) is only used when
+    /// `push.enabled = true`; with pushing disabled it is inert.
+    #[serde(default = "default_branch")]
     pub branch: String,
     #[serde(default = "default_remote")]
     pub remote: String,
@@ -597,6 +647,27 @@ pub struct PushConfig {
     pub batch: BatchConfig,
     #[serde(default)]
     pub protection: PushProtectionConfig,
+}
+
+impl Default for PushConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            branch: default_branch(),
+            remote: default_remote(),
+            dry_run: false,
+            retry: RetryConfig::default(),
+            conflict: ConflictConfig::default(),
+            pre_push: PrePushConfig::default(),
+            safety: SafetyConfig::default(),
+            batch: BatchConfig::default(),
+            protection: PushProtectionConfig::default(),
+        }
+    }
+}
+
+fn default_branch() -> String {
+    "main".to_string()
 }
 
 fn default_remote() -> String {
@@ -769,8 +840,20 @@ impl Default for BatchConfig {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RateLimitConfig {
-    #[serde(with = "duration_secs")]
+    #[serde(default = "default_min_commit_interval", with = "duration_secs")]
     pub min_commit_interval: Duration,
+}
+
+impl Default for RateLimitConfig {
+    fn default() -> Self {
+        Self {
+            min_commit_interval: default_min_commit_interval(),
+        }
+    }
+}
+
+fn default_min_commit_interval() -> Duration {
+    Duration::from_secs(10)
 }
 
 /// When to run the test hook for a cluster.
@@ -787,12 +870,28 @@ pub enum TestCommandOn {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct TestConfig {
+    #[serde(default = "default_test_command")]
     pub command: Option<String>,
+    #[serde(default = "default_true")]
     pub required: bool,
     /// When to run the test hook: "always" (default) or "code_only" (skip for
     /// docs-only clusters, keeping the gate cheap).
     #[serde(default)]
     pub command_on: TestCommandOn,
+}
+
+fn default_test_command() -> Option<String> {
+    Some("cargo test".to_string())
+}
+
+impl Default for TestConfig {
+    fn default() -> Self {
+        Self {
+            command: default_test_command(),
+            required: true,
+            command_on: TestCommandOn::default(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -928,12 +1027,13 @@ pub struct CommitConfig {
     pub gpg_key_id: Option<String>,
     /// Require a semantic version bump for a cluster to be committed (D1).
     ///
-    /// When `true` (the v9.x default), below-threshold clusters are logged
-    /// as `no_bump` and left uncommitted. When `false`, they are captured
-    /// with a non-bumping `chore:` commit instead, leaving VERSION,
-    /// Cargo.toml and Cargo.lock untouched. The default flips to `false`
-    /// in v10.
-    #[serde(default = "default_true")]
+    /// When `true` (the pre-v10 default), below-threshold clusters are logged
+    /// as `no_bump` and left uncommitted. When `false` — the default since
+    /// v10.0.0 — they are captured with a non-bumping `chore:` commit
+    /// instead, leaving VERSION, Cargo.toml and Cargo.lock untouched. The
+    /// default flipped in v10.0.0 so work is never silently lost (#7) and
+    /// version only moves on threshold-crossing clusters (#17).
+    #[serde(default = "default_false")]
     pub require_bump: bool,
 }
 
@@ -942,7 +1042,7 @@ impl Default for CommitConfig {
         Self {
             sign: false,
             gpg_key_id: None,
-            require_bump: true,
+            require_bump: false,
         }
     }
 }
@@ -1493,48 +1593,12 @@ impl Default for Config {
     fn default() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         Self {
-            watch: WatchConfig {
-                path: cwd.clone(),
-                recursive: true,
-                ignore_file: PathBuf::from(".kaptainignore"),
-                rescan_on_start: true,
-            },
-            cluster: ClusterConfig {
-                window: Duration::from_secs(5),
-                adaptive: false,
-                min_window_secs: default_min_window_secs(),
-                max_window_secs: default_max_window_secs(),
-                burst_threshold: default_burst_threshold(),
-                max_paths: default_max_paths(),
-                flush_after: None,
-            },
-            weights: crate::weight::WeightConfig {
-                s: 0.35,
-                a: 0.3,
-                d: 0.2,
-                r: 0.15,
-                b: 0.0,
-            },
-            push: PushConfig {
-                enabled: false,
-                branch: "main".to_string(),
-                remote: "origin".to_string(),
-                dry_run: false,
-                retry: RetryConfig::default(),
-                conflict: ConflictConfig::default(),
-                pre_push: PrePushConfig::default(),
-                safety: SafetyConfig::default(),
-                batch: BatchConfig::default(),
-                protection: PushProtectionConfig::default(),
-            },
-            ratelimit: RateLimitConfig {
-                min_commit_interval: Duration::from_secs(10),
-            },
-            test: TestConfig {
-                command: Some("cargo test".to_string()),
-                required: true,
-                command_on: TestCommandOn::default(),
-            },
+            watch: WatchConfig::default(),
+            cluster: ClusterConfig::default(),
+            weights: crate::weight::WeightConfig::default(),
+            push: PushConfig::default(),
+            ratelimit: RateLimitConfig::default(),
+            test: TestConfig::default(),
             audit: AuditConfig::default(),
             notify: NotifyConfig::default(),
             bundle: BundleConfig::default(),
@@ -1795,6 +1859,58 @@ mod tests {
         let config: Config = toml::from_str(toml_str).unwrap();
         assert!(matches!(config.staging.mode, super::StagingMode::Cluster));
         assert_eq!(config.staging.exclude, vec!["*.log", ".env*"]);
+    }
+
+    /// Since v10.0.0 the formerly mandatory sections ([watch], [weights],
+    /// [cluster], [push], [test], [ratelimit]) carry serde defaults, so a
+    /// partial kaptaind.toml parses instead of failing with a cryptic
+    /// "missing field" error (dogfooding finding).
+    #[test]
+    fn minimal_toml_parses_with_documented_defaults() {
+        let toml_str = r#"
+            [watch]
+            path = "."
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.watch.recursive);
+        assert_eq!(config.watch.ignore_file, PathBuf::from(".kaptainignore"));
+        assert!(config.watch.rescan_on_start);
+        assert_eq!(config.cluster.window, Duration::from_secs(5));
+        assert!((config.weights.s - 0.35).abs() < f32::EPSILON);
+        assert!((config.weights.a - 0.30).abs() < f32::EPSILON);
+        assert!((config.weights.d - 0.20).abs() < f32::EPSILON);
+        assert!((config.weights.r - 0.15).abs() < f32::EPSILON);
+        assert!(!config.push.enabled);
+        assert_eq!(config.push.branch, "main");
+        assert_eq!(config.push.remote, "origin");
+        assert_eq!(
+            config.ratelimit.min_commit_interval,
+            Duration::from_secs(10)
+        );
+        assert_eq!(config.test.command.as_deref(), Some("cargo test"));
+        assert!(config.test.required);
+        // v10.0.0: require_bump defaults to false — below-threshold clusters
+        // are captured as chore commits rather than skipped.
+        assert!(!config.commit.require_bump);
+        // The defaults themselves must satisfy validation.
+        config.validate().unwrap();
+
+        // Even an empty config parses and yields the same defaults.
+        let empty: Config = toml::from_str("").unwrap();
+        assert_eq!(empty.push.branch, "main");
+        assert!(!empty.commit.require_bump);
+        empty.validate().unwrap();
+    }
+
+    #[test]
+    fn explicitly_invalid_health_port_still_fails_validation() {
+        let toml_str = "health_port = 0";
+        let config: Config = toml::from_str(toml_str).unwrap();
+        let err = config.validate().unwrap_err();
+        assert!(
+            err.to_string().contains("health_port"),
+            "unexpected error: {err}"
+        );
     }
 
     #[test]
