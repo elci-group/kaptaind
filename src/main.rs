@@ -262,6 +262,17 @@ fn main() -> anyhow::Result<()> {
             .init();
         tracing::info!("Starting kaptaind");
         tracing::info!("Watching repository at: {}", config.repo_path.display());
+        if matches!(
+            config.staging.mode,
+            kaptaind::config::loader::StagingMode::All
+        ) {
+            tracing::warn!(
+                "staging mode \"all\" runs `git add -A` across the whole worktree: \
+                 untracked files — including secrets — may be committed. Prefer \
+                 mode = \"cluster\" (the default since v9.7.17). Commits abort \
+                 fail-closed if a changed path matches the secret denylist."
+            );
+        }
         kaptaind::daemon::runtime::start(config).await
     })
 }

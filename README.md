@@ -487,7 +487,10 @@ Controls what is included in each automatic commit.
 
 ```toml
 [staging]
-mode = "all"                 # "all", "cluster", or "pattern"
+mode = "cluster"             # "cluster" (default; stages only observed
+                             # changes), "pattern", or "all" (git add -A;
+                             # warns at startup and aborts on secret-pattern
+                             # files — avoid in shared/monorepo checkouts)
 include = ["src/**"]         # Only used in "pattern" mode
 exclude = ["*.log", ".env*"]
 

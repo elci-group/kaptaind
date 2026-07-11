@@ -52,7 +52,7 @@ pub fn commit_with_staging(
 ) -> anyhow::Result<()> {
     match staging.mode {
         StagingMode::All => {
-            repo::run_git(repo_path, &["add", "-A"])?;
+            add_all_guarded(repo_path)?;
         }
         StagingMode::Cluster => {
             add_paths(repo_path, cluster_paths)?;
@@ -66,7 +66,7 @@ pub fn commit_with_staging(
         }
         StagingMode::Pattern => {
             if staging.include.is_empty() {
-                repo::run_git(repo_path, &["add", "-A"])?;
+                add_all_guarded(repo_path)?;
             } else {
                 let include_globs = build_globset(&staging.include)?;
                 let paths: Vec<PathBuf> = repo::changed_paths(repo_path)?
@@ -86,6 +86,39 @@ pub fn commit_with_staging(
         repo::run_git(repo_path, &["commit", "-m", msg])?;
     }
 
+    Ok(())
+}
+
+/// `git add -A` with a fail-closed secret guard.
+///
+/// A bare `git add -A` stages the entire worktree, including untracked files.
+/// Before running it, refuse the commit outright if any changed path matches
+/// the built-in secret denylist: unstaging-after-the-fact (the old behavior)
+/// still let a denylisted file sit in the index between the add and the
+/// unstage, and silently "succeeding" while dropping files hid the problem
+/// from the operator. In cluster/pattern modes the explicit per-path staging
+/// plus `unstage_excluded` remains the guard; only the whole-worktree paths
+/// abort here.
+fn add_all_guarded(repo_path: &Path) -> anyhow::Result<()> {
+    let deny: Vec<String> = SECRET_DENYLIST.iter().map(|s| s.to_string()).collect();
+    let globset = build_globset(&expand_recursive(&deny))?;
+    let denied: Vec<PathBuf> = repo::changed_paths(repo_path)?
+        .into_iter()
+        .filter(|path| globset.is_match(path))
+        .collect();
+    if !denied.is_empty() {
+        let names: Vec<String> = denied
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect();
+        anyhow::bail!(
+            "refusing to commit: whole-worktree staging (`git add -A`) would include \
+             secret-pattern files: {}. Move them out of the worktree, add them to \
+             .gitignore, or switch staging mode to \"cluster\"/\"pattern\".",
+            names.join(", ")
+        );
+    }
+    repo::run_git(repo_path, &["add", "-A"])?;
     Ok(())
 }
 
@@ -179,6 +212,48 @@ mod tests {
 
         assert_eq!(repo.last_commit_files(), vec!["visible.txt"]);
         assert!(repo.changed_files().contains(&PathBuf::from("secret.txt")));
+    }
+
+    /// Regression (findings #1/#20): whole-worktree staging must refuse to run
+    /// when a changed path matches the built-in secret denylist, instead of
+    /// staging everything and unstaging the secret afterwards.
+    #[test]
+    fn all_mode_aborts_on_denylisted_paths() {
+        let repo = TestRepo::new();
+        repo.write("visible.txt", "changed");
+        repo.write(".env", "SECRET=hunter2");
+
+        let staging = StagingConfig {
+            mode: StagingMode::All,
+            include: vec![],
+            exclude: vec![],
+        };
+
+        let err = commit_with_staging(
+            repo.path(),
+            "all mode with secret",
+            &staging,
+            &[],
+            &CommitConfig::default(),
+        )
+        .expect_err("all mode must abort on denylisted paths");
+
+        assert!(
+            err.to_string().contains("secret-pattern"),
+            "unexpected error: {err}"
+        );
+        // Nothing was committed: the change is still sitting in the worktree.
+        assert!(repo.changed_files().contains(&PathBuf::from("visible.txt")));
+    }
+
+    /// Regression (finding #1): the default staging mode is `cluster`, so an
+    /// autonomous committer never stages files it did not observe changing.
+    #[test]
+    fn default_staging_mode_is_cluster() {
+        assert!(matches!(
+            StagingConfig::default().mode,
+            StagingMode::Cluster
+        ));
     }
 
     #[test]
@@ -336,7 +411,7 @@ mod tests {
             repo_path,
             "signed commit",
             &StagingConfig::default(),
-            &[],
+            &[PathBuf::from("src/a.rs")],
             commit_config,
         );
 

@@ -827,10 +827,19 @@ fn default_output_dir() -> String {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StagingMode {
-    /// Stage all modified files (current behavior, default)
-    #[default]
+    /// Stage every modified file (`git add -A`).
+    ///
+    /// WARNING: in a shared or monorepo checkout this sweeps the whole
+    /// worktree, including untracked files. Kept for backwards compatibility;
+    /// the daemon logs a loud startup warning when this mode is active, and
+    /// commits abort fail-closed if any changed path matches the built-in
+    /// secret denylist.
     All,
-    /// Only stage files that were part of the detected cluster
+    /// Only stage files that were part of the detected cluster, plus the
+    /// version metadata files (VERSION, Cargo.toml). This is the safe
+    /// default: an autonomous committer must never stage files it did not
+    /// observe changing.
+    #[default]
     Cluster,
     /// Stage files matching include patterns, skip exclude patterns
     Pattern,
@@ -1681,9 +1690,11 @@ mod tests {
     }
 
     #[test]
-    fn staging_defaults_to_all_mode() {
+    fn staging_defaults_to_cluster_mode() {
+        // Since v9.7.17 the safe default is cluster staging: an autonomous
+        // committer must never stage files it did not observe changing.
         let config = Config::default();
-        assert!(matches!(config.staging.mode, super::StagingMode::All));
+        assert!(matches!(config.staging.mode, super::StagingMode::Cluster));
         assert!(config.staging.include.is_empty());
         assert!(config.staging.exclude.is_empty());
     }
@@ -1721,7 +1732,7 @@ mod tests {
     }
 
     #[test]
-    fn staging_missing_from_toml_defaults_to_all() {
+    fn staging_missing_from_toml_defaults_to_cluster() {
         let toml_str = r#"
             repo_path = "."
             [watch]
@@ -1745,7 +1756,7 @@ mod tests {
             required = true
         "#;
         let config: Config = toml::from_str(toml_str).unwrap();
-        assert!(matches!(config.staging.mode, super::StagingMode::All));
+        assert!(matches!(config.staging.mode, super::StagingMode::Cluster));
     }
 
     #[test]

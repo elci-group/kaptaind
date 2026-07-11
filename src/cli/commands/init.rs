@@ -132,7 +132,9 @@ command = "{test_cmd}"
 required = true
 
 # [staging]
-# mode = "all"        # "all" (default), "cluster" (only changed files), or "pattern"
+# mode = "cluster"    # "cluster" (default, only observed changes), "pattern",
+#                     # or "all" (git add -A; warns at startup, aborts on
+#                     # secret-pattern files — avoid in shared checkouts)
 # include = ["src/**"] # only used in "pattern" mode
 # exclude = ["*.log", ".env*"]
 
