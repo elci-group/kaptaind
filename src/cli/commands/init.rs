@@ -120,6 +120,10 @@ window = 5
 [weights]
 {weights}
 
+[version_thresholds]
+minor = 0.6    # score at or above this bumps Minor
+patch = 0.1    # score at or above this bumps Patch; below it, no commit
+
 [push]
 enabled = false
 branch = "main"

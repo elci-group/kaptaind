@@ -1,7 +1,8 @@
 use crate::angler::{AnglerSystem, BaitContext, BaitEvent, WebhookEvent};
 use crate::aoc::tracer;
 use crate::cluster::engine::{Cluster, ClusterEngine};
-use crate::config::loader::TestConfig;
+use crate::commit::message::format_commit;
+use crate::config::loader::{TestCommandOn, TestConfig};
 use crate::config::Config;
 use crate::daemon::health::{DaemonEvent, Metrics};
 use crate::daemon::policy::{self, Policy};
@@ -152,6 +153,12 @@ pub async fn run(
     let mut last_commit_at: Option<DateTime<Utc>> = None;
     let mut self_writes = SelfWriteGuard::new();
 
+    // Crash-safety (C2): a stale pid file from a kill -9 is detected and
+    // removed before we start processing clusters; a live pid only warns.
+    crate::daemon::pidfile::validate_and_clean(
+        &config.repo_path.join(".kaptaind").join("daemon.pid"),
+    );
+
     let mut status = StatusReport {
         status: State::Idle,
         last_version: load_version(&config.repo_path.join("VERSION")).map(|v| v.to_string()),
@@ -160,7 +167,13 @@ pub async fn run(
         current_task: None,
         progress_percent: None,
     };
+    // Written BEFORE any cluster processing so a crashed run never leaves a
+    // frozen mid-state (e.g. "Testing") visible in status.json: a status
+    // predating process start is historical, never resumed.
     write_status(&config.repo_path, &status);
+
+    // C5: consecutive blocking test failures, reset on any Passed outcome.
+    let mut test_streak = TestFailureStreak::default();
 
     // Startup reconciliation: changes made while the daemon was down would
     // otherwise sit uncommitted until the next edit. Form a single catch-up
@@ -201,6 +214,7 @@ pub async fn run(
                 cluster,
                 &mut status,
                 &mut self_writes,
+                &mut test_streak,
                 &vacs_engine,
                 &mut tasks,
                 shutdown.clone_token(),
@@ -249,13 +263,13 @@ pub async fn run(
                         tracing::trace!(?event.paths, "ingesting event");
                         if let Some(cluster) = cluster_engine.ingest(event) {
                             tracing::info!(cluster_id = %cluster.id, "cluster window expired by new event");
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &mut self_writes, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &mut self_writes, &mut test_streak, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
                         }
                     }
                     None => {
                         tracing::trace!("event channel closed");
                         if let Some(cluster) = cluster_engine.flush() {
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &mut self_writes, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &mut self_writes, &mut test_streak, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
                         }
                         break;
                     }
@@ -264,7 +278,7 @@ pub async fn run(
             _ = tokio::time::sleep(config.cluster.flush_after.unwrap_or(config.cluster.window)) => {
                 if let Some(cluster) = cluster_engine.flush() {
                     tracing::info!(cluster_id = %cluster.id, "cluster window expired by timeout");
-                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &mut self_writes, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
+                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &mut self_writes, &mut test_streak, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
                 }
             }
             _ = tasks.join_next(), if !tasks.is_empty() => {
@@ -314,11 +328,14 @@ pub async fn run(
         }
     }
 
-    // Drain all remaining tasks with a timeout
+    // Drain all remaining tasks within the configured shutdown grace period
     let drain = async { while tasks.join_next().await.is_some() {} };
-    let drain_timeout = Duration::from_secs(25);
+    let drain_timeout = Duration::from_secs(config.daemon.shutdown_grace_secs);
     if tokio::time::timeout(drain_timeout, drain).await.is_err() {
-        tracing::warn!("task drain timeout (25s), aborting remaining tasks");
+        tracing::warn!(
+            grace_secs = config.daemon.shutdown_grace_secs,
+            "task drain timeout, aborting remaining tasks"
+        );
         tasks.abort_all();
     }
 
@@ -335,6 +352,7 @@ async fn process_cluster(
     cluster: Cluster,
     status: &mut StatusReport,
     self_writes: &mut SelfWriteGuard,
+    test_streak: &mut TestFailureStreak,
     vacs_engine: &crate::vacs::VacsEngine,
     tasks: &mut JoinSet<()>,
     shutdown: crate::daemon::shutdown::ShutdownToken,
@@ -375,6 +393,16 @@ async fn process_cluster(
                 test_outcome.trace_test(),
                 None,
             );
+            record_decision(
+                config,
+                &cluster,
+                crate::daemon::decisions::outcome::BLOCKED,
+                "file_pattern_allowlist",
+                None,
+                None,
+                None,
+                None,
+            );
             status.set_idle();
             write_status(&config.repo_path, status);
             return;
@@ -403,6 +431,19 @@ async fn process_cluster(
             test_outcome.trace_test(),
             agent_event.clone(),
         );
+        record_decision(
+            config,
+            &cluster,
+            crate::daemon::decisions::outcome::RATE_LIMITED,
+            format!(
+                "min commit interval {}s not elapsed",
+                config.ratelimit.min_commit_interval.as_secs()
+            ),
+            None,
+            None,
+            None,
+            None,
+        );
         status.set_idle();
         write_status(&config.repo_path, status);
         return;
@@ -412,6 +453,16 @@ async fn process_cluster(
         Ok(clean) => clean,
         Err(err) => {
             tracing::error!(error = %err, "failed to inspect working tree");
+            record_decision(
+                config,
+                &cluster,
+                crate::daemon::decisions::outcome::ERROR,
+                format!("failed to inspect working tree: {err}"),
+                None,
+                None,
+                None,
+                None,
+            );
             status.set_failed(err.to_string());
             write_status(&config.repo_path, status);
             return;
@@ -429,6 +480,16 @@ async fn process_cluster(
             test_outcome.trace_test(),
             agent_event.clone(),
         );
+        record_decision(
+            config,
+            &cluster,
+            crate::daemon::decisions::outcome::CLEAN_TREE,
+            "working tree clean; nothing to commit",
+            None,
+            None,
+            None,
+            None,
+        );
         status.set_idle();
         write_status(&config.repo_path, status);
         return;
@@ -444,7 +505,13 @@ async fn process_cluster(
         .map(|p| policy::is_branch_protected(&config.repo_path, &p.branch_protection))
         .unwrap_or(false);
 
-    test_outcome = run_test_hook(config).await;
+    test_outcome = if should_run_tests(&config.test, &cluster_paths) {
+        run_test_hook(config).await
+    } else {
+        tracing::debug!("docs-only cluster; skipping test hook (command_on = code_only)");
+        TestOutcome::Skipped
+    };
+    test_streak.observe(&test_outcome);
 
     if matches!(test_outcome, TestOutcome::Failed { .. }) {
         metrics.test_hook_failures.fetch_add(1, Ordering::Relaxed);
@@ -459,6 +526,25 @@ async fn process_cluster(
 
     if tests_required && matches!(test_outcome, TestOutcome::Failed { .. }) {
         log_test_failure(&test_outcome);
+
+        // C5 backpressure: surface sustained red suites. The streak only
+        // counts failures that actually blocked a commit; a Passed run
+        // resets it (see TestFailureStreak::observe above).
+        let streak = test_streak.record_blocked_failure();
+        if test_streak.should_warn() {
+            tracing::warn!(
+                streak,
+                "commits blocked: {streak} consecutive test failures"
+            );
+            broadcast_event(
+                &event_tx,
+                "warning",
+                serde_json::json!({
+                    "title": format!("commits blocked: {streak} consecutive test failures"),
+                    "source": "Test hook",
+                }),
+            );
+        }
 
         if policy
             .as_ref()
@@ -488,11 +574,21 @@ async fn process_cluster(
             test_outcome.trace_test(),
             agent_event.clone(),
         );
-        if let TestOutcome::Failed { stderr, .. } = &test_outcome {
-            status.set_failed(stderr.clone());
-        } else {
-            status.set_failed("Tests failed".to_string());
-        }
+        let failure_detail = match &test_outcome {
+            TestOutcome::Failed { stderr, .. } => stderr.clone(),
+            _ => "Tests failed".to_string(),
+        };
+        record_decision(
+            config,
+            &cluster,
+            crate::daemon::decisions::outcome::TEST_FAILED,
+            truncate_detail(&failure_detail),
+            None,
+            None,
+            None,
+            None,
+        );
+        status.set_failed(failure_detail);
         write_status(&config.repo_path, status);
         crate::daemon::notification::notify_warning(
             &config.notify,
@@ -541,6 +637,19 @@ async fn process_cluster(
             test_outcome.trace_test(),
             agent_event.clone(),
         );
+        record_decision(
+            config,
+            &cluster,
+            crate::daemon::decisions::outcome::NO_BUMP,
+            format!(
+                "score {:.3} below patch threshold {:.3}",
+                weight.score, config.version_thresholds.patch
+            ),
+            Some(&diff),
+            Some(&weight),
+            None,
+            None,
+        );
         status.set_idle();
         write_status(&config.repo_path, status);
         return;
@@ -558,6 +667,16 @@ async fn process_cluster(
                 },
                 test_outcome.trace_test(),
                 agent_event.clone(),
+            );
+            record_decision(
+                config,
+                &cluster,
+                crate::daemon::decisions::outcome::BASELINE_UNRESOLVABLE,
+                err.to_string(),
+                Some(&diff),
+                Some(&weight),
+                Some(bump),
+                None,
             );
             status.set_failed(err.to_string());
             write_status(&config.repo_path, status);
@@ -607,6 +726,16 @@ async fn process_cluster(
                 }),
             );
             let err = format!("{} change(s) blocked by selective rules", blocked.len());
+            record_decision(
+                config,
+                &cluster,
+                crate::daemon::decisions::outcome::BLOCKED,
+                err.clone(),
+                Some(&diff),
+                Some(&weight),
+                Some(bump),
+                Some(&next),
+            );
             status.set_failed(err);
             write_status(&config.repo_path, status);
             return;
@@ -646,6 +775,16 @@ async fn process_cluster(
                     .unwrap_or(false)
                 {
                     let err = format!("Pre-commit hook failed: {}", hook_result.stderr);
+                    record_decision(
+                        config,
+                        &cluster,
+                        crate::daemon::decisions::outcome::PRE_COMMIT_HOOK_FAILED,
+                        truncate_detail(&err),
+                        Some(&diff),
+                        Some(&weight),
+                        Some(bump),
+                        Some(&next),
+                    );
                     status.set_failed(err.clone());
                     write_status(&config.repo_path, status);
                     crate::daemon::notification::notify_warning(
@@ -680,6 +819,16 @@ async fn process_cluster(
             },
             test_outcome.trace_test(),
             agent_event.clone(),
+        );
+        record_decision(
+            config,
+            &cluster,
+            crate::daemon::decisions::outcome::VERSION_WRITE_FAILED,
+            err.to_string(),
+            Some(&diff),
+            Some(&weight),
+            Some(bump),
+            Some(&next),
         );
         status.set_failed(err.to_string());
         write_status(&config.repo_path, status);
@@ -819,6 +968,16 @@ async fn process_cluster(
             test_outcome.trace_test(),
             agent_event.clone(),
         );
+        record_decision(
+            config,
+            &cluster,
+            crate::daemon::decisions::outcome::COMMIT_FAILED,
+            err.to_string(),
+            Some(&diff),
+            Some(&weight),
+            Some(bump),
+            Some(&next),
+        );
         status.set_failed(err.to_string());
         write_status(&config.repo_path, status);
         crate::daemon::notification::notify_warning(
@@ -839,6 +998,17 @@ async fn process_cluster(
     }
 
     metrics.commits_made.fetch_add(1, Ordering::Relaxed);
+
+    record_decision(
+        config,
+        &cluster,
+        crate::daemon::decisions::outcome::COMMIT,
+        "committed",
+        Some(&diff),
+        Some(&weight),
+        Some(bump),
+        Some(&next),
+    );
 
     crate::audit::log_commit(
         &config.repo_path,
@@ -1411,38 +1581,76 @@ fn sanitize_commit_subject(input: &str) -> String {
     out.trim().to_string()
 }
 
-fn format_commit(
+/// Keep decision-record detail lines bounded so a verbose hook failure cannot
+/// bloat decisions.jsonl.
+fn truncate_detail(detail: &str) -> String {
+    const MAX: usize = 500;
+    if detail.len() <= MAX {
+        detail.to_string()
+    } else {
+        let mut end = MAX;
+        while !detail.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}…", &detail[..end])
+    }
+}
+
+/// Append one decision record for a process_cluster exit (C4). Every early
+/// return and the commit-success path call this exactly once so
+/// `.kaptaind/decisions.jsonl` tells the whole story, not just commits.
+#[allow(clippy::too_many_arguments)]
+fn record_decision(
+    config: &Config,
     cluster: &Cluster,
-    diff: &DiffAnalysis,
-    weight: &crate::weight::WeightResult,
-    bump: Bump,
-    version: &Version,
-    agent_event: &Option<crate::aoc::AgentEvent>,
-) -> String {
-    let api_summary = if diff.api_breaking {
-        "breaking-api"
-    } else if diff.api_added {
-        "api-added"
-    } else {
-        "api-stable"
+    outcome: &str,
+    reason: impl Into<String>,
+    diff: Option<&DiffAnalysis>,
+    weight: Option<&crate::weight::WeightResult>,
+    bump: Option<Bump>,
+    version: Option<&Version>,
+) {
+    use crate::daemon::decisions::{
+        append_decision, DecisionRecord, DecisionScores, DecisionThresholds,
     };
 
-    let agent_info = if let Some(agent) = agent_event {
-        let model = agent.model.as_deref().unwrap_or("unknown");
-        format!("; agent={model}")
-    } else {
-        String::new()
+    let scores = match (diff, weight) {
+        (Some(d), Some(w)) => Some(DecisionScores {
+            score: w.score,
+            api: d.api,
+            deps: d.deps,
+            runtime: d.runtime,
+        }),
+        _ => None,
     };
-
-    format!(
-        "kaptaind: {bump:?} -> v{version} [{api_summary}; paths={}; api_touches={}; deps={}; runtime={}; score={:.3}; cluster={}{agent_info}]",
-        diff.touched_paths,
-        diff.api_touches,
-        diff.dependency_nodes,
-        diff.runtime_paths,
-        weight.score,
-        cluster.id,
-    )
+    let paths = cluster
+        .events
+        .iter()
+        .flat_map(|e| e.paths.iter())
+        .map(|p| {
+            p.strip_prefix(&config.repo_path)
+                .unwrap_or(p)
+                .display()
+                .to_string()
+        })
+        .collect();
+    let record = DecisionRecord {
+        timestamp: Utc::now(),
+        cluster_id: cluster.id.to_string(),
+        outcome: outcome.to_string(),
+        scores,
+        thresholds: DecisionThresholds {
+            minor: config.version_thresholds.minor,
+            patch: config.version_thresholds.patch,
+        },
+        bump: bump.map(|b| format!("{b:?}")),
+        version: version.map(|v| v.to_string()),
+        reason: reason.into(),
+        paths,
+    };
+    if let Err(err) = append_decision(&config.repo_path, &record) {
+        tracing::warn!(error = %err, "failed to append decision record");
+    }
 }
 
 pub(crate) fn load_version(path: &Path) -> Option<Version> {
@@ -1766,16 +1974,75 @@ fn looks_like_glob(value: &str) -> bool {
     value.contains('*') || value.contains('?') || value.contains('[') || value.contains('{')
 }
 
+/// Docs-only classification for `[test] command_on = "code_only"` (C5).
+///
+/// A path counts as documentation only by extension (md/txt/rst/adoc).
+/// Everything else — including Cargo.toml/Cargo.lock, which can break the
+/// build, and extensionless files — counts as code. An empty path list is NOT
+/// docs-only: vacuous skips would disable the gate for odd clusters.
+fn cluster_is_docs_only(paths: &[PathBuf]) -> bool {
+    !paths.is_empty()
+        && paths.iter().all(|p| {
+            let ext = p
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_ascii_lowercase);
+            matches!(ext.as_deref(), Some("md" | "txt" | "rst" | "adoc"))
+        })
+}
+
+/// Whether the test hook should run for this cluster under the configured
+/// `[test] command_on` policy.
+fn should_run_tests(test: &TestConfig, cluster_paths: &[PathBuf]) -> bool {
+    match test.command_on {
+        TestCommandOn::Always => true,
+        TestCommandOn::CodeOnly => !cluster_is_docs_only(cluster_paths),
+    }
+}
+
+/// Consecutive required-test-failure streak (C5 backpressure).
+///
+/// Counts only failures that actually blocked a commit (`required = true`
+/// path); a Passed outcome resets the streak so transient red suites don't
+/// warn forever.
+#[derive(Debug, Default)]
+struct TestFailureStreak {
+    consecutive: u32,
+}
+
+impl TestFailureStreak {
+    /// Streak length at or above which operators get a "commits blocked"
+    /// warning.
+    const WARN_THRESHOLD: u32 = 3;
+
+    /// Reset the streak when a test run passes.
+    fn observe(&mut self, outcome: &TestOutcome) {
+        if matches!(outcome, TestOutcome::Passed) {
+            self.consecutive = 0;
+        }
+    }
+
+    /// Count a blocking failure; returns the new streak length.
+    fn record_blocked_failure(&mut self) -> u32 {
+        self.consecutive += 1;
+        self.consecutive
+    }
+
+    fn should_warn(&self) -> bool {
+        self.consecutive >= Self::WARN_THRESHOLD
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_test_outcome, format_commit, looks_like_glob, parse_failed_tests,
-        persist_analysis_artifact, rate_limit_allows, run_test_hook, save_version,
-        should_block_commit, AnalysisArtifact, IgnoreMatcher, SelfWriteGuard, TestOutcome,
-        SELF_WRITE_CAP, SELF_WRITE_TTL,
+        apply_test_outcome, cluster_is_docs_only, format_commit, looks_like_glob,
+        parse_failed_tests, persist_analysis_artifact, rate_limit_allows, run_test_hook,
+        save_version, should_block_commit, should_run_tests, AnalysisArtifact, IgnoreMatcher,
+        SelfWriteGuard, TestFailureStreak, TestOutcome, SELF_WRITE_CAP, SELF_WRITE_TTL,
     };
     use crate::cluster::engine::Cluster;
-    use crate::config::loader::{Config, TestConfig};
+    use crate::config::loader::{Config, TestCommandOn, TestConfig};
     use crate::diff::DiffAnalysis;
     use crate::watcher::{FsEvent, FsEventKind};
     use crate::weight::WeightResult;
@@ -1858,6 +2125,7 @@ mod tests {
         let test = TestConfig {
             command: Some("false".to_string()),
             required: true,
+            command_on: TestCommandOn::Always,
         };
         assert!(should_block_commit(
             &test,
@@ -1867,6 +2135,79 @@ mod tests {
                 failed_tests: Vec::new(),
             }
         ));
+    }
+
+    #[test]
+    fn docs_only_classifier_recognizes_docs_extensions() {
+        assert!(cluster_is_docs_only(&["README.md".into()]));
+        assert!(cluster_is_docs_only(&[
+            "docs/guide.md".into(),
+            "notes.txt".into(),
+            "man/page.rst".into(),
+            "a.adoc".into()
+        ]));
+    }
+
+    #[test]
+    fn docs_only_classifier_treats_manifests_and_code_as_code() {
+        // Cargo.toml/Cargo.lock can break the build: they are code.
+        assert!(!cluster_is_docs_only(&["Cargo.toml".into()]));
+        assert!(!cluster_is_docs_only(&["Cargo.lock".into()]));
+        assert!(!cluster_is_docs_only(&["src/main.rs".into()]));
+        assert!(!cluster_is_docs_only(&["config.json".into()]));
+        assert!(!cluster_is_docs_only(&["Makefile".into()]));
+        // Mixed clusters are not docs-only.
+        assert!(!cluster_is_docs_only(&[
+            "README.md".into(),
+            "src/lib.rs".into()
+        ]));
+        // Empty clusters never skip the gate.
+        assert!(!cluster_is_docs_only(&[]));
+    }
+
+    #[test]
+    fn code_only_mode_skips_tests_for_docs_clusters() {
+        let test = TestConfig {
+            command: Some("cargo test".to_string()),
+            required: true,
+            command_on: TestCommandOn::CodeOnly,
+        };
+        assert!(!should_run_tests(&test, &["README.md".into()]));
+        assert!(should_run_tests(&test, &["src/main.rs".into()]));
+
+        let always = TestConfig {
+            command: Some("cargo test".to_string()),
+            required: true,
+            command_on: TestCommandOn::Always,
+        };
+        assert!(should_run_tests(&always, &["README.md".into()]));
+    }
+
+    #[test]
+    fn test_failure_streak_warns_at_threshold_and_resets_on_pass() {
+        let mut streak = TestFailureStreak::default();
+        assert_eq!(streak.record_blocked_failure(), 1);
+        assert!(!streak.should_warn());
+        assert_eq!(streak.record_blocked_failure(), 2);
+        assert!(!streak.should_warn());
+        assert_eq!(streak.record_blocked_failure(), 3);
+        assert!(streak.should_warn());
+
+        // A passing run clears the streak.
+        streak.observe(&TestOutcome::Passed);
+        assert_eq!(streak.consecutive, 0);
+        assert!(!streak.should_warn());
+
+        // Skipped/failed observations don't reset; only Passed does.
+        streak.record_blocked_failure();
+        streak.observe(&TestOutcome::Skipped);
+        assert_eq!(streak.consecutive, 1);
+        streak.observe(&TestOutcome::Failed {
+            code: Some(1),
+            stderr: String::new(),
+            failed_tests: Vec::new(),
+        });
+        assert_eq!(streak.consecutive, 1);
     }
 
     #[test]
@@ -1984,6 +2325,7 @@ test result: FAILED. 1 passed; 2 failed; 0 ignored
             test: TestConfig {
                 command: Some("test -f marker.txt".to_string()),
                 required: true,
+                command_on: TestCommandOn::Always,
             },
             ..Config::default()
         };

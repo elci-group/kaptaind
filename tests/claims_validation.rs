@@ -625,6 +625,7 @@ async fn claim_test_hook_blocks_commit_when_required_and_failing() {
     let config = kaptaind::config::loader::TestConfig {
         command: Some("exit 1".to_string()),
         required: true,
+        command_on: Default::default(),
     };
 
     let outcome = kaptaind::daemon::scheduler::run_test_hook_for_config(&config, repo).await;
@@ -651,6 +652,7 @@ async fn claim_test_hook_does_not_block_when_optional_and_failing() {
     let config = kaptaind::config::loader::TestConfig {
         command: Some("exit 1".to_string()),
         required: false,
+        command_on: Default::default(),
     };
 
     let outcome = kaptaind::daemon::scheduler::run_test_hook_for_config(&config, repo).await;

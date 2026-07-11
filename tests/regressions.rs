@@ -166,6 +166,69 @@ fn daemon_reconciles_pending_changes_on_startup() {
     }
 }
 
+/// C4: the decisions log records commits AND skips — a substantial edit
+/// produces a "commit" record; a below-threshold docs edit produces a
+/// "no_bump" record carrying the achieved score instead of vanishing.
+#[test]
+fn decisions_log_records_commit_and_skip() {
+    let fixture = MonorepoFixture::new();
+
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
+        .current_dir(fixture.project())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("daemon spawns");
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // Let the watcher settle before editing.
+        std::thread::sleep(Duration::from_secs(2));
+
+        substantial_edit(&fixture.project());
+        wait_for(Duration::from_secs(30), || fixture.kaptaind_commits() >= 1);
+        wait_for(Duration::from_secs(10), || {
+            kaptaind::daemon::decisions::tail_decisions(&fixture.project(), 10)
+                .map(|records| records.iter().any(|r| r.outcome == "commit"))
+                .unwrap_or(false)
+        });
+
+        // Trivial docs edit: below the patch threshold, so it must be logged
+        // as a skip rather than silently dropped.
+        std::fs::write(fixture.project().join("README.md"), "# proj\n").expect("docs edit");
+        wait_for(Duration::from_secs(15), || {
+            kaptaind::daemon::decisions::tail_decisions(&fixture.project(), 10)
+                .map(|records| records.iter().any(|r| r.outcome == "no_bump"))
+                .unwrap_or(false)
+        });
+
+        let records = kaptaind::daemon::decisions::tail_decisions(&fixture.project(), 10)
+            .expect("read decisions log");
+        let commit = records
+            .iter()
+            .find(|r| r.outcome == "commit")
+            .expect("commit decision recorded");
+        assert!(
+            commit.version.is_some(),
+            "commit record must carry the new version"
+        );
+        let skip = records
+            .iter()
+            .find(|r| r.outcome == "no_bump")
+            .expect("no_bump decision recorded");
+        assert!(
+            skip.scores.is_some(),
+            "skip record must carry the achieved score"
+        );
+    }));
+
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
 fn wait_for(timeout: Duration, mut condition: impl FnMut() -> bool) {
     let start = Instant::now();
     while start.elapsed() < timeout {

@@ -1,6 +1,8 @@
+pub mod decisions;
 pub mod deckhand;
 pub mod health;
 pub mod notification;
+pub mod pidfile;
 pub mod policy;
 pub mod process;
 pub mod prune;

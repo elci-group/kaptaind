@@ -216,8 +216,10 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
     atomic_shutdown.store(true, Ordering::Relaxed);
     drop(tx);
 
-    // Wait for scheduler with a hard timeout
-    let shutdown_timeout = Duration::from_secs(30);
+    // Wait for the scheduler with a hard timeout: the configured grace
+    // period (which bounds the scheduler's own task drain) plus a small
+    // margin for final status writes.
+    let shutdown_timeout = Duration::from_secs(config.daemon.shutdown_grace_secs + 5);
     if !scheduler.is_finished()
         && tokio::time::timeout(shutdown_timeout, &mut scheduler)
             .await
@@ -232,6 +234,14 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
     tokio::task::spawn_blocking(move || crate::watcher::fs::join(watcher_handle))
         .await
         .context("watcher join task failed")??;
+
+    // Remove the pid file so a later start never sees a stale one.
+    let pid_file = config.repo_path.join(".kaptaind").join("daemon.pid");
+    if pid_file.exists() {
+        if let Err(err) = std::fs::remove_file(&pid_file) {
+            tracing::warn!(error = %err, path = ?pid_file, "failed to remove pid file");
+        }
+    }
 
     notify_stop(
         &config.notify,

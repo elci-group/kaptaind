@@ -72,6 +72,33 @@ pub struct Config {
     pub capabilities: CapabilitiesConfig,
     #[serde(default)]
     pub strict_shell_validation: bool,
+    #[serde(default)]
+    pub daemon: DaemonConfig,
+}
+
+// ---------------------------------------------------------------------------
+// Daemon runtime config
+// ---------------------------------------------------------------------------
+
+/// `[daemon]` block: runtime behavior of the long-running daemon.
+#[derive(Debug, Clone, Deserialize)]
+pub struct DaemonConfig {
+    /// Maximum seconds to wait for in-flight work during graceful shutdown
+    /// before remaining tasks are aborted (default 10).
+    #[serde(default = "default_shutdown_grace_secs")]
+    pub shutdown_grace_secs: u64,
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            shutdown_grace_secs: default_shutdown_grace_secs(),
+        }
+    }
+}
+
+fn default_shutdown_grace_secs() -> u64 {
+    10
 }
 
 // ---------------------------------------------------------------------------
@@ -746,10 +773,26 @@ pub struct RateLimitConfig {
     pub min_commit_interval: Duration,
 }
 
+/// When to run the test hook for a cluster.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TestCommandOn {
+    /// Run the test hook for every cluster.
+    #[default]
+    Always,
+    /// Skip the test hook when every path in the cluster is documentation-only
+    /// (md/txt/rst/adoc), which cannot break the build.
+    CodeOnly,
+}
+
 #[derive(Debug, Clone, Deserialize)]
 pub struct TestConfig {
     pub command: Option<String>,
     pub required: bool,
+    /// When to run the test hook: "always" (default) or "code_only" (skip for
+    /// docs-only clusters, keeping the gate cheap).
+    #[serde(default)]
+    pub command_on: TestCommandOn,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1480,6 +1523,7 @@ impl Default for Config {
             test: TestConfig {
                 command: Some("cargo test".to_string()),
                 required: true,
+                command_on: TestCommandOn::default(),
             },
             audit: AuditConfig::default(),
             notify: NotifyConfig::default(),
@@ -1510,6 +1554,7 @@ impl Default for Config {
             web: WebConfig::default(),
             capabilities: CapabilitiesConfig::default(),
             strict_shell_validation: false,
+            daemon: DaemonConfig::default(),
         }
     }
 }
@@ -1703,6 +1748,11 @@ mod tests {
         assert!(matches!(config.staging.mode, super::StagingMode::Cluster));
         assert!(config.staging.include.is_empty());
         assert!(config.staging.exclude.is_empty());
+    }
+
+    #[test]
+    fn daemon_shutdown_grace_defaults_to_ten_seconds() {
+        assert_eq!(Config::default().daemon.shutdown_grace_secs, 10);
     }
 
     #[test]

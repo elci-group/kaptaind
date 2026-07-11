@@ -164,6 +164,28 @@ Notes:
     bundle scores, plus the projected version bump."#)]
     Analyze,
 
+    /// 🧭 Explain recent cluster decisions (commits and skips)
+    #[command(long_about = r#"Purpose:
+    Show the last N cluster decisions recorded in .kaptaind/decisions.jsonl —
+    commits and skips alike. Skip decisions name the exact threshold that was
+    not met and the achieved score.
+
+Usage:
+    kaptaind-cli explain [OPTIONS]
+
+Options:
+    --last <N>           Number of decisions to display (default: 10).
+    -r, --repo <PATH>    Operate on the specified repository
+
+Examples:
+    kaptaind-cli explain
+    kaptaind-cli explain --last 25"#)]
+    Explain {
+        /// Number of decisions to display (default: 10).
+        #[arg(long, value_name = "N", default_value_t = 10)]
+        last: usize,
+    },
+
     /// ↩️ Revert the most recent kaptaind-produced commit
     #[command(long_about = r#"Purpose:
     Safely undo the most recent automated commit (or a specific one) by creating
@@ -1789,6 +1811,9 @@ async fn main() -> anyhow::Result<()> {
         }
         Commands::Analyze => {
             handle_analyze(&config)?;
+        }
+        Commands::Explain { last } => {
+            handle_explain(&config, *last)?;
         }
         Commands::Rollback {
             commit,

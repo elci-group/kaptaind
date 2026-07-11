@@ -109,6 +109,14 @@ struct Cli {
     #[arg(long, value_name = "PORT")]
     web_port: Option<u16>,
 
+    /// 🧪 Dry run: show the decision the daemon would make for pending changes
+    ///
+    /// Runs the full analysis pipeline over the current uncommitted changes
+    /// without staging or committing, printing the bump, next version, and the
+    /// exact deterministic commit message.
+    #[arg(long)]
+    dry_run: bool,
+
     /// 📁 Path to the kaptaind configuration file
     ///
     /// Overrides the default search path (./kaptaind.toml) and the
@@ -233,6 +241,10 @@ fn main() -> anyhow::Result<()> {
 
     kaptaind::git::repo::ensure_git_available()
         .map_err(|err| anyhow::anyhow!("kaptaind requires git in PATH: {err}"))?;
+
+    if cli.dry_run {
+        return kaptaind::dryrun::run(&config);
+    }
 
     if cli.daemon {
         let kaptaind_dir = config.repo_path.join(".kaptaind");

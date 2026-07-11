@@ -6,6 +6,7 @@ pub mod commit;
 pub mod config;
 pub mod daemon;
 pub mod diff;
+pub mod dryrun;
 pub mod git;
 pub mod icon;
 pub mod inference;
