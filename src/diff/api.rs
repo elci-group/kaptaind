@@ -37,6 +37,13 @@ pub fn dependency_score(cluster: &Cluster, repo_root: &Path) -> DependencyAnalys
     let mut manifests = 0_usize;
 
     for manifest in dependency_files {
+        // Metadata-only manifest edits (e.g. Cargo.toml `repository` URL) must
+        // not inflate the deps score: only score manifests whose dependency
+        // sections actually changed relative to HEAD.
+        if !dependency_sections_changed(&manifest) {
+            continue;
+        }
+
         let dependencies = parse_dependencies(&manifest);
         if dependencies.is_empty() {
             continue;
@@ -114,6 +121,109 @@ fn parse_dependencies(path: &Path) -> BTreeSet<String> {
         Some("requirements.txt") => parse_requirements(path),
         _ => BTreeSet::new(),
     }
+}
+
+/// Whether a touched manifest's dependency content changed vs HEAD.
+///
+/// Manifests with dedicated metadata sections (Cargo.toml, package.json) are
+/// compared section-by-section on the parsed values, so key order/formatting
+/// and metadata-only edits do not count. Everything else `is_dependency_file`
+/// matches (requirements.txt, lockfiles, ...) compares full content. If there
+/// is no HEAD version (untracked file, git error, not a repo) this returns
+/// true, preserving the previous behavior of scoring the working-tree file.
+fn dependency_sections_changed(path: &Path) -> bool {
+    let Some(head) = head_file_content(path) else {
+        return true;
+    };
+    let Ok(current) = std::fs::read_to_string(path) else {
+        return true;
+    };
+
+    match path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.to_lowercase())
+        .as_deref()
+    {
+        Some("cargo.toml") => cargo_dependency_sections_changed(&head, &current),
+        Some("package.json") => package_dependency_sections_changed(&head, &current),
+        _ => head != current,
+    }
+}
+
+/// Reads `HEAD:<repo-root-relative path>` for a file, or None on any failure.
+fn head_file_content(path: &Path) -> Option<String> {
+    let parent = path.parent()?;
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(parent)
+        .args(["rev-parse", "--show-prefix"])
+        .output()
+        .ok()?;
+    if !output.status.success() || output.stdout.is_empty() {
+        return None;
+    }
+    let prefix = String::from_utf8_lossy(&output.stdout);
+    let prefix = prefix.strip_suffix('\n').unwrap_or(&prefix);
+    let file_name = path.file_name()?.to_str()?;
+    let revision = format!("HEAD:{prefix}{file_name}");
+
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(parent)
+        .arg("show")
+        .arg(revision)
+        .output()
+        .ok()?;
+    if !output.status.success() || output.stdout.is_empty() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()
+}
+
+fn cargo_dependency_sections_changed(head: &str, current: &str) -> bool {
+    let (Ok(head_value), Ok(current_value)) =
+        (head.parse::<TomlValue>(), current.parse::<TomlValue>())
+    else {
+        return head != current;
+    };
+
+    cargo_dependency_sections(&head_value) != cargo_dependency_sections(&current_value)
+}
+
+fn cargo_dependency_sections(value: &TomlValue) -> Vec<Option<&toml::map::Map<String, TomlValue>>> {
+    let mut sections: Vec<Option<&toml::map::Map<String, TomlValue>>> =
+        ["dependencies", "dev-dependencies", "build-dependencies"]
+            .iter()
+            .map(|section| value.get(section).and_then(TomlValue::as_table))
+            .collect();
+    sections.push(
+        value
+            .get("workspace")
+            .and_then(|workspace| workspace.get("dependencies"))
+            .and_then(TomlValue::as_table),
+    );
+    sections
+}
+
+fn package_dependency_sections_changed(head: &str, current: &str) -> bool {
+    let (Ok(head_value), Ok(current_value)) = (
+        serde_json::from_str::<JsonValue>(head),
+        serde_json::from_str::<JsonValue>(current),
+    ) else {
+        return head != current;
+    };
+
+    package_dependency_sections(&head_value) != package_dependency_sections(&current_value)
+}
+
+fn package_dependency_sections(
+    value: &JsonValue,
+) -> Vec<Option<&serde_json::Map<String, JsonValue>>> {
+    ["dependencies", "devDependencies", "peerDependencies"]
+        .iter()
+        .map(|section| value.get(section).and_then(JsonValue::as_object))
+        .collect()
 }
 
 fn parse_cargo_dependencies(path: &Path) -> BTreeSet<String> {
@@ -454,5 +564,99 @@ mod tests {
     #[test]
     fn astro_config_is_web_config() {
         assert!(is_web_config(Path::new("astro.config.mjs")));
+    }
+
+    fn manifest_cluster() -> Cluster {
+        Cluster {
+            id: Uuid::new_v4(),
+            started_at: Utc::now(),
+            ended_at: Utc::now(),
+            events: vec![FsEvent {
+                paths: vec![PathBuf::from("Cargo.toml")],
+                kind: FsEventKind::Modify,
+                timestamp: Utc::now(),
+            }],
+        }
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {args:?} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn init_repo_with_manifest(dir: &Path, manifest: &str) {
+        git(dir, &["init", "-q", "-b", "master"]);
+        std::fs::write(dir.join("Cargo.toml"), manifest).expect("write cargo manifest");
+        git(dir, &["add", "-A"]);
+        git(
+            dir,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@t",
+                "commit",
+                "-qm",
+                "init",
+            ],
+        );
+    }
+
+    const BASE_MANIFEST: &str = "[package]\nname = \"demo\"\nversion = \"0.1.0\"\nrepository = \"https://example.com/old\"\n\n[dependencies]\nserde = \"1\"\nanyhow = \"1\"\n";
+
+    #[test]
+    fn metadata_only_cargo_edit_scores_zero_deps() {
+        let dir = tempdir().expect("temp dir");
+        init_repo_with_manifest(dir.path(), BASE_MANIFEST);
+        let edited = BASE_MANIFEST.replace("https://example.com/old", "https://example.com/new");
+        std::fs::write(dir.path().join("Cargo.toml"), edited).expect("edit cargo manifest");
+
+        let analysis = dependency_score(&manifest_cluster(), dir.path());
+        assert_eq!(analysis.score, 0.0);
+        assert_eq!(analysis.manifests, 0);
+        assert_eq!(analysis.nodes, 0);
+        assert_eq!(analysis.edges, 0);
+    }
+
+    #[test]
+    fn dependency_addition_scores_nonzero_deps() {
+        let dir = tempdir().expect("temp dir");
+        init_repo_with_manifest(dir.path(), BASE_MANIFEST);
+        let edited = BASE_MANIFEST.replace("anyhow = \"1\"", "anyhow = \"1\"\ntokio = \"1\"");
+        std::fs::write(dir.path().join("Cargo.toml"), edited).expect("edit cargo manifest");
+
+        let analysis = dependency_score(&manifest_cluster(), dir.path());
+        assert!(analysis.score > 0.0);
+        assert!(analysis.nodes > 0);
+    }
+
+    #[test]
+    fn version_bump_in_dependency_scores_nonzero() {
+        let dir = tempdir().expect("temp dir");
+        init_repo_with_manifest(dir.path(), BASE_MANIFEST);
+        let edited = BASE_MANIFEST.replace("serde = \"1\"", "serde = \"2\"");
+        std::fs::write(dir.path().join("Cargo.toml"), edited).expect("edit cargo manifest");
+
+        let analysis = dependency_score(&manifest_cluster(), dir.path());
+        assert!(analysis.score > 0.0);
+    }
+
+    #[test]
+    fn untracked_manifest_scores_current_behavior() {
+        let dir = tempdir().expect("temp dir");
+        std::fs::write(dir.path().join("Cargo.toml"), BASE_MANIFEST).expect("write cargo manifest");
+
+        let analysis = dependency_score(&manifest_cluster(), dir.path());
+        assert!(analysis.score > 0.0);
+        assert!(analysis.nodes > 0);
     }
 }
