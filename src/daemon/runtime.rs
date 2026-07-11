@@ -118,7 +118,12 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
         event_tx: event_tx.clone(),
         shark: shark_runtime.clone(),
     };
-    tokio::spawn(start_health_server(config.health_port, health_state));
+    let health_port = config.health_port;
+    tokio::spawn(async move {
+        if let Err(e) = start_health_server(health_port, health_state).await {
+            tracing::error!(port = health_port, error = %e, "health server failed to start");
+        }
+    });
 
     // Spawn optional WebUI endpoint
     if config.web_port != 0 {
@@ -142,7 +147,12 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
             auth_token,
             allow_config_write: config.web.allow_config_write,
         };
-        tokio::spawn(start_web_server(config.web_port, web_state));
+        let web_port = config.web_port;
+        tokio::spawn(async move {
+            if let Err(e) = start_web_server(web_port, web_state).await {
+                tracing::error!(port = web_port, error = %e, "web server failed to start");
+            }
+        });
     }
 
     // Spawn scheduled pruning task
