@@ -13,6 +13,96 @@ All notable changes to kaptaind are documented here. The format follows
 > here. Per-commit detail for the `v0.1.44 → v9.x` range lives in `git log`;
 > the consolidated capability set is summarized under `[9.7.16]` below.
 
+## [10.0.0] — 2026-07-11
+
+Workstream D (workflow integrity) of the autonomous-commit safety plan — the
+breaking window. Two defaults flip, deterministic commit subjects become
+conventional commits, and partial configs now parse. Below-threshold work is
+never silently lost again, and version only moves on threshold-crossing
+clusters. Run `kaptaind-cli doctor` against your repo for a per-config
+migration report; operator docs: `docs/RUNBOOK.md`.
+
+### ⚠️ MIGRATION GUIDE
+
+- **`[commit] require_bump` flipped `true` → `false`.** Below-threshold
+  clusters no longer sit uncommitted forever: they are captured with a
+  non-bumping `chore:` commit (VERSION, Cargo.toml and Cargo.lock untouched),
+  while version only moves on threshold-crossing clusters. This ends silent
+  work loss (#7) and version inflation (#17). **To keep the pre-v10 skip
+  behavior**, set `[commit] require_bump = true` — skips are logged as
+  `no_bump` in `.kaptaind/decisions.jsonl` and visible via `kaptaind-cli
+  explain`.
+- **`[staging] mode` flipped `all` → `cluster` (already in v9.7.17 — recap
+  for anyone upgrading from <9.7.17).** The daemon no longer runs
+  `git add -A` by default; only clustered paths plus version metadata are
+  staged. `mode = "all"` still works but sweeps the whole worktree (untracked
+  files, including secrets) and logs a loud startup warning; commits abort
+  fail-closed if a changed path matches the secret denylist. Prefer
+  `mode = "cluster"`.
+- **All config sections now have serde defaults.** A partial `kaptaind.toml`
+  that previously failed to parse (missing `[watch]`, `[weights]`,
+  `[cluster]`, `[push]`, `[test]` or `[ratelimit]`) now loads with defaults
+  sourced from the init template. **Caveat:** a config that was previously
+  *invalid* may now load silently with defaults — re-check your file with
+  `kaptaind-cli validate`, which still rejects explicitly-invalid values.
+- **Obsolete `.kaptainignore` workarounds now harm you.** Entries for
+  `VERSION`, `Cargo.toml` or `Cargo.lock` were pre-v9.7.17 workarounds for
+  the daemon's own writeback churn. The self-write guard (v9.7.17) makes them
+  unnecessary, and keeping them means a lone dependency edit (e.g.
+  `cargo update` touching `Cargo.toml`/`Cargo.lock`) never clusters and never
+  commits. Delete those lines.
+- **Commit messages are now conventional commits.** Deterministic subjects
+  name the change class and primary paths, e.g. `build(deps): update
+  dependencies (Cargo.toml)`, `docs: update documentation (README.md)`,
+  `fix!(src): change public API (lib.rs)`, with a hard 72-char cap. The
+  scorecard body block is unchanged. Anything scraping the retired
+  `kaptaind:` subject prefix must switch to the scorecard body line.
+- **Multiple daemons on one host need distinct health ports.** Run each
+  instance with its own `health_port` (`--health-port` or config). Bind
+  failures previously vanished silently — a second daemon on the same port
+  ran with no health endpoint and no log line; they now log at ERROR.
+- **Migration checker:** `kaptaind-cli doctor` flags every legacy pattern
+  this release retires (explicit `staging.mode = "all"`, unset
+  `staging.mode`/`require_bump`, obsolete `.kaptainignore` entries) with a
+  concrete fix for each, in both text and `--format json` output. Operator
+  runbook: `docs/RUNBOOK.md`.
+
+### Added
+- **`[commit] require_bump` option (D1).** When `false`, below-threshold
+  clusters commit with a non-bumping `chore:` message using the exact
+  staging/commit machinery of the bumping path (RepoContext scoping,
+  fail-closed denylist). New `chore_commit` outcome in the decisions log,
+  rendered by `kaptaind-cli explain`; `--dry-run` predicts the chore commit.
+- **`kaptaind-cli doctor` config-migration checks (D3).** New MIGRATION
+  section inspecting the loaded config, the raw `kaptaind.toml`, and
+  `.kaptainignore` for retired legacy patterns; findings (severity, message,
+  concrete fix) are included in the JSON artifact under a new `migration`
+  field (additive — older readers ignore unknown fields).
+- **Regression tests:** `chore_commit_captures_docs`,
+  `docs_edit_does_not_bump_when_require_bump_off` (default flip guarded),
+  and `commit_message_lint` (10-case matrix × both message builders asserting
+  conventional-commit parse, ≤72-char subject, non-empty description).
+
+### Changed
+- **BREAKING: `[commit] require_bump` defaults to `false`.** Below-threshold
+  clusters chore-commit instead of being silently dropped (see migration
+  guide).
+- **Deterministic commit subjects are conventional commits (D2).** Subjects
+  name the change class and primary paths with a hard 72-char cap;
+  truncation is confined to the trailing path list so parsing never breaks.
+  The regression harness now detects daemon commits via the scorecard body
+  line instead of the retired `kaptaind:` subject prefix.
+- **Every config section has serde defaults sourced from the init template
+  values.** Partial `kaptaind.toml` files parse; validation still rejects
+  explicitly-invalid values. Default push branch is `main` (inert while
+  `push.enabled = false`).
+
+### Fixed
+- **Health/web server bind failures now log at ERROR.** `tokio::spawn`
+  dropped the `JoinHandle`, silently discarding bind errors: a second daemon
+  on the same `health_port` ran with no health endpoint and no log line
+  (found dogfooding v9.8.0 on scotia + fract, both defaulting to port 9090).
+
 ## [9.8.0] — 2026-07-11
 
 Workstreams B (repo model & version consistency) and C (operability) of the

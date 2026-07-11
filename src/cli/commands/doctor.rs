@@ -3,6 +3,11 @@
 //! Collects a best-effort hardware/OS profile, checks inotify limits against
 //! the repo-size tier table, verifies tool availability, recommends a tier,
 //! and writes a machine-readable artifact under `.kaptaind/doctor/`.
+//!
+//! Also runs the v10.0.0 config-migration checks (safety plan D3): the loaded
+//! `Config`, the raw `kaptaind.toml`, and the project's `.kaptainignore` are
+//! inspected for legacy patterns the v10 breaking window retires, and every
+//! finding is reported with a concrete fix.
 
 use chrono::Utc;
 use kaptaind::config::loader::Config;
@@ -49,6 +54,30 @@ pub struct DoctorReport {
     pub warnings: Vec<String>,
     pub git_rev: Option<String>,
     pub dirty: Option<bool>,
+    /// v10.0.0 config-migration findings (safety plan D3). Added in v10.0.0;
+    /// older readers ignore unknown fields per the compatibility contract.
+    pub migration: Vec<MigrationFinding>,
+}
+
+/// Severity of a config-migration finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MigrationSeverity {
+    /// Informational: a default flipped and the user never chose explicitly.
+    Info,
+    /// The legacy pattern is risky or now actively harmful.
+    Warn,
+}
+
+/// One legacy-pattern finding from the v10.0.0 migration checks.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MigrationFinding {
+    /// Stable machine-readable check identifier.
+    pub check: String,
+    pub severity: MigrationSeverity,
+    pub message: String,
+    /// The concrete remediation for this finding.
+    pub fix: String,
 }
 
 pub fn handle_doctor(config: &Config, format: &str) -> anyhow::Result<()> {
@@ -117,6 +146,152 @@ fn collect(config: &Config) -> DoctorReport {
         warnings,
         git_rev,
         dirty,
+        migration: collect_migration_findings(config),
+    }
+}
+
+/// `.kaptainignore` entries that were pre-v9.7.17 workarounds for the daemon's
+/// own writeback churn. Obsolete since the self-write guard (v9.7.17) and now
+/// harmful: a lone dependency edit to `Cargo.toml`/`Cargo.lock` (e.g.
+/// `cargo update`) never clusters and therefore never commits.
+const OBSOLETE_IGNORE_ENTRIES: &[&str] = &["VERSION", "Cargo.toml", "Cargo.lock"];
+
+/// Read the raw `kaptaind.toml` and the ignore file and run every migration
+/// check. File reads are best-effort: a missing file means there is nothing
+/// to migrate for that check.
+fn collect_migration_findings(config: &Config) -> Vec<MigrationFinding> {
+    let toml_path = config.repo_path.join("kaptaind.toml");
+    let toml_text = std::fs::read_to_string(toml_path).ok();
+
+    let ignore_path = if config.watch.ignore_file.is_absolute() {
+        config.watch.ignore_file.clone()
+    } else {
+        config.repo_path.join(&config.watch.ignore_file)
+    };
+    let ignore_text = std::fs::read_to_string(ignore_path).ok();
+
+    detect_migration_findings(config, toml_text.as_deref(), ignore_text.as_deref())
+}
+
+/// Pure detection over the raw config TOML, the ignore-file text, and the
+/// loaded config. Split out from the file I/O so it is unit-testable.
+pub fn detect_migration_findings(
+    _config: &Config,
+    toml_text: Option<&str>,
+    ignore_text: Option<&str>,
+) -> Vec<MigrationFinding> {
+    let mut findings = Vec::new();
+    findings.extend(detect_staging_mode(toml_text));
+    findings.extend(detect_obsolete_ignore_entries(ignore_text));
+    findings.extend(detect_require_bump(toml_text));
+    findings
+}
+
+/// Parse the raw TOML once; a file that does not parse fails `kaptaind
+/// validate` elsewhere, so migration checks simply skip it.
+fn parse_toml(toml_text: Option<&str>) -> Option<toml::Table> {
+    toml_text?.parse::<toml::Table>().ok()
+}
+
+/// D3: `staging.mode` — default flipped `all` → `cluster` in v9.7.17.
+fn detect_staging_mode(toml_text: Option<&str>) -> Vec<MigrationFinding> {
+    let Some(table) = parse_toml(toml_text) else {
+        return Vec::new();
+    };
+    let mode = table
+        .get("staging")
+        .and_then(|s| s.get("mode"))
+        .and_then(|m| m.as_str());
+    match mode {
+        Some("all") => vec![MigrationFinding {
+            check: "staging_mode_all".to_string(),
+            severity: MigrationSeverity::Warn,
+            message: "`staging.mode = \"all\"` is set explicitly. It runs `git add -A` \
+                      across the whole worktree, sweeping in untracked files — including \
+                      secrets. The default flipped to \"cluster\" in v9.7.17."
+                .to_string(),
+            fix: "Remove the key or set `staging.mode = \"cluster\"` so only clustered \
+                  paths (plus version metadata) are staged."
+                .to_string(),
+        }],
+        // Explicit "cluster"/"pattern": the user chose deliberately.
+        Some(_) => Vec::new(),
+        None => vec![MigrationFinding {
+            check: "staging_mode_unset".to_string(),
+            severity: MigrationSeverity::Info,
+            message: "`staging.mode` is not set in kaptaind.toml, so the v9.7.17+ default \
+                      \"cluster\" applies (previously \"all\"). This is safe; you just \
+                      never pinned the choice."
+                .to_string(),
+            fix: "Optional: add `[staging] mode = \"cluster\"` to make the choice explicit."
+                .to_string(),
+        }],
+    }
+}
+
+/// D3: obsolete `.kaptainignore` workarounds for version metadata files.
+fn detect_obsolete_ignore_entries(ignore_text: Option<&str>) -> Vec<MigrationFinding> {
+    let Some(text) = ignore_text else {
+        return Vec::new();
+    };
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#') && !l.starts_with('!'))
+        .filter(|l| {
+            let entry = l.trim_start_matches('/');
+            let basename = entry.rsplit('/').next().unwrap_or(entry);
+            OBSOLETE_IGNORE_ENTRIES.contains(&basename)
+        })
+        .map(|entry| MigrationFinding {
+            check: "obsolete_kaptainignore_entry".to_string(),
+            severity: MigrationSeverity::Warn,
+            message: format!(
+                "`.kaptainignore` entry `{entry}` is an obsolete workaround. Since \
+                 v9.7.17 the daemon suppresses its own version writebacks (self-write \
+                 guard), so ignoring version metadata is no longer needed — and now \
+                 harms you: a lone edit to that file (e.g. `cargo update` touching \
+                 Cargo.toml/Cargo.lock) never clusters and never commits."
+            ),
+            fix: format!("Delete the `{entry}` line from .kaptainignore."),
+        })
+        .collect()
+}
+
+/// D3: `[commit] require_bump` — default flipped `true` → `false` in v10.0.0.
+fn detect_require_bump(toml_text: Option<&str>) -> Vec<MigrationFinding> {
+    let Some(table) = parse_toml(toml_text) else {
+        return Vec::new();
+    };
+    let require_bump = table
+        .get("commit")
+        .and_then(|c| c.get("require_bump"))
+        .and_then(|v| v.as_bool());
+    match require_bump {
+        None => vec![MigrationFinding {
+            check: "require_bump_unset".to_string(),
+            severity: MigrationSeverity::Info,
+            message: "`commit.require_bump` is not set, so the v10.0.0 default `false` \
+                      applies: below-threshold clusters are now captured as non-bumping \
+                      `chore:` commits instead of being skipped (pre-v10 default was \
+                      `true`)."
+                .to_string(),
+            fix: "Leave unset to adopt the new capture behavior, or set \
+                  `[commit] require_bump = true` to keep the pre-v10 skip behavior."
+                .to_string(),
+        }],
+        Some(true) => vec![MigrationFinding {
+            check: "require_bump_true".to_string(),
+            severity: MigrationSeverity::Info,
+            message: "`commit.require_bump = true` keeps the pre-v10 behavior \
+                      intentionally: below-threshold clusters are logged as `no_bump` \
+                      and left uncommitted."
+                .to_string(),
+            fix: "No action needed. Remove the key (or set `false`) to adopt the v10 \
+                  `chore:`-commit capture behavior."
+                .to_string(),
+        }],
+        // Explicit false: already on the v10 behavior.
+        Some(false) => Vec::new(),
     }
 }
 
@@ -410,6 +585,24 @@ fn print_human(r: &DoctorReport) {
         }
     }
 
+    println!("\n{}", "🧭 Config migration (v10.0.0):".bold().cyan());
+    if r.migration.is_empty() {
+        println!(
+            "  {} {}",
+            "✅".green(),
+            "No legacy patterns detected.".green()
+        );
+    } else {
+        for f in &r.migration {
+            let badge = match f.severity {
+                MigrationSeverity::Info => "info".cyan().to_string(),
+                MigrationSeverity::Warn => "WARN".yellow().to_string(),
+            };
+            println!("  {} {}", badge, f.message);
+            println!("       {} {}", "fix:".dimmed(), f.fix.as_str().dimmed());
+        }
+    }
+
     println!(
         "\n{} {}",
         "Artifact:".dimmed(),
@@ -438,4 +631,122 @@ fn fmt_opt(v: Option<u64>) -> String {
 
 fn config_relative(repo: &str) -> String {
     format!("{repo}/.kaptaind/doctor/<timestamp>.json")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn findings(toml_text: Option<&str>, ignore_text: Option<&str>) -> Vec<MigrationFinding> {
+        detect_migration_findings(&Config::default(), toml_text, ignore_text)
+    }
+
+    fn check<'a>(findings: &'a [MigrationFinding], check: &str) -> Option<&'a MigrationFinding> {
+        findings.iter().find(|f| f.check == check)
+    }
+
+    #[test]
+    fn staging_mode_all_explicit_warns() {
+        let fs = findings(Some("[staging]\nmode = \"all\"\n"), None);
+        let f = check(&fs, "staging_mode_all").expect("expected staging_mode_all finding");
+        assert_eq!(f.severity, MigrationSeverity::Warn);
+        assert!(f.message.contains("git add -A"));
+        assert!(f.fix.contains("cluster"));
+    }
+
+    #[test]
+    fn staging_mode_missing_is_info() {
+        let fs = findings(Some("[watch]\npath = \".\"\n"), None);
+        let f = check(&fs, "staging_mode_unset").expect("expected staging_mode_unset finding");
+        assert_eq!(f.severity, MigrationSeverity::Info);
+        assert!(f.message.contains("v9.7.17"));
+    }
+
+    #[test]
+    fn staging_mode_cluster_explicit_no_finding() {
+        let fs = findings(Some("[staging]\nmode = \"cluster\"\n"), None);
+        assert!(check(&fs, "staging_mode_all").is_none());
+        assert!(check(&fs, "staging_mode_unset").is_none());
+    }
+
+    #[test]
+    fn no_config_file_yields_no_toml_findings() {
+        let fs = findings(None, None);
+        assert!(fs.is_empty());
+    }
+
+    #[test]
+    fn ignore_file_obsolete_entries_warn() {
+        let ignore = "# comment\n\nVERSION\n/Cargo.toml\nsub/Cargo.lock\nsrc/**\n";
+        let fs = findings(None, Some(ignore));
+        let obsolete: Vec<_> = fs
+            .iter()
+            .filter(|f| f.check == "obsolete_kaptainignore_entry")
+            .collect();
+        assert_eq!(obsolete.len(), 3);
+        assert!(obsolete
+            .iter()
+            .all(|f| f.severity == MigrationSeverity::Warn));
+        assert!(obsolete.iter().any(|f| f.message.contains("`VERSION`")));
+        assert!(obsolete.iter().any(|f| f.message.contains("`/Cargo.toml`")));
+        assert!(obsolete
+            .iter()
+            .any(|f| f.message.contains("`sub/Cargo.lock`")));
+        assert!(obsolete.iter().all(|f| f.fix.starts_with("Delete the")));
+    }
+
+    #[test]
+    fn ignore_file_clean_and_negated_no_finding() {
+        let fs = findings(None, Some("target/\n*.log\n!VERSION\n"));
+        assert!(check(&fs, "obsolete_kaptainignore_entry").is_none());
+    }
+
+    #[test]
+    fn require_bump_absent_is_info() {
+        let fs = findings(Some("[commit]\nsign = true\n"), None);
+        let f = check(&fs, "require_bump_unset").expect("expected require_bump_unset finding");
+        assert_eq!(f.severity, MigrationSeverity::Info);
+        assert!(f.message.contains("chore:"));
+        assert!(f.fix.contains("require_bump = true"));
+    }
+
+    #[test]
+    fn require_bump_true_is_info() {
+        let fs = findings(Some("[commit]\nrequire_bump = true\n"), None);
+        let f = check(&fs, "require_bump_true").expect("expected require_bump_true finding");
+        assert_eq!(f.severity, MigrationSeverity::Info);
+        assert!(f.message.contains("pre-v10"));
+        assert!(check(&fs, "require_bump_unset").is_none());
+    }
+
+    #[test]
+    fn require_bump_false_no_finding() {
+        let fs = findings(Some("[commit]\nrequire_bump = false\n"), None);
+        assert!(check(&fs, "require_bump_unset").is_none());
+        assert!(check(&fs, "require_bump_true").is_none());
+    }
+
+    #[test]
+    fn unparseable_toml_yields_no_findings() {
+        let fs = findings(Some("this is [not valid toml"), None);
+        assert!(fs.is_empty());
+    }
+
+    #[test]
+    fn legacy_config_reports_every_retired_pattern() {
+        let toml = "[staging]\nmode = \"all\"\n";
+        let ignore = "VERSION\nCargo.toml\nCargo.lock\n";
+        let fs = findings(Some(toml), Some(ignore));
+        assert_eq!(
+            check(&fs, "staging_mode_all").unwrap().severity,
+            MigrationSeverity::Warn
+        );
+        assert_eq!(
+            fs.iter()
+                .filter(|f| f.check == "obsolete_kaptainignore_entry")
+                .count(),
+            3
+        );
+        assert!(check(&fs, "require_bump_unset").is_some());
+    }
 }
