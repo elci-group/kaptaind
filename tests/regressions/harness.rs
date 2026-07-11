@@ -66,7 +66,7 @@ min_commit_interval = 1
 mode = "cluster"
 
 [angler.git_hooks]
-enabled = false
+enabled = true
 "#,
         )
         .expect("kaptaind.toml");

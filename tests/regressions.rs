@@ -68,6 +68,13 @@ fn daemon_does_not_cascade_on_version_writeback() {
             1,
             "cascade: a second auto-commit followed the daemon's own writeback"
         );
+
+        // Finding #11: hook installation must never fabricate a .git
+        // directory inside the watched subproject.
+        assert!(
+            !fixture.project().join(".git").exists(),
+            "daemon created a fake .git inside the monorepo subproject"
+        );
     }));
 
     let _ = daemon.kill();

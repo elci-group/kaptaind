@@ -81,7 +81,7 @@ impl GitHookManager {
         let hooks_dir = config
             .hooks_dir
             .clone()
-            .unwrap_or_else(|| repo_path.join(".git").join("hooks"));
+            .unwrap_or_else(|| resolve_git_hooks_dir(repo_path));
 
         Ok(Self {
             config: config.clone(),
@@ -92,11 +92,34 @@ impl GitHookManager {
 
     /// Install kaptaind-managed hooks.
     ///
-    /// This creates wrapper scripts in .git/hooks that delegate to kaptaind.
+    /// This creates wrapper scripts in the repo's git hooks directory that
+    /// delegate to kaptaind.
     pub fn install_hooks(&self) -> Result<()> {
         if !self.config.enabled {
             info!("Git hooks management is disabled");
             return Ok(());
+        }
+
+        // Monorepo guard: when the watched path is a subdirectory of a
+        // larger git repo, silently installing into the outer repo's hooks
+        // would be surprising — and the old `.git/hooks` fallback created a
+        // fake `.git` directory inside the subproject, breaking tooling
+        // that probes for repo roots. Skip unless hooks_dir is explicit.
+        if self.config.hooks_dir.is_none() {
+            if let Some(root) = git_root(&self.repo_path) {
+                let root = std::fs::canonicalize(&root).unwrap_or(root);
+                let repo = std::fs::canonicalize(&self.repo_path)
+                    .unwrap_or_else(|_| self.repo_path.clone());
+                if root != repo {
+                    warn!(
+                        repo_path = %self.repo_path.display(),
+                        git_root = %root.display(),
+                        "skipping hook install: watched path is inside a larger git repo; \
+                         set angler.git_hooks.hooks_dir to opt in"
+                    );
+                    return Ok(());
+                }
+            }
         }
 
         // Ensure hooks directory exists
@@ -431,9 +454,55 @@ exec kaptaind-cli angler exec-hook {} "$@"
     }
 }
 
+/// Resolve the real git hooks directory for `repo_path` via
+/// `git rev-parse --git-path hooks`. This handles monorepo subprojects,
+/// linked worktrees, and custom `GIT_DIR` layouts; on any failure it
+/// falls back to the conventional `.git/hooks`.
+fn resolve_git_hooks_dir(repo_path: &Path) -> PathBuf {
+    let fallback = repo_path.join(".git").join("hooks");
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(["rev-parse", "--git-path", "hooks"])
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {
+            let raw = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if raw.is_empty() {
+                return fallback;
+            }
+            let path = PathBuf::from(raw);
+            if path.is_absolute() {
+                path
+            } else {
+                repo_path.join(path)
+            }
+        }
+        _ => fallback,
+    }
+}
+
+/// Resolve the git worktree root containing `repo_path`, if any.
+fn git_root(repo_path: &Path) -> Option<PathBuf> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(["rev-parse", "--show-toplevel"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if raw.is_empty() {
+        return None;
+    }
+    Some(PathBuf::from(raw))
+}
+
 /// List installed hooks and their status.
 pub fn list_hooks(repo_path: &Path) -> Result<Vec<HookInfo>> {
-    let hooks_dir = repo_path.join(".git").join("hooks");
+    let hooks_dir = resolve_git_hooks_dir(repo_path);
     let mut hooks = Vec::new();
 
     if !hooks_dir.exists() {
@@ -605,5 +674,76 @@ mod tests {
 
         assert!(!result.success);
         assert_eq!(result.exit_code, Some(1));
+    }
+
+    fn enabled_config() -> GitHooksConfig {
+        GitHooksConfig {
+            enabled: true,
+            pre_commit: Some(HookConfig {
+                command: "true".to_string(),
+                required: false,
+                timeout_secs: 5,
+                env: HashMap::new(),
+                working_dir: None,
+                file_patterns: vec![],
+            }),
+            ..GitHooksConfig::default()
+        }
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .expect("git spawns");
+        assert!(status.success(), "git {:?} failed", args);
+    }
+
+    #[test]
+    fn test_install_hooks_in_repo_root_uses_real_git_hooks() {
+        let temp_dir = TempDir::new().unwrap();
+        git(temp_dir.path(), &["init", "-q", "-b", "master"]);
+
+        let manager = GitHookManager::new(&enabled_config(), temp_dir.path()).unwrap();
+        manager.install_hooks().unwrap();
+
+        assert!(temp_dir.path().join(".git/hooks/pre-commit").exists());
+    }
+
+    #[test]
+    fn test_install_hooks_in_monorepo_subdir_skips_without_fake_git() {
+        let temp_dir = TempDir::new().unwrap();
+        git(temp_dir.path(), &["init", "-q", "-b", "master"]);
+        let sub = temp_dir.path().join("proj");
+        std::fs::create_dir_all(&sub).unwrap();
+
+        let manager = GitHookManager::new(&enabled_config(), &sub).unwrap();
+        manager.install_hooks().unwrap();
+
+        // No fake .git may be created inside the subproject, and the outer
+        // repo's hooks must be left alone.
+        assert!(!sub.join(".git").exists());
+        assert!(!temp_dir.path().join(".git/hooks/pre-commit").exists());
+    }
+
+    #[test]
+    fn test_install_hooks_with_explicit_dir_in_monorepo_installs() {
+        let temp_dir = TempDir::new().unwrap();
+        git(temp_dir.path(), &["init", "-q", "-b", "master"]);
+        let sub = temp_dir.path().join("proj");
+        std::fs::create_dir_all(&sub).unwrap();
+
+        let explicit = temp_dir.path().join(".git/hooks");
+        let mut config = enabled_config();
+        config.hooks_dir = Some(explicit.clone());
+        let manager = GitHookManager::new(&config, &sub).unwrap();
+        manager.install_hooks().unwrap();
+
+        assert!(explicit.join("pre-commit").exists());
+        assert!(!sub.join(".git").exists());
     }
 }
