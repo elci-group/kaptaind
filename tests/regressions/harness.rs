@@ -1,0 +1,119 @@
+//! Test harness for the regression suite: a monorepo fixture (an outer git
+//! repo with an in-repo kaptaind project) plus helpers to drive the real
+//! daemon binary against it.
+//!
+//! Every monorepo finding from the live-fire audit was invisible without this
+//! layout; standalone-repo fixtures cannot reproduce them.
+
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+
+/// Outer git repo containing a `proj/` subproject with its own kaptaind.toml —
+/// the exact layout the audit findings came from (`scotia/` inside `/home/sal`).
+pub struct MonorepoFixture {
+    pub dir: tempfile::TempDir,
+}
+
+impl MonorepoFixture {
+    pub fn new() -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        run(root, &["git", "init", "-q", "-b", "master"]);
+        run(root, &["git", "config", "user.name", "Test"]);
+        run(root, &["git", "config", "user.email", "test@example.com"]);
+
+        let proj = root.join("proj");
+        std::fs::create_dir_all(proj.join("src")).expect("mkdir src");
+        std::fs::write(proj.join("src/main.rs"), "fn main() {}\n").expect("main.rs");
+        std::fs::write(
+            proj.join("Cargo.toml"),
+            "[package]\nname = \"proj\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )
+        .expect("Cargo.toml");
+        std::fs::write(proj.join("VERSION"), "0.1.0\n").expect("VERSION");
+        std::fs::write(proj.join(".kaptainignore"), ".git\n.kaptaind\ntarget\n")
+            .expect(".kaptainignore");
+        std::fs::write(
+            proj.join("kaptaind.toml"),
+            r#"
+health_port = 19099
+
+[watch]
+path = "."
+recursive = true
+ignore_file = ".kaptainignore"
+
+[cluster]
+window = 1
+
+[test]
+required = false
+
+[push]
+enabled = false
+branch = "master"
+
+[weights]
+s = 0.35
+a = 0.30
+d = 0.20
+r = 0.15
+
+[ratelimit]
+min_commit_interval = 1
+
+[staging]
+mode = "cluster"
+
+[angler.git_hooks]
+enabled = false
+"#,
+        )
+        .expect("kaptaind.toml");
+
+        run(root, &["git", "add", "-A"]);
+        run(root, &["git", "commit", "-qm", "initial"]);
+
+        Self { dir }
+    }
+
+    pub fn project(&self) -> PathBuf {
+        self.dir.path().join("proj")
+    }
+
+    /// Run git against the outer repo and return stdout.
+    pub fn git(&self, args: &[&str]) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(self.dir.path())
+            .args(args)
+            .output()
+            .expect("git runs");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+
+    /// Count of daemon-authored commits in the outer repo.
+    pub fn kaptaind_commits(&self) -> usize {
+        self.git(&["log", "--format=%s"])
+            .lines()
+            .filter(|subject| subject.starts_with("kaptaind:"))
+            .count()
+    }
+}
+
+fn run(dir: &Path, argv: &[&str]) {
+    let status = Command::new(argv[0])
+        .args(&argv[1..])
+        .current_dir(dir)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .status()
+        .expect("command spawns");
+    assert!(status.success(), "command failed: {:?}", argv);
+}

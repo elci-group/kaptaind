@@ -17,11 +17,11 @@ use chrono::{DateTime, Utc};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use semver::Version;
 use serde::Serialize;
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::process::Command;
 use tokio::sync::mpsc::Receiver;
 use tokio::task::JoinSet;
@@ -37,6 +37,61 @@ fn broadcast_event(
         event_type: event_type.to_string(),
         payload,
     });
+}
+
+/// How long a daemon-caused write suppresses the watch event it generates.
+const SELF_WRITE_TTL: Duration = Duration::from_secs(60);
+/// Bound on remembered self-writes so the guard cannot grow without limit.
+const SELF_WRITE_CAP: usize = 64;
+
+/// TTL-bounded record of paths the daemon itself just wrote, used to suppress
+/// the watch events those writes generate.
+///
+/// Without this, `save_version`'s writeback (VERSION/Cargo.toml, plus a
+/// Cargo.lock touch from the next build) re-clusters and every auto-commit
+/// spawns the next one — observed live as three self-commits in under three
+/// minutes (v0.1.6 -> v0.1.9), stopped only by killing the daemon. Suppression
+/// is deliberately narrow: exact absolute paths, 60s TTL, and mixed events are
+/// split so a genuine edit that shares an event with a self-write still
+/// clusters.
+struct SelfWriteGuard {
+    writes: VecDeque<(PathBuf, Instant)>,
+}
+
+impl SelfWriteGuard {
+    fn new() -> Self {
+        Self {
+            writes: VecDeque::new(),
+        }
+    }
+
+    /// Record paths the daemon is about to write / has just written.
+    fn record(&mut self, paths: impl IntoIterator<Item = PathBuf>) {
+        let now = Instant::now();
+        for path in paths {
+            self.writes.push_back((path, now));
+        }
+        while self.writes.len() > SELF_WRITE_CAP {
+            self.writes.pop_front();
+        }
+    }
+
+    /// Drop expired entries. Pushes are chronological, so the front is oldest.
+    fn prune(&mut self) {
+        while let Some((_, when)) = self.writes.front() {
+            if when.elapsed() > SELF_WRITE_TTL {
+                self.writes.pop_front();
+            } else {
+                break;
+            }
+        }
+    }
+
+    /// True if `path` is a daemon-caused write within the TTL window.
+    fn is_self_write(&mut self, path: &Path) -> bool {
+        self.prune();
+        self.writes.iter().any(|(recorded, _)| recorded == path)
+    }
 }
 
 pub async fn run(
@@ -95,6 +150,7 @@ pub async fn run(
 
     let ignore_matcher = IgnoreMatcher::load(&config.repo_path, &config.watch.ignore_file);
     let mut last_commit_at: Option<DateTime<Utc>> = None;
+    let mut self_writes = SelfWriteGuard::new();
 
     let mut status = StatusReport {
         status: State::Idle,
@@ -110,10 +166,28 @@ pub async fn run(
         tokio::select! {
             maybe_event = rx.recv() => {
                 match maybe_event {
-                    Some(event) => {
+                    Some(mut event) => {
                         if ignore_matcher.is_ignored(&event.paths) {
                             tracing::trace!(?event.paths, "event ignored");
                             continue;
+                        }
+
+                        // Suppress events caused by the daemon's own writes
+                        // (version writeback etc.); without this every
+                        // auto-commit re-triggers the next cluster in an
+                        // unbounded cascade. Mixed events are split so a
+                        // genuine edit sharing the event still clusters.
+                        let original_len = event.paths.len();
+                        event.paths.retain(|p| !self_writes.is_self_write(p));
+                        if event.paths.is_empty() {
+                            tracing::trace!("self-write event suppressed");
+                            continue;
+                        }
+                        if event.paths.len() != original_len {
+                            tracing::trace!(
+                                remaining = ?event.paths,
+                                "self-write paths stripped from mixed event"
+                            );
                         }
 
                         if matches!(status.status, State::Idle) {
@@ -125,13 +199,13 @@ pub async fn run(
                         tracing::trace!(?event.paths, "ingesting event");
                         if let Some(cluster) = cluster_engine.ingest(event) {
                             tracing::info!(cluster_id = %cluster.id, "cluster window expired by new event");
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &mut self_writes, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
                         }
                     }
                     None => {
                         tracing::trace!("event channel closed");
                         if let Some(cluster) = cluster_engine.flush() {
-                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
+                            process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &mut self_writes, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
                         }
                         break;
                     }
@@ -140,7 +214,7 @@ pub async fn run(
             _ = tokio::time::sleep(config.cluster.flush_after.unwrap_or(config.cluster.window)) => {
                 if let Some(cluster) = cluster_engine.flush() {
                     tracing::info!(cluster_id = %cluster.id, "cluster window expired by timeout");
-                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
+                    process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &mut self_writes, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
                 }
             }
             _ = tasks.join_next(), if !tasks.is_empty() => {
@@ -210,6 +284,7 @@ async fn process_cluster(
     last_commit_at: &mut Option<DateTime<Utc>>,
     cluster: Cluster,
     status: &mut StatusReport,
+    self_writes: &mut SelfWriteGuard,
     vacs_engine: &crate::vacs::VacsEngine,
     tasks: &mut JoinSet<()>,
     shutdown: crate::daemon::shutdown::ShutdownToken,
@@ -558,6 +633,16 @@ async fn process_cluster(
         );
         return;
     }
+
+    // Record the daemon's own writes so the watcher suppresses the events
+    // they generate — otherwise each auto-commit re-clusters its version
+    // writeback and cascades. Cargo.lock is included preemptively: the next
+    // build may refresh it after the bump.
+    self_writes.record([
+        config.repo_path.join("VERSION"),
+        config.repo_path.join("Cargo.toml"),
+        config.repo_path.join("Cargo.lock"),
+    ]);
 
     if let Err(err) = persist_analysis_artifact(
         config,
@@ -1564,7 +1649,8 @@ mod tests {
     use super::{
         apply_test_outcome, format_commit, looks_like_glob, parse_failed_tests,
         persist_analysis_artifact, rate_limit_allows, run_test_hook, save_version,
-        should_block_commit, AnalysisArtifact, IgnoreMatcher, TestOutcome,
+        should_block_commit, AnalysisArtifact, IgnoreMatcher, SelfWriteGuard, TestOutcome,
+        SELF_WRITE_CAP, SELF_WRITE_TTL,
     };
     use crate::cluster::engine::Cluster;
     use crate::config::loader::{Config, TestConfig};
@@ -1588,6 +1674,40 @@ mod tests {
         let now = Utc::now();
         let last = now - ChronoDuration::seconds(5);
         assert!(!rate_limit_allows(now, Some(last), Duration::from_secs(10)));
+    }
+
+    /// Regression (finding #3): daemon-caused writes are recognized within the
+    /// TTL so the cascade loop (commit -> writeback -> cluster -> commit)
+    /// cannot form.
+    #[test]
+    fn self_write_guard_suppresses_recorded_paths_within_ttl() {
+        let mut guard = SelfWriteGuard::new();
+        let version = std::path::PathBuf::from("/repo/VERSION");
+        guard.record([version.clone()]);
+        assert!(guard.is_self_write(&version));
+        assert!(!guard.is_self_write(&std::path::PathBuf::from("/repo/src/main.rs")));
+    }
+
+    #[test]
+    fn self_write_guard_expires_entries_after_ttl() {
+        let mut guard = SelfWriteGuard::new();
+        let path = std::path::PathBuf::from("/repo/VERSION");
+        // Backdate beyond the TTL instead of sleeping.
+        guard.writes.push_back((
+            path.clone(),
+            std::time::Instant::now() - SELF_WRITE_TTL - Duration::from_secs(1),
+        ));
+        assert!(!guard.is_self_write(&path));
+        assert!(guard.writes.is_empty(), "expired entries are pruned");
+    }
+
+    #[test]
+    fn self_write_guard_caps_memory() {
+        let mut guard = SelfWriteGuard::new();
+        for i in 0..(SELF_WRITE_CAP + 10) {
+            guard.record([std::path::PathBuf::from(format!("/repo/file{i}"))]);
+        }
+        assert!(guard.writes.len() <= SELF_WRITE_CAP);
     }
 
     #[test]
