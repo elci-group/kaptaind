@@ -34,9 +34,8 @@ pub fn decide_default(weight: &crate::weight::WeightResult) -> Bump {
 pub fn resolve_baseline(repo_path: &Path) -> anyhow::Result<semver::Version> {
     let version_path = repo_path.join("VERSION");
     if version_path.exists() {
-        let content = std::fs::read_to_string(&version_path).map_err(|e| {
-            anyhow::anyhow!("failed to read {}: {e}", version_path.display())
-        })?;
+        let content = std::fs::read_to_string(&version_path)
+            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", version_path.display()))?;
         return semver::Version::parse(content.trim()).map_err(|e| {
             anyhow::anyhow!(
                 "{} does not contain a valid semver version: {e}",

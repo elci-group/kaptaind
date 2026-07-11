@@ -13,9 +13,10 @@ All notable changes to kaptaind are documented here. The format follows
 > here. Per-commit detail for the `v0.1.44 → v9.x` range lives in `git log`;
 > the consolidated capability set is summarized under `[9.7.16]` below.
 
-## [Unreleased]
+## [9.7.17] — 2026-07-11
 
-Security hardening pass (audit remediation). No version bump yet.
+Security hardening pass (audit remediation) plus the M0 milestone of the
+autonomous-commit safety plan (`docs/planning/AUTONOMOUS_COMMIT_SAFETY_PLAN.md`).
 
 ### Security — behavior changes
 - **WebUI now requires authentication.** Every route except `GET /` requires a
@@ -73,6 +74,34 @@ Security hardening pass (audit remediation). No version bump yet.
 - Removed the false "signed/notarized desktop app" claims from the download and
   security pages (source and the shipped static export); CLI release artifacts
   remain cosign keyless-signed, the desktop app is unsigned preview.
+
+### Fixed — autonomous-commit safety (M0)
+- **Staging defaults to cluster mode.** `StagingMode` no longer defaults to
+  `All`; `All` and empty-`Pattern` staging now go through a fail-closed denylist
+  guard that aborts before `git add -A` when a changed path matches the secret
+  denylist, and the daemon logs a startup warning when `All` mode is configured.
+- **Self-change cascades suppressed.** The scheduler records the paths it writes
+  during version writeback (`VERSION`, `Cargo.toml`, `Cargo.lock`) in a 60s TTL
+  guard and filters them out of incoming watch events, so the daemon's own
+  writeback can no longer re-cluster into an endless commit cascade.
+- **Version baseline is never guessed.** `version::resolve_baseline` resolves the
+  baseline from the `VERSION` file, then `Cargo.toml` `[package].version`, and
+  errors otherwise (previously a missing/unparseable source silently became
+  `0.1.0`, fabricating downgrades). `save_version` refuses to write a version
+  below the current baseline, leaving both files untouched on rejection.
+- **Git hooks resolve the real gitdir.** `GitHookManager` now resolves the hooks
+  directory via `git rev-parse --git-path hooks` (handles monorepo subprojects,
+  worktrees, custom `GIT_DIR`) instead of assuming `<repo>/.git/hooks`. When the
+  watched path is a subdirectory of a larger repo and no explicit `hooks_dir` is
+  configured, hook installation skips with a warning instead of fabricating a
+  `.git` directory inside the subproject.
+
+### Added — regression suite
+- `tests/regressions.rs`: a monorepo fixture (outer git repo with an in-repo
+  `proj/` subproject) driving the real daemon binary, asserting exactly one
+  auto-commit for a genuine change, no cascade after version writeback, and no
+  fake `.git` in the subproject. Runs under the existing `cargo test --tests`
+  CI step.
 
 ## [9.7.16] — stable candidate
 
