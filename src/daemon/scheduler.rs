@@ -162,6 +162,56 @@ pub async fn run(
     };
     write_status(&config.repo_path, &status);
 
+    // Startup reconciliation: changes made while the daemon was down would
+    // otherwise sit uncommitted until the next edit. Form a single catch-up
+    // cluster through the normal pipeline so it is scored, tested, and gated
+    // like any other change (finding #9).
+    if config.watch.rescan_on_start {
+        let ctx = crate::git::repo::RepoContext::new(repo.root(), &config.repo_path);
+        let mut pending: Vec<PathBuf> = repo
+            .changed_paths()
+            .unwrap_or_default()
+            .into_iter()
+            .filter_map(|p| ctx.to_project_relative(&p))
+            .map(|rel| config.repo_path.join(rel))
+            .collect();
+        // Drop ignored paths individually (e.g. an untracked .kaptaind/
+        // directory) rather than discarding the whole catch-up.
+        pending.retain(|p| !ignore_matcher.is_ignored(std::slice::from_ref(p)));
+        if !pending.is_empty() {
+            tracing::info!(
+                paths = pending.len(),
+                "startup rescan: pending changes found, forming catch-up cluster"
+            );
+            let now = Utc::now();
+            let cluster = Cluster {
+                id: uuid::Uuid::new_v4(),
+                started_at: now,
+                ended_at: now,
+                events: vec![FsEvent {
+                    paths: pending,
+                    kind: crate::watcher::FsEventKind::Modify,
+                    timestamp: now,
+                }],
+            };
+            process_cluster(
+                &mut repo,
+                &config,
+                &mut last_commit_at,
+                cluster,
+                &mut status,
+                &mut self_writes,
+                &vacs_engine,
+                &mut tasks,
+                shutdown.clone_token(),
+                angler.as_ref(),
+                metrics.clone(),
+                event_tx.clone(),
+            )
+            .await;
+        }
+    }
+
     loop {
         tokio::select! {
             maybe_event = rx.recv() => {

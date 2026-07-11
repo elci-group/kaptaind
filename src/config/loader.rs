@@ -507,6 +507,10 @@ pub struct WatchConfig {
     pub path: PathBuf,
     pub recursive: bool,
     pub ignore_file: PathBuf,
+    /// On startup, reconcile working-tree changes made while the daemon was
+    /// down into a single catch-up cluster (default true).
+    #[serde(default = "default_true")]
+    pub rescan_on_start: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1440,6 +1444,7 @@ impl Default for Config {
                 path: cwd.clone(),
                 recursive: true,
                 ignore_file: PathBuf::from(".kaptainignore"),
+                rescan_on_start: true,
             },
             cluster: ClusterConfig {
                 window: Duration::from_secs(5),
@@ -1670,6 +1675,7 @@ mod tests {
                 path: PathBuf::from("src"),
                 recursive: true,
                 ignore_file: PathBuf::from("config/.kaptainignore"),
+                rescan_on_start: true,
             },
             ..Config::default()
         };
