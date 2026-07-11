@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "description": "Messy real-world gold corpus for adapter-200 Workstream B. Unlike labels.json (clean seeds, labels track current emission), these labels are the HUMAN ORACLE: the true public surface a reviewer would name. Divergences (F1 < 1.0) are measured evidence of comment/string/docstring/macro-substring leakage and feed the confidence re-table decision — this corpus is NOT CI-pinned. Report: cargo test --test gold_f1 gold_f1_messy_report -- --ignored --nocapture",
+  "files": [
+    {
+      "path": "messy/c/messy_comments.c",
+      "lang": "c",
+      "note": "Human truth: VERSION macro + Session struct + session_open function. `legacy_connect`/`old_init` appear only inside comments. Probe: c.rs has no block-comment tracking.",
+      "symbols": [
+        { "name": "VERSION", "kind": "macro" },
+        { "name": "Session", "kind": "struct" },
+        { "name": "session_open", "kind": "function" }
+      ]
+    },
+    {
+      "path": "messy/cpp/messy_comments.cpp",
+      "lang": "cpp",
+      "note": "Human truth: ui namespace + Button class + render function. `OldWidget`/`old_render` appear only inside a block comment. Probe: cpp.rs only skips line comments.",
+      "symbols": [
+        { "name": "ui", "kind": "namespace" },
+        { "name": "Button", "kind": "class" },
+        { "name": "render", "kind": "function" }
+      ]
+    },
+    {
+      "path": "messy/java/messy_comments.java",
+      "lang": "java",
+      "note": "Human truth: Service class + run method. Commented-out class/method and a string literal mimicking a declaration are NOT surface. Probe: java.rs tracks block comments; string-mimic line does not start with `public`.",
+      "symbols": [
+        { "name": "Service", "kind": "class" },
+        { "name": "run", "kind": "method" }
+      ]
+    },
+    {
+      "path": "messy/python/messy_surface.py",
+      "lang": "python",
+      "note": "Human truth: Client class + public methods connect/__repr__ + create function. `fake_in_docstring` is inside a docstring, `_close` is PEP-8-internal, commented `old_helper` is dead. Probe: python.rs has no docstring tracking.",
+      "symbols": [
+        { "name": "Client:", "kind": "class" },
+        { "name": "connect(self):", "kind": "function" },
+        { "name": "__repr__(self):", "kind": "function" },
+        { "name": "create():", "kind": "function" }
+      ]
+    },
+    {
+      "path": "messy/rust/messy_comments.rs",
+      "lang": "rust",
+      "note": "Human truth: real_fn + string_probe. Comment/doc-comment/string-literal mentions of `pub fn` are NOT surface. Control case: syn-based adapter should score 1.000.",
+      "symbols": [
+        { "name": "real_fn()", "kind": "function" },
+        { "name": "string_probe()", "kind": "function" }
+      ]
+    },
+    {
+      "path": "messy/typescript/messy_comments.ts",
+      "lang": "typescript",
+      "note": "Human truth: currentHelper function + CURRENT binding. Commented exports are NOT surface. Probe: Next.js route-marker detection uses substring `contains`, so `// export async function generateMetadata()` is expected to leak as a route_export FP.",
+      "symbols": [
+        { "name": "currentHelper", "kind": "function" },
+        { "name": "CURRENT", "kind": "binding" }
+      ]
+    },
+    {
+      "path": "messy/vue/messy_comments.vue",
+      "lang": "vue",
+      "note": "Human truth: one props macro line. The commented `defineProps` mention is NOT surface. Probe: vue.rs uses `contains(\"defineProps\")`, so comments mentioning the macro are expected to leak.",
+      "symbols": [
+        { "name": "const props = defineProps({", "kind": "props" }
+      ]
+    },
+    {
+      "path": "messy/swift/messy_comments.swift",
+      "lang": "swift",
+      "note": "Human truth: greet function + Router class. Commented decls and a string literal mimicking `public func` are NOT surface. Probe: CALIBRATION item 7 suspects swift comment/string leakage.",
+      "symbols": [
+        { "name": "greet() {", "kind": "function" },
+        { "name": "Router {", "kind": "class" }
+      ]
+    },
+    {
+      "path": "messy/kotlin/messy_comments.kt",
+      "lang": "kotlin",
+      "note": "Human truth: add function + Router class (label uses the adapter's full-remainder emission, `Router {`, matching the clean-seed convention). Commented decls (incl. a commented `private fun` inside the class body) are NOT surface. Probe: kotlin.rs has no comment tracking; the block-comment `class OldRouter {` is expected to leak.",
+      "symbols": [
+        { "name": "add(a: Int, b: Int): Int {", "kind": "function" },
+        { "name": "Router {", "kind": "class" }
+      ]
+    }
+  ]
+}

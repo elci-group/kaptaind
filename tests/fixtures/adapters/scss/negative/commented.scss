@@ -1,0 +1,4 @@
+// Single-line comments are safe: trimmed line starts with `//` or `/*`, not `$`/`@`/`--`.
+// $hidden: 1;
+/* $also-hidden: 2; */
+// --secret: 3;

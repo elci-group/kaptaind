@@ -1,0 +1,11 @@
+$primary: #0055ff;
+
+@mixin rounded {
+  border-radius: 4px;
+}
+
+:root {
+  --bg: #ffffff;
+}
+
+@forward "colors";

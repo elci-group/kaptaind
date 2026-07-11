@@ -2,6 +2,7 @@ use super::super::adapter::{
     ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, Symbol,
 };
 use super::common::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct LuaAdapter;
@@ -22,6 +23,7 @@ impl LanguageAdapter for LuaAdapter {
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
         let mut symbols = Vec::new();
+        let mut signatures = HashMap::new();
         if let Ok(lines) = read_lines_safe(file) {
             for line in lines {
                 let trimmed = line.trim();
@@ -29,8 +31,7 @@ impl LanguageAdapter for LuaAdapter {
                 // Module exports: M.foo = ...
                 if let Some(eq_pos) = find_assignment_eq(trimmed) {
                     let lhs = &trimmed[..eq_pos].trim_end();
-                    if lhs.starts_with("M.") {
-                        let name = &lhs[2..];
+                    if let Some(name) = lhs.strip_prefix("M.") {
                         if is_valid_lua_identifier(name) {
                             symbols.push(Symbol {
                                 name: lhs.to_string(),
@@ -45,6 +46,9 @@ impl LanguageAdapter for LuaAdapter {
                 if trimmed.starts_with("function ") && !trimmed.starts_with("local function ") {
                     let after_keyword = &trimmed["function ".len()..];
                     if let Some(name) = extract_function_name(after_keyword) {
+                        if let Some(sig) = lua_signature(after_keyword) {
+                            signatures.insert(name.to_string(), sig);
+                        }
                         symbols.push(Symbol {
                             name: name.to_string(),
                             kind: "function".to_string(),
@@ -57,6 +61,7 @@ impl LanguageAdapter for LuaAdapter {
         Ok(AstRepresentation {
             symbols,
             structure_hash: hash,
+            signatures,
             ..Default::default()
         })
     }
@@ -121,6 +126,34 @@ fn is_valid_lua_identifier(s: &str) -> bool {
         first = false;
     }
     !s.is_empty()
+}
+
+/// Return the balanced parameter list `( … )` of a Lua function (the text after `function `), so
+/// arity / parameter changes register as `modified` while the stable bare-identifier `name`
+/// (e.g. `M.add`) is kept. Body-independent: the scan stops at the closing `)`, so the
+/// `return … end` body is not captured. Returns `None` if the input has no `(`.
+fn lua_signature(after_keyword: &str) -> Option<String> {
+    let start = after_keyword.find('(')?;
+    let mut depth = 0i32;
+    for (i, b) in after_keyword.as_bytes().iter().enumerate().skip(start) {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(after_keyword[start..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    // Best-effort fallback for an unbalanced line.
+    Some(
+        after_keyword[start..]
+            .trim_end_matches(['{', ';'])
+            .trim()
+            .to_string(),
+    )
 }
 
 #[cfg(test)]

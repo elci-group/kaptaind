@@ -2,6 +2,7 @@ use super::super::adapter::{
     ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, Symbol,
 };
 use super::common::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct FsharpAdapter;
@@ -29,6 +30,7 @@ impl LanguageAdapter for FsharpAdapter {
 
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
         let mut symbols = Vec::new();
+        let mut signatures = HashMap::new();
         for line in read_lines_safe(file)? {
             let trimmed = line.trim_start();
             if trimmed.is_empty()
@@ -40,6 +42,12 @@ impl LanguageAdapter for FsharpAdapter {
                 continue;
             }
             if let Some(symbol) = parse_fsharp_line(trimmed) {
+                if symbol.kind == "value" {
+                    let stripped = strip_leading_attributes(trimmed);
+                    if let Some(sig) = fsharp_signature(stripped, &symbol.name) {
+                        signatures.insert(symbol.name.clone(), sig);
+                    }
+                }
                 symbols.push(symbol);
             }
         }
@@ -47,6 +55,7 @@ impl LanguageAdapter for FsharpAdapter {
         Ok(AstRepresentation {
             symbols,
             structure_hash: hash,
+            signatures,
             ..Default::default()
         })
     }
@@ -179,6 +188,23 @@ fn take_identifier(s: &str) -> Option<String> {
         None
     } else {
         Some(ident)
+    }
+}
+
+/// Return the whitespace-separated argument tokens of an F# `let` binding — the text between the
+/// binding `name` and the `=` (computed on the attribute-stripped line) — so arity changes
+/// register as `modified` while the stable bare-identifier `name` is kept. Body-independent:
+/// the right-hand side after `=` is not captured. Returns `None` for value bindings with no
+/// arguments (`let x = 1`) and for `val` type annotations (no `=`).
+fn fsharp_signature(line: &str, name: &str) -> Option<String> {
+    let pos = line.find(name)?;
+    let after = &line[pos + name.len()..];
+    let eq = after.find('=')?;
+    let args = after[..eq].trim();
+    if args.is_empty() {
+        None
+    } else {
+        Some(args.to_string())
     }
 }
 

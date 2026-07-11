@@ -1,14 +1,27 @@
 pub mod astro;
+pub mod c;
+pub mod clojure;
 pub mod common;
+pub mod cpp;
+pub mod csharp;
 pub mod dart;
+pub mod elixir;
+pub mod erlang;
 pub mod fsharp;
 pub mod go;
+pub mod haskell;
 pub mod htmlcss;
+pub mod java;
 pub mod javascript;
 pub mod kotlin;
+pub mod lua;
+pub mod ocaml;
+pub mod perl;
+pub mod php;
 pub mod python;
 pub mod ruby;
 pub mod rust;
+pub mod scala;
 pub mod scss;
 pub mod svelte;
 pub mod swift;
@@ -16,14 +29,28 @@ pub mod typescript;
 pub mod vue;
 
 pub use astro::AstroAdapter;
+pub use c::CAdapter;
+pub use clojure::ClojureAdapter;
+pub use cpp::CppAdapter;
+pub use csharp::CsharpAdapter;
+pub use dart::DartAdapter;
+pub use elixir::ElixirAdapter;
+pub use erlang::ErlangAdapter;
 pub use fsharp::FsharpAdapter;
 pub use go::GoAdapter;
+pub use haskell::HaskellAdapter;
 pub use htmlcss::HtmlCssAdapter;
+pub use java::JavaAdapter;
 pub use javascript::JavaScriptAdapter;
 pub use kotlin::KotlinAdapter;
+pub use lua::LuaAdapter;
+pub use ocaml::OcamlAdapter;
+pub use perl::PerlAdapter;
+pub use php::PhpAdapter;
 pub use python::PythonAdapter;
 pub use ruby::RubyAdapter;
 pub use rust::RustAdapter;
+pub use scala::ScalaAdapter;
 pub use scss::ScssAdapter;
 pub use svelte::SvelteAdapter;
 pub use swift::SwiftAdapter;
@@ -33,6 +60,7 @@ pub use vue::VueAdapter;
 use super::registry::AdapterRegistry;
 
 pub fn register_builtin_adapters(registry: &mut AdapterRegistry) {
+    // Original 12 (registration order preserved for resolve() precedence).
     registry.register(Box::new(RustAdapter));
     registry.register(Box::new(TypeScriptAdapter));
     registry.register(Box::new(JavaScriptAdapter));
@@ -45,4 +73,22 @@ pub fn register_builtin_adapters(registry: &mut AdapterRegistry) {
     registry.register(Box::new(AstroAdapter));
     registry.register(Box::new(ScssAdapter));
     registry.register(Box::new(HtmlCssAdapter));
+    // T1/T2/T3 promotions: previously orphaned adapters, now wired.
+    // `.h` resolves to C (registered before Cpp); Cpp owns .cpp/.cc/.cxx/.hpp.
+    registry.register(Box::new(CAdapter));
+    registry.register(Box::new(CppAdapter));
+    registry.register(Box::new(CsharpAdapter));
+    registry.register(Box::new(JavaAdapter));
+    registry.register(Box::new(PhpAdapter));
+    registry.register(Box::new(ScalaAdapter));
+    registry.register(Box::new(ClojureAdapter));
+    registry.register(Box::new(HaskellAdapter));
+    registry.register(Box::new(ElixirAdapter));
+    registry.register(Box::new(ErlangAdapter));
+    registry.register(Box::new(LuaAdapter));
+    registry.register(Box::new(OcamlAdapter));
+    registry.register(Box::new(PerlAdapter));
+    registry.register(Box::new(FsharpAdapter));
+    registry.register(Box::new(RubyAdapter));
+    registry.register(Box::new(DartAdapter));
 }

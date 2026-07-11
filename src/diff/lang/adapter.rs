@@ -47,6 +47,11 @@ pub enum ParserKind {
 pub struct AstRepresentation {
     pub symbols: Vec<Symbol>,
     pub structure_hash: u64,
+    /// Optional per-symbol raw signature, keyed by the stable symbol `name`. Adapters that
+    /// can produce a signature (e.g. JS/TS function exports) populate it so the diff can flag
+    /// arity / return-type / parameter changes as `modified`. Empty by default; adapters
+    /// opt in, so adding it changes nothing for adapters that leave it empty.
+    pub signatures: std::collections::HashMap<String, String>,
     /// Language version used during this parse (e.g. "2021", "3.10").
     pub version_tag: Option<String>,
     /// Whether the fallback line scanner was used instead of a structured parser.

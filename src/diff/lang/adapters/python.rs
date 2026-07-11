@@ -47,23 +47,52 @@ impl LanguageAdapter for PythonAdapter {
 fn python_parse(file: &Path, ver: (u32, u32)) -> anyhow::Result<AstRepresentation> {
     let mut symbols = Vec::new();
     if let Ok(lines) = read_lines_safe(file) {
+        // PEP 8: a single leading underscore marks an internal name; those are
+        // not public API surface. Dunder names (`__init__`, ...) are kept.
+        let is_public = |rest: &str| {
+            let ident: String = rest
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            !ident.starts_with('_') || ident.starts_with("__")
+        };
+        let mut in_docstring = false;
         for line in lines {
             let line = line.trim();
+            // Track triple-quoted regions (docstrings) so `def`/`class` text
+            // inside them is not mistaken for public API (measured messy FP, rev 24).
+            let triples = line.matches("\"\"\"").count() + line.matches("'''").count();
+            if in_docstring {
+                if triples % 2 == 1 {
+                    in_docstring = false;
+                }
+                continue;
+            }
+            if triples % 2 == 1 {
+                in_docstring = true;
+                continue;
+            }
             if let Some(rest) = line.strip_prefix("def ") {
-                symbols.push(Symbol {
-                    name: rest.to_string(),
-                    kind: "function".to_string(),
-                });
+                if is_public(rest) {
+                    symbols.push(Symbol {
+                        name: rest.to_string(),
+                        kind: "function".to_string(),
+                    });
+                }
             } else if let Some(rest) = line.strip_prefix("class ") {
-                symbols.push(Symbol {
-                    name: rest.to_string(),
-                    kind: "class".to_string(),
-                });
+                if is_public(rest) {
+                    symbols.push(Symbol {
+                        name: rest.to_string(),
+                        kind: "class".to_string(),
+                    });
+                }
             } else if let Some(rest) = line.strip_prefix("async def ") {
-                symbols.push(Symbol {
-                    name: rest.to_string(),
-                    kind: "async_function".to_string(),
-                });
+                if is_public(rest) {
+                    symbols.push(Symbol {
+                        name: rest.to_string(),
+                        kind: "async_function".to_string(),
+                    });
+                }
             }
             // Python 3.10+: match/case structural pattern matching
             if ver >= (3, 10) {

@@ -1,0 +1,12 @@
+// Plain CSS/SCSS selectors and properties are NOT detected as public symbols.
+.btn {
+  color: red;
+}
+
+#header {
+  margin: 0;
+
+  a {
+    text-decoration: none;
+  }
+}

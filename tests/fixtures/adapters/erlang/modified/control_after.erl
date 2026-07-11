@@ -1,0 +1,1 @@
+-record(state, {count :: integer(), name :: atom()}).

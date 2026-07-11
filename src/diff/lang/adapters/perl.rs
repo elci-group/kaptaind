@@ -2,6 +2,7 @@ use super::super::adapter::{
     ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, Symbol,
 };
 use super::common::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct PerlAdapter;
@@ -29,6 +30,7 @@ impl LanguageAdapter for PerlAdapter {
 
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
         let mut symbols = Vec::new();
+        let mut signatures = HashMap::new();
         let lines = read_lines_safe(file)?;
 
         for line in lines {
@@ -53,8 +55,11 @@ impl LanguageAdapter for PerlAdapter {
                     })
                     .next()
                     .unwrap_or(rest)
-                    .trim_end_matches(|c: char| c == '(' || c == '{' || c == ';' || c == ':');
+                    .trim_end_matches(['(', '{', ';', ':']);
                 if !name.is_empty() {
+                    if let Some(sig) = perl_signature(rest) {
+                        signatures.insert(name.to_string(), sig);
+                    }
                     symbols.push(Symbol {
                         name: name.to_string(),
                         kind: "sub".to_string(),
@@ -65,7 +70,7 @@ impl LanguageAdapter for PerlAdapter {
                     .split_whitespace()
                     .next()
                     .unwrap_or(rest)
-                    .trim_end_matches(|c: char| c == '(' || c == '{' || c == ';' || c == ',');
+                    .trim_end_matches(['(', '{', ';', ',']);
                 if !name.is_empty() {
                     symbols.push(Symbol {
                         name: name.to_string(),
@@ -79,6 +84,7 @@ impl LanguageAdapter for PerlAdapter {
         Ok(AstRepresentation {
             symbols,
             structure_hash: hash,
+            signatures,
             ..Default::default()
         })
     }
@@ -97,6 +103,34 @@ impl LanguageAdapter for PerlAdapter {
     fn detect_breaking_changes(&self, diff: &AstDiff) -> bool {
         !diff.removed.is_empty()
     }
+}
+
+/// Return the balanced parameter list `( … )` of a Perl `sub` (the text after `sub `), so arity
+/// / parameter changes register as `modified` while the stable bare-identifier `name` is kept.
+/// Only subs that declare a Perl signature (e.g. `sub add($a, $b)`) record a signature; classic
+/// `sub foo {` has no `(` and returns `None` (graceful no-op). Body-independent.
+fn perl_signature(rest: &str) -> Option<String> {
+    let start = rest.find('(')?;
+    let mut depth = 0i32;
+    for (i, b) in rest.as_bytes().iter().enumerate().skip(start) {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest[start..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    // Best-effort fallback for an unbalanced line.
+    Some(
+        rest[start..]
+            .trim_end_matches(['{', ';'])
+            .trim()
+            .to_string(),
+    )
 }
 
 #[cfg(test)]

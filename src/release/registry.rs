@@ -145,16 +145,24 @@ impl RegistryDistributor {
     async fn docker_login(&self, username: &str, password: &str) -> anyhow::Result<()> {
         let registry = self.registry.as_deref().unwrap_or("docker.io");
 
-        let output = Command::new("docker")
+        let mut child = Command::new("docker")
             .arg("login")
             .arg("-u")
             .arg(username)
-            .arg("-p")
-            .arg(password)
+            .arg("--password-stdin")
             .arg(registry)
+            .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .output()
+            .spawn()
+            .context("failed to spawn docker login")?;
+        if let Some(mut stdin) = child.stdin.take() {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(password.as_bytes()).await;
+            let _ = stdin.shutdown().await;
+        }
+        let output = child
+            .wait_with_output()
             .await
             .context("failed to execute docker login")?;
 
@@ -295,17 +303,25 @@ impl ExternalRegistryDistributor {
         // Login if credentials provided
         if let (Some(user), Some(pass)) = (&username, &password) {
             let reg = registry.as_deref().unwrap_or("docker.io");
-            let output = Command::new("crane")
+            let mut child = Command::new("crane")
                 .arg("auth")
                 .arg("login")
                 .arg(reg)
                 .arg("-u")
                 .arg(user)
-                .arg("-p")
-                .arg(pass)
+                .arg("--password-stdin")
+                .stdin(Stdio::piped())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::piped())
-                .output()
+                .spawn()
+                .context("failed to spawn crane auth login")?;
+            if let Some(mut stdin) = child.stdin.take() {
+                use tokio::io::AsyncWriteExt;
+                let _ = stdin.write_all(pass.as_bytes()).await;
+                let _ = stdin.shutdown().await;
+            }
+            let output = child
+                .wait_with_output()
                 .await
                 .context("failed to execute crane auth login")?;
 

@@ -1,3 +1,12 @@
+//! Startup / CLI capability gating for kaptaind.
+//!
+//! RBAC here is a *process-local* gate: it checks whether the local OS user is
+//! permitted to invoke a kaptaind command (start/stop the daemon, run a
+//! release, etc.). It is **not** an HTTP request-authorization layer and does
+//! not protect the WebUI or any network endpoint. The WebUI has its own
+//! bearer-token authentication (see `crate::daemon::web`); do not assume RBAC
+//! covers remote callers.
+
 use crate::config::loader::RbacConfig;
 use anyhow::bail;
 use std::ffi::CStr;

@@ -1,0 +1,12 @@
+.btn {
+  color: red;
+}
+.card:hover {
+  margin: 0;
+}
+.nav .item {
+  display: flex;
+}
+.btn, .link {
+  padding: 1rem;
+}

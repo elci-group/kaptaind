@@ -49,6 +49,28 @@ const plans = [
     highlight: true,
   },
   {
+    name: "Team",
+    subtitle: "Growing Teams",
+    price: "$99",
+    period: "/month",
+    description: "Collaboration, policy enforcement, and analytics for growing teams.",
+    tier: "team",
+    features: [
+      { name: "Everything in Pro", included: true },
+      { name: "Up to 25 users", included: true },
+      { name: "Up to 50 repositories", included: true },
+      { name: "180-day retention", included: true },
+      { name: "Policy packs", included: true },
+      { name: "Team analytics & roles", included: true },
+      { name: "Priority support", included: true },
+      { name: "SAML SSO & SCIM (Enterprise only)", included: false },
+      { name: "Audit-log export (Enterprise only)", included: false },
+    ],
+    cta: "Start Team Trial",
+    ctaHref: "/auth/signup",
+    highlight: false,
+  },
+  {
     name: "Enterprise",
     subtitle: "Cost-Optimized Scale",
     price: "Custom",
@@ -87,7 +109,7 @@ export default function PricingPage() {
           </p>
         </div>
 
-        <div className="mt-16 grid gap-8 sm:grid-cols-3">
+        <div className="mt-16 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
           {plans.map((plan) => (
             <div
               key={plan.name}

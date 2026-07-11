@@ -1,0 +1,9 @@
+.btn:hover {
+  color: red;
+}
+.item::before {
+  content: "";
+}
+.link:visited {
+  opacity: 0.7;
+}

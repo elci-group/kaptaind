@@ -13,6 +13,67 @@ All notable changes to kaptaind are documented here. The format follows
 > here. Per-commit detail for the `v0.1.44 → v9.x` range lives in `git log`;
 > the consolidated capability set is summarized under `[9.7.16]` below.
 
+## [Unreleased]
+
+Security hardening pass (audit remediation). No version bump yet.
+
+### Security — behavior changes
+- **WebUI now requires authentication.** Every route except `GET /` requires a
+  bearer token (`Authorization: Bearer <token>`, or `?token=` for the SSE
+  stream). When `[web] auth_token` is unset, the daemon generates a random
+  32-byte token at startup and prints the full `http://127.0.0.1:<port>/?token=...`
+  URL to stderr. Token comparison is constant-time, `POST` requests must carry a
+  loopback `Origin` (CSRF guard), and the previously permissive CORS headers are
+  gone. Config writes through the UI are now disabled unless
+  `[web] allow_config_write = true`, and the config endpoint redacts
+  secret-shaped keys and never echoes raw TOML. Commit-detail `:id` is restricted
+  to `^[A-Za-z0-9_-]{1,64}$`.
+- **`.env` loading is non-overriding and allowlisted.** Variables already present
+  in the environment always win (`.env` no longer overrides them), and only keys
+  matching an allowlist of prefixes (`KAPTAIND_`, `ELEVENLABS_`, `OPENAI_`,
+  `AZURE_SPEECH_`, `GOOGLE_`, `CARTESIA_`, `MOONSHOT_`, `KIMI_`, `ANTHROPIC_`,
+  `OLLAMA_`, `AWS_`, `S3_`, `GITHUB_`) are imported. Everything else in `.env` is
+  ignored.
+- **Staging matcher is recursive and deny-by-default for secrets.** Basename
+  exclude patterns now also match at any depth (`pat` → `pat` and `**/pat`), glob
+  compilation is fail-closed (a bad pattern errors instead of silently matching
+  nothing), and a built-in secret denylist (e.g. `*.pem`, `*.key`, `id_rsa`,
+  `.env`, credentials) is always enforced and cannot be overridden by includes.
+
+### Security — other fixes
+- Added a central hardened HTTP client (`util::http`) with connect/total timeouts,
+  `redirect::Policy::none()`, no environment proxy, and rustls, plus an SSRF guard
+  (`validate_outbound_url` / `validate_inference_url`) that resolves and blocks
+  loopback, link-local, RFC1918, CGNAT, multicast, and `169.254.169.254`. Wired
+  into webhooks, notifications, all TTS providers, every inference backend, S3
+  release, and GitHub push. Google TTS key moved out of the query string into the
+  `X-Goog-Api-Key` header; Azure region is validated.
+- Constant-time secret comparison now uses `subtle::ConstantTimeEq` (replaces the
+  hand-rolled XOR loop). Added a replay-aware webhook verifier
+  `verify_signature_with_timestamp` that rejects stale skew and binds the
+  timestamp under the HMAC.
+- Strict hook validators: test-hook and bait (binary + shell) validators now
+  refuse unsafe commands instead of warn-and-allow. Docker and crane registry
+  logins use `--password-stdin` (no secrets on argv). Windows TTS no longer
+  interpolates text into PowerShell (passed via `KAPTAIND_TTS_TEXT`).
+- Log-injection / size hygiene: outbound error bodies and webhook responses are
+  truncated and control-stripped before logging, and never logged above debug.
+  LLM-generated commit narratives are sanitized to a single control-free
+  72-char subject before formatting (prevents forged commit headers).
+- Supply chain: `install.sh` now downloads signed release archives, verifies
+  `SHA256SUMS.txt`, and verifies the cosign keyless bundle when `cosign` is
+  present; `--ref` pins a release and `--build-from-source` is gated behind a
+  warning. Every `uses:` in CI is pinned to a commit SHA. Docker images are
+  pinned by digest, `cargo fetch || true` is gone, and the compose stack runs
+  with `no-new-privileges`, `cap_drop: ALL`, and read-only root filesystems.
+  nginx now redirects 80→443, terminates TLS, drops `preload`, and sets
+  `client_max_body_size`. The systemd unit and the autostart unit add sandboxing
+  directives. The two committed group-writable ELFs in `deploy/daemon/` were
+  removed and the directory is gitignored; `Cargo.lock` is no longer ignored.
+- Removed the false "signed/notarized desktop app" claims from the download and
+  security pages (source and the shipped static export); CLI release artifacts
+  remain cosign keyless-signed, the desktop app is unsigned preview.
+
 ## [9.7.16] — stable candidate
 
 Consolidated summary of the capability set present at the stable line. See

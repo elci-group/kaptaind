@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
-import { getUserTier } from "@/lib/subscription";
+import { getEntitlements } from "@/lib/entitlements";
 import { requirePolicyPacks } from "@/lib/policy";
 import { prisma } from "@/lib/prisma";
 import Card, { CardHeader, CardTitle } from "@/components/ui/Card";
@@ -15,8 +15,9 @@ export default async function PoliciesPage() {
   if (!session?.user?.id) redirect("/auth/signin");
 
   const userId = session.user.id;
-  const tier = await getUserTier(userId);
-  if (tier === "free") return <ProGate feature="Policy Packs" />;
+  const entitlements = await getEntitlements({ userId });
+  if (!entitlements.canUsePolicyPacks)
+    return <ProGate feature="Policy Packs" />;
 
   const project = await prisma.project.findFirst({
     where: {

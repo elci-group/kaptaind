@@ -1,0 +1,7 @@
+// Reserved / unhandled at-rules: none of these are emitted as public symbols.
+@import 'base.less';
+@media (min-width: 600px) {
+  .box { color: red; }
+}
+@include flex-center;
+@use 'theme';

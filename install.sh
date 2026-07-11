@@ -5,13 +5,22 @@
 # Usage: curl -fsSL https://raw.githubusercontent.com/elci-group/kaptaind/main/install.sh | bash
 #        or: bash ./install.sh [OPTIONS]
 #
+# By default the installer downloads a prebuilt, cosign keyless-signed release
+# archive, verifies it against SHA256SUMS.txt (and the cosign bundle when
+# `cosign` is available), and installs the binaries. Building from source is
+# supported but skips artifact signing, so it is gated behind
+# `--build-from-source` and prints a warning.
+#
 # Options:
 #   --install-dir DIR       Installation directory (default: ~/.local/bin)
 #   --system                Install system-wide to /usr/local/bin (requires sudo)
+#   --ref TAG               Release tag to install (default: latest), e.g. v9.7.16
+#   --build-from-source     Clone and build from source instead of downloading a
+#                           signed release (skips artifact signature checks)
 #   --no-init               Skip kaptaind-cli init after installation
 #   --autostart             Enable auto-start on login (systemd/launchd/shell)
-#   --build-only            Build but don't install
-#   --debug                 Build debug binary instead of release
+#   --build-only            (build-from-source) Build but don't install
+#   --debug                 (build-from-source) Build debug binary instead of release
 #   --help                  Show this help message
 
 set -euo pipefail
@@ -30,8 +39,17 @@ RUN_INIT=true
 BUILD_ONLY=false
 BUILD_MODE="release"
 ENABLE_AUTOSTART=false
-REPO_URL="https://github.com/elci-group/kaptaind.git"
+BUILD_FROM_SOURCE=false
+REF=""
+GITHUB_REPO="elci-group/kaptaind"
+REPO_URL="https://github.com/${GITHUB_REPO}.git"
+RELEASES_API="https://api.github.com/repos/${GITHUB_REPO}/releases"
+DOWNLOAD_BASE="https://github.com/${GITHUB_REPO}/releases/download"
 TEMP_DIR=""
+SRC_DIR=""   # directory holding the binaries to install (downloaded or built)
+
+# TLS-restricted curl (HTTPS only, TLS >= 1.2).
+CURL=(curl -fsSL --proto '=https' --tlsv1.2)
 
 # Cleanup on exit
 cleanup() {
@@ -66,7 +84,7 @@ print_header() {
 
 # Show help
 show_help() {
-    sed -n '2,21p' "$0" | sed 's/^# //'
+    sed -n '2,28p' "$0" | sed 's/^# //'
     exit 0
 }
 
@@ -80,6 +98,14 @@ while [[ $# -gt 0 ]]; do
         --system)
             SYSTEM_INSTALL=true
             INSTALL_DIR="/usr/local/bin"
+            shift
+            ;;
+        --ref)
+            REF="$2"
+            shift 2
+            ;;
+        --build-from-source)
+            BUILD_FROM_SOURCE=true
             shift
             ;;
         --no-init)
@@ -127,6 +153,19 @@ detect_arch() {
     esac
 }
 
+# Map (os, arch) to the Rust target triple used in release artifact names.
+map_target() {
+    local os="$1" arch="$2"
+    case "${os}:${arch}" in
+        linux:x86_64)    echo "x86_64-unknown-linux-gnu" ;;
+        linux:aarch64)   echo "aarch64-unknown-linux-gnu" ;;
+        macos:x86_64)    echo "x86_64-apple-darwin" ;;
+        macos:aarch64)   echo "aarch64-apple-darwin" ;;
+        windows:x86_64)  echo "x86_64-pc-windows-msvc" ;;
+        *)               echo "" ;;
+    esac
+}
+
 # Check if command exists
 has_cmd() {
     command -v "$1" >/dev/null 2>&1
@@ -136,8 +175,9 @@ has_cmd() {
 check_requirements() {
     print_header "Checking System Requirements"
 
-    local os=$(detect_os)
-    local arch=$(detect_arch)
+    local os arch
+    os=$(detect_os)
+    arch=$(detect_arch)
 
     print_info "OS: $(uname -s) ($os)"
     print_info "Architecture: $(uname -m) ($arch)"
@@ -151,40 +191,176 @@ check_requirements() {
         print_warning "Unknown architecture; proceeding anyway (may fail)"
     fi
 
-    # Check Rust
-    if ! has_cmd cargo; then
-        print_error "Rust/Cargo not found"
-        echo "Install from https://rustup.rs/ with:"
-        echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
-        exit 1
-    fi
-    print_success "Rust $(rustc --version)"
+    if [[ "$BUILD_FROM_SOURCE" == true ]]; then
+        # Source builds need the full toolchain.
+        if ! has_cmd cargo; then
+            print_error "Rust/Cargo not found (required for --build-from-source)"
+            echo "Install from https://rustup.rs/ with:"
+            echo "  curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+            exit 1
+        fi
+        print_success "Rust $(rustc --version)"
 
-    # Check Git
-    if ! has_cmd git; then
-        print_error "Git not found"
-        exit 1
-    fi
-    print_success "Git $(git --version | awk '{print $3}')"
+        if ! has_cmd git; then
+            print_error "Git not found"
+            exit 1
+        fi
+        print_success "Git $(git --version | awk '{print $3}')"
 
-    # Check build tools (for compilation)
-    if [[ "$os" == "linux" ]]; then
-        if ! has_cmd gcc && ! has_cmd clang; then
-            print_warning "C compiler not found (gcc/clang)"
-            echo "On Debian/Ubuntu: sudo apt-get install build-essential"
-            echo "On Fedora/RHEL: sudo dnf install gcc"
+        if [[ "$os" == "linux" ]]; then
+            if ! has_cmd gcc && ! has_cmd clang; then
+                print_warning "C compiler not found (gcc/clang)"
+                echo "On Debian/Ubuntu: sudo apt-get install build-essential"
+                echo "On Fedora/RHEL: sudo dnf install gcc"
+            fi
+        fi
+    else
+        # Download path needs curl and sha256sum/shasum.
+        if ! has_cmd curl; then
+            print_error "curl not found (required to download signed releases)"
+            exit 1
+        fi
+        if ! has_cmd sha256sum && ! has_cmd shasum; then
+            print_error "Neither sha256sum nor shasum found (required to verify checksums)"
+            exit 1
+        fi
+        if ! has_cmd tar && [[ "$os" != "windows" ]]; then
+            print_error "tar not found (required to unpack the release archive)"
+            exit 1
         fi
     fi
 }
 
-# Clone or update repository
+# sha256 wrapper that works on GNU (sha256sum) and BSD/macOS (shasum -a 256).
+sha256_check_stdin() {
+    if has_cmd sha256sum; then
+        sha256sum -c -
+    else
+        # shasum expects "HASH  filename" lines in the same format.
+        shasum -a 256 -c -
+    fi
+}
+
+# Resolve the release tag to install (latest when --ref not given).
+resolve_ref() {
+    if [[ -n "$REF" ]]; then
+        # Normalize to a leading-v tag.
+        [[ "$REF" == v* ]] || REF="v${REF}"
+        print_info "Installing requested release: $REF"
+        return
+    fi
+
+    print_info "Resolving latest release tag..."
+    local tag
+    tag=$("${CURL[@]}" "${RELEASES_API}/latest" \
+        | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' \
+        | head -n1)
+    if [[ -z "$tag" ]]; then
+        print_error "Could not resolve latest release tag from ${RELEASES_API}/latest"
+        print_error "Pass an explicit tag with --ref vX.Y.Z"
+        exit 1
+    fi
+    REF="$tag"
+    print_success "Latest release: $REF"
+}
+
+# Download, verify, and unpack a signed release archive into SRC_DIR.
+download_release() {
+    print_header "Downloading Signed Release"
+
+    local os arch target version asset ext url
+    os=$(detect_os)
+    arch=$(detect_arch)
+    target=$(map_target "$os" "$arch")
+
+    if [[ -z "$target" ]]; then
+        print_error "No prebuilt release for ${os}/${arch}."
+        print_error "Rebuild from source with: $0 --build-from-source"
+        exit 1
+    fi
+
+    version="${REF#v}"
+    if [[ "$os" == "windows" ]]; then
+        ext="zip"
+    else
+        ext="tar.gz"
+    fi
+    asset="kaptaind-${version}-${target}.${ext}"
+    url="${DOWNLOAD_BASE}/${REF}"
+
+    TEMP_DIR=$(mktemp -d)
+    cd "$TEMP_DIR"
+
+    print_info "Release: ${REF}  target: ${target}"
+    print_info "Fetching ${asset} and SHA256SUMS.txt..."
+    "${CURL[@]}" -O "${url}/${asset}"
+    "${CURL[@]}" -O "${url}/SHA256SUMS.txt"
+    # Signature bundle is optional (keyless); fetch if present, continue if not.
+    "${CURL[@]}" -O "${url}/SHA256SUMS.txt.sig" 2>/dev/null || true
+    "${CURL[@]}" -O "${url}/SHA256SUMS.txt.cert" 2>/dev/null || true
+
+    # 1) Verify the archive against the signed checksum manifest.
+    print_info "Verifying SHA-256 checksum..."
+    local line
+    line=$(grep -F "  ${asset}" SHA256SUMS.txt || grep -F " ${asset}" SHA256SUMS.txt || true)
+    if [[ -z "$line" ]]; then
+        print_error "${asset} not listed in SHA256SUMS.txt"
+        exit 1
+    fi
+    if ! printf '%s\n' "$line" | sha256_check_stdin; then
+        print_error "Checksum verification FAILED for ${asset}"
+        exit 1
+    fi
+    print_success "Checksum verified"
+
+    # 2) Verify the cosign keyless signature over SHA256SUMS.txt when cosign exists.
+    if has_cmd cosign && [[ -f SHA256SUMS.txt.sig && -f SHA256SUMS.txt.cert ]]; then
+        print_info "Verifying cosign keyless signature over SHA256SUMS.txt..."
+        if cosign verify-blob \
+            --signature SHA256SUMS.txt.sig \
+            --certificate SHA256SUMS.txt.cert \
+            --certificate-identity-regexp "^https://github.com/${GITHUB_REPO}/.github/workflows/.+" \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            SHA256SUMS.txt; then
+            print_success "cosign signature verified (GitHub Actions keyless)"
+        else
+            print_error "cosign signature verification FAILED"
+            exit 1
+        fi
+    else
+        print_warning "cosign not available (or signature bundle missing): verified checksum only, not the signature."
+        print_warning "Install cosign (https://github.com/sigstore/cosign) to verify release signatures."
+    fi
+
+    # 3) Unpack.
+    print_info "Unpacking ${asset}..."
+    mkdir -p extract
+    if [[ "$ext" == "zip" ]]; then
+        if ! has_cmd unzip; then
+            print_error "unzip not found (required to unpack ${asset})"
+            exit 1
+        fi
+        unzip -q "$asset" -d extract
+    else
+        tar -xzf "$asset" -C extract
+    fi
+    SRC_DIR="$TEMP_DIR/extract"
+    print_success "Release unpacked"
+}
+
+# Clone or update repository (build-from-source path only).
 setup_repo() {
-    print_header "Setting Up Repository"
+    print_header "Setting Up Repository (build from source)"
 
     TEMP_DIR=$(mktemp -d)
     print_info "Cloning into $TEMP_DIR"
 
-    if git clone --depth 1 "$REPO_URL" "$TEMP_DIR" 2>&1 | grep -v "^Cloning"; then
+    local clone_args=(--depth 1)
+    if [[ -n "$REF" ]]; then
+        clone_args+=(--branch "$REF")
+    fi
+
+    if git clone "${clone_args[@]}" "$REPO_URL" "$TEMP_DIR" 2>&1 | grep -v "^Cloning"; then
         print_success "Repository cloned"
     else
         print_error "Failed to clone repository"
@@ -194,7 +370,7 @@ setup_repo() {
     cd "$TEMP_DIR"
 }
 
-# Build binaries
+# Build binaries (build-from-source path only).
 build_binaries() {
     print_header "Building Kaptaind"
 
@@ -210,13 +386,18 @@ build_binaries() {
         print_error "Build failed"
         exit 1
     fi
+
+    SRC_DIR="$TEMP_DIR/target/$([[ "$BUILD_MODE" == "release" ]] && echo "release" || echo "debug")"
 }
 
-# Install binaries
+# Install binaries from SRC_DIR.
 install_binaries() {
     print_header "Installing Binaries"
 
-    local build_dir="target/$([[ "$BUILD_MODE" == "release" ]] && echo "release" || echo "debug")"
+    if [[ -z "$SRC_DIR" || ! -d "$SRC_DIR" ]]; then
+        print_error "Internal error: no binaries available to install"
+        exit 1
+    fi
 
     # Create install directory
     if [[ "$SYSTEM_INSTALL" == true ]]; then
@@ -232,17 +413,19 @@ install_binaries() {
 
     # Copy binaries
     for binary in kaptaind kaptaind-cli; do
-        if [[ -f "$build_dir/$binary" ]]; then
+        local src="$SRC_DIR/$binary"
+        [[ "$(detect_os)" == "windows" ]] && src="$SRC_DIR/${binary}.exe"
+        if [[ -f "$src" ]]; then
             if [[ "$SYSTEM_INSTALL" == true ]]; then
-                sudo cp "$build_dir/$binary" "$INSTALL_DIR/$binary"
+                sudo cp "$src" "$INSTALL_DIR/$binary"
                 sudo chmod +x "$INSTALL_DIR/$binary"
             else
-                cp "$build_dir/$binary" "$INSTALL_DIR/$binary"
+                cp "$src" "$INSTALL_DIR/$binary"
                 chmod +x "$INSTALL_DIR/$binary"
             fi
             print_success "Installed $binary"
         else
-            print_error "Binary $binary not found"
+            print_error "Binary $binary not found in $SRC_DIR"
             exit 1
         fi
     done
@@ -335,6 +518,9 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=kaptaind
 Environment="RUST_LOG=info"
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
 
 [Install]
 WantedBy=default.target
@@ -429,17 +615,23 @@ run_init() {
 # Main flow
 main() {
     print_header "Kaptaind Installer"
-    echo "  Version: 0.1.0"
     echo "  Repository: $REPO_URL"
     echo ""
 
     check_requirements
-    setup_repo
-    build_binaries
 
-    if [[ "$BUILD_ONLY" == true ]]; then
-        print_success "Build completed at $TEMP_DIR"
-        exit 0
+    if [[ "$BUILD_FROM_SOURCE" == true ]]; then
+        print_warning "--build-from-source: building from source SKIPS release-artifact signature"
+        print_warning "verification. Prefer the default download path for trusted, signed binaries."
+        setup_repo
+        build_binaries
+        if [[ "$BUILD_ONLY" == true ]]; then
+            print_success "Build completed at $TEMP_DIR"
+            exit 0
+        fi
+    else
+        resolve_ref
+        download_release
     fi
 
     install_binaries

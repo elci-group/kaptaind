@@ -2,6 +2,7 @@ use super::super::adapter::{
     ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, Symbol,
 };
 use super::common::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct ClojureAdapter;
@@ -29,6 +30,7 @@ impl LanguageAdapter for ClojureAdapter {
 
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
         let mut symbols = Vec::new();
+        let mut signatures = HashMap::new();
         if let Ok(lines) = read_lines_safe(file) {
             for line in lines {
                 let trimmed = line.trim();
@@ -38,6 +40,9 @@ impl LanguageAdapter for ClojureAdapter {
                 }
                 if let Some(rest) = trimmed.strip_prefix("(defn ") {
                     if let Some(name) = parse_symbol_name(rest) {
+                        if let Some(sig) = clojure_signature(rest) {
+                            signatures.insert(name.clone(), sig);
+                        }
                         symbols.push(Symbol {
                             name,
                             kind: "defn".to_string(),
@@ -71,6 +76,7 @@ impl LanguageAdapter for ClojureAdapter {
         Ok(AstRepresentation {
             symbols,
             structure_hash: hash,
+            signatures,
             ..Default::default()
         })
     }
@@ -105,6 +111,30 @@ fn parse_symbol_name(rest: &str) -> Option<String> {
         .map(|name| name.to_string())
 }
 
+/// Return the balanced argument vector `[ … ]` of a Clojure `defn` (the text after `(defn `),
+/// so arity changes register as `modified` while the stable bare-identifier `name` is kept.
+/// Uses `[…]`, NOT parens: the first `(` on a `defn` line is the body, so a paren scan would
+/// capture body and false-modify. Body-independent: the scan stops at the matching `]`, so a
+/// trailing `(+ …)` body is not captured. Returns `None` if there is no `[`.
+fn clojure_signature(rest: &str) -> Option<String> {
+    let start = rest.find('[')?;
+    let mut depth = 0i32;
+    for (i, b) in rest.as_bytes().iter().enumerate().skip(start) {
+        match b {
+            b'[' => depth += 1,
+            b']' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest[start..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    // Best-effort fallback for an unbalanced line (drop the form's trailing `)`).
+    Some(rest[start..].trim_end_matches(')').trim().to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,8 +160,12 @@ mod tests {
         let detected = adapter.detect_files(&paths);
         assert_eq!(detected.len(), 3);
         assert!(detected.iter().any(|p| p.file_name().unwrap() == "foo.clj"));
-        assert!(detected.iter().any(|p| p.file_name().unwrap() == "bar.cljs"));
-        assert!(detected.iter().any(|p| p.file_name().unwrap() == "baz.cljc"));
+        assert!(detected
+            .iter()
+            .any(|p| p.file_name().unwrap() == "bar.cljs"));
+        assert!(detected
+            .iter()
+            .any(|p| p.file_name().unwrap() == "baz.cljc"));
     }
 
     #[test]
@@ -149,8 +183,14 @@ mod tests {
         let adapter = ClojureAdapter;
         let ast = adapter.parse_ast(&path).unwrap();
         assert_eq!(ast.symbols.len(), 4);
-        assert!(ast.symbols.iter().any(|s| s.name == "foo" && s.kind == "defn"));
-        assert!(ast.symbols.iter().any(|s| s.name == "bar" && s.kind == "def"));
+        assert!(ast
+            .symbols
+            .iter()
+            .any(|s| s.name == "foo" && s.kind == "defn"));
+        assert!(ast
+            .symbols
+            .iter()
+            .any(|s| s.name == "bar" && s.kind == "def"));
         assert!(ast
             .symbols
             .iter()

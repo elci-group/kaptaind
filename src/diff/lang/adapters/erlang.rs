@@ -119,7 +119,7 @@ fn erlang_parse(file: &Path) -> anyhow::Result<AstRepresentation> {
                     let name = head[..paren_idx].trim();
                     let args_part = &head[paren_idx..];
                     if !name.is_empty()
-                        && name.chars().next().map_or(false, |c| c.is_lowercase())
+                        && name.chars().next().is_some_and(|c| c.is_lowercase())
                         && args_part.ends_with(')')
                     {
                         let arity = function_arity(args_part);

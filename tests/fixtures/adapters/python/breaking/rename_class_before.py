@@ -1,0 +1,2 @@
+class OldName:
+    pass

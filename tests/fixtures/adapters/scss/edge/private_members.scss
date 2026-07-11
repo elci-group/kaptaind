@@ -1,0 +1,5 @@
+// Sass module-system "private" members use a leading `-` or `_`.
+// The adapter has no privacy filtering: all three are emitted as public "variable".
+$_internal: 1;
+$-legacy: 2;
+$public: 3;

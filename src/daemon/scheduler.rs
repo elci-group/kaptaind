@@ -586,7 +586,14 @@ async fn process_cluster(
             cluster_paths: &cluster_paths,
         };
         match crate::inference::generate_commit_message(&config.inference, &ctx).await {
-            Some(narrative) => format!("{narrative}\n\n{metadata_line}"),
+            Some(narrative) => {
+                let subject = sanitize_commit_subject(&narrative);
+                if subject.is_empty() {
+                    metadata_line
+                } else {
+                    format!("{subject}\n\n{metadata_line}")
+                }
+            }
             None => {
                 tracing::warn!("ollama inference unavailable; using deterministic message");
                 metadata_line
@@ -1230,6 +1237,26 @@ fn rate_limit_allows(
         }
         None => true,
     }
+}
+
+/// Sanitize an LLM-generated commit narrative into a safe single-line subject.
+///
+/// LLM output is untrusted: it can contain newlines (which would let it forge
+/// extra commit headers such as a fake `Signed-off-by`), control characters, or
+/// runaway length. Keep the first line only, drop ASCII control characters,
+/// trim, and clamp to 72 chars (the conventional subject limit).
+fn sanitize_commit_subject(input: &str) -> String {
+    let first_line = input.lines().next().unwrap_or("");
+    let mut out = String::with_capacity(first_line.len().min(72));
+    for ch in first_line.chars() {
+        if out.len() >= 72 {
+            break;
+        }
+        if !ch.is_control() {
+            out.push(ch);
+        }
+    }
+    out.trim().to_string()
 }
 
 fn format_commit(

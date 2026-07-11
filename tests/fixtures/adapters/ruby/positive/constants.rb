@@ -1,0 +1,3 @@
+MAX_SIZE = 100
+VERSION = "1.2.3"
+DEFAULT_OPTS = {}

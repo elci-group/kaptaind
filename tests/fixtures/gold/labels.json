@@ -1,0 +1,337 @@
+{
+  "version": 1,
+  "description": "Hand-labeled gold seed corpus for per-adapter precision/recall/F1. Symbols use the adapter's CURRENT emission format (e.g. rust functions render as `name(args)`). Seed is intentionally tiny and unambiguous; it validates the F1 machinery on a known-good (syn-based, pub-only) adapter. Full labeling across all adapters is ongoing — see CALIBRATION.md.",
+  "files": [
+    {
+      "path": "rust/funcs_and_struct.rs",
+      "lang": "rust",
+      "note": "pub fn + pub unit struct are public; private fn beta is not. Unit struct emits no fields.",
+      "symbols": [
+        { "name": "alpha()", "kind": "function" },
+        { "name": "Point", "kind": "struct" }
+      ]
+    },
+    {
+      "path": "rust/enum_variants.rs",
+      "lang": "rust",
+      "note": "pub enum + its variants + pub fn are public; private struct Internal is not.",
+      "symbols": [
+        { "name": "Color", "kind": "enum" },
+        { "name": "Color::Red", "kind": "variant" },
+        { "name": "Color::Blue", "kind": "variant" },
+        { "name": "helper()", "kind": "function" }
+      ]
+    },
+    {
+      "path": "python/public_surface.py",
+      "lang": "python",
+      "note": "public def/class/async_def are public surface. The python adapter emits the full declaration text after the keyword (parameters + trailing colon) as `name`; kinds: function/class/async_function.",
+      "symbols": [
+        { "name": "add(a, b):", "kind": "function" },
+        { "name": "User:", "kind": "class" },
+        { "name": "fetch():", "kind": "async_function" }
+      ]
+    },
+    {
+      "path": "python/underscore_probe.py",
+      "lang": "python",
+      "note": "PEP 8: single-leading-underscore names are internal-by-convention and NOT public surface, so only `public_fn` is gold. The python adapter currently has NO underscore filter and emits `_private_fn`/`_Internal` too -> expected 2 FP (measures a real precision gap against Python convention; fix deferred behind the data).",
+      "symbols": [
+        { "name": "public_fn():", "kind": "function" }
+      ]
+    },
+    {
+      "path": "php/public_surface.php",
+      "lang": "php",
+      "note": "namespace/public function/interface/public method/class/public const/public property are public; `private string $password` is NOT. PHP classes have no visibility modifier and are public surface. PHP adapter emits bare identifiers for functions/methods (`save`), `$name` for properties.",
+      "symbols": [
+        { "name": "App", "kind": "namespace" },
+        { "name": "helper", "kind": "function" },
+        { "name": "Logger", "kind": "interface" },
+        { "name": "log", "kind": "method" },
+        { "name": "User", "kind": "class" },
+        { "name": "ROLE_ADMIN", "kind": "class_constant" },
+        { "name": "$name", "kind": "property" },
+        { "name": "save", "kind": "method" }
+      ]
+    },
+    {
+      "path": "php/modifier_classes.php",
+      "lang": "php",
+      "note": "`abstract class` and `final class` are unambiguously public surface, but the adapter only matches the bare `class ` prefix and misses modifier-prefixed classes -> expected 2 FN (measures a real recall gap; fix deferred behind the data).",
+      "symbols": [
+        { "name": "Base", "kind": "class" },
+        { "name": "Repo", "kind": "class" }
+      ]
+    },
+    {
+      "path": "erlang/public_surface.erl",
+      "lang": "erlang",
+      "note": "module-with-exports + exported function (name/arity) + record + macro are public; non-exported `private_helper` is NOT. The contested no-export-module question stays parked (see CALIBRATION rev-16b); this seed covers only unambiguous surface.",
+      "symbols": [
+        { "name": "my_mod", "kind": "module" },
+        { "name": "start/0", "kind": "function" },
+        { "name": "state", "kind": "record" },
+        { "name": "MAX", "kind": "macro" }
+      ]
+    },
+    {
+      "path": "go/public_surface.go",
+      "lang": "go",
+      "note": "Exported top-level funcs/types (first letter uppercase) are public; lowercase `helper` is not. Names are the full declaration remainder incl. trailing `{`. Receiver methods (`func (s *T) M()`) are NOT emitted by the current adapter — a documented structural recall gap (see CALIBRATION), not seeded as gold because the adapter defines no method emission format to label against.",
+      "symbols": [
+        { "name": "Add(a int, b int) int {", "kind": "function" },
+        { "name": "Server struct {", "kind": "type" }
+      ]
+    },
+    {
+      "path": "kotlin/public_surface.kt",
+      "lang": "kotlin",
+      "note": "Top-level decls are public-by-default; `private` is skipped. Names are the full declaration remainder (params/return/brace included).",
+      "symbols": [
+        { "name": "add(a: Int, b: Int): Int {", "kind": "function" },
+        { "name": "Router", "kind": "class" },
+        { "name": "User(val name: String)", "kind": "data_class" }
+      ]
+    },
+    {
+      "path": "swift/public_surface.swift",
+      "lang": "swift",
+      "note": "Only public/open decls are surface; unmarked `hidden` is internal. Names are the full declaration remainder incl. trailing `{`.",
+      "symbols": [
+        { "name": "greet() {", "kind": "function" },
+        { "name": "Router {", "kind": "class" },
+        { "name": "Point {", "kind": "struct" }
+      ]
+    },
+    {
+      "path": "elixir/public_surface.ex",
+      "lang": "elixir",
+      "note": "defmodule/def are public; defp is private (not matched by the `def ` prefix). Names are the full declaration remainder incl. trailing `do`.",
+      "symbols": [
+        { "name": "MyApp do", "kind": "module" },
+        { "name": "hello(name) do", "kind": "function" }
+      ]
+    },
+    {
+      "path": "c/public_surface.c",
+      "lang": "c",
+      "note": "C has no visibility; top-level #define/struct/enum/function are treated as surface. Adapter emits bare identifiers; function name = token before `(`.",
+      "symbols": [
+        { "name": "MAX_SIZE", "kind": "macro" },
+        { "name": "Point", "kind": "struct" },
+        { "name": "Color", "kind": "enum" },
+        { "name": "add", "kind": "function" }
+      ]
+    },
+    {
+      "path": "cpp/public_surface.cpp",
+      "lang": "cpp",
+      "note": "C++ has no visibility at namespace scope; namespace/class/struct/free function are surface. Adapter emits bare identifiers.",
+      "symbols": [
+        { "name": "math", "kind": "namespace" },
+        { "name": "Vector", "kind": "class" },
+        { "name": "Point", "kind": "struct" },
+        { "name": "add", "kind": "function" }
+      ]
+    },
+    {
+      "path": "java/public_surface.java",
+      "lang": "java",
+      "note": "Only `public`-prefixed types and public methods are surface. `void save();` in the interface lacks an explicit public modifier line match and is not emitted. Adapter emits bare identifiers.",
+      "symbols": [
+        { "name": "Greeter", "kind": "class" },
+        { "name": "greet", "kind": "method" },
+        { "name": "Repo", "kind": "interface" },
+        { "name": "Color", "kind": "enum" }
+      ]
+    },
+    {
+      "path": "csharp/public_surface.cs",
+      "lang": "csharp",
+      "note": "Only explicitly `public` types and public members are surface; kind = the type keyword itself. Interface member `void Save();` has no `public` modifier and is not emitted. Adapter emits bare identifiers.",
+      "symbols": [
+        { "name": "Greeter", "kind": "class" },
+        { "name": "Greet", "kind": "method" },
+        { "name": "IRepo", "kind": "interface" },
+        { "name": "Color", "kind": "enum" }
+      ]
+    },
+    {
+      "path": "ruby/public_surface.rb",
+      "lang": "ruby",
+      "note": "Ruby has no line-level visibility here; module/class/def/CONSTANT are surface. Adapter emits bare identifiers.",
+      "symbols": [
+        { "name": "Auth", "kind": "module" },
+        { "name": "User", "kind": "class" },
+        { "name": "save", "kind": "method" },
+        { "name": "ROLE_ADMIN", "kind": "constant" }
+      ]
+    },
+    {
+      "path": "lua/public_surface.lua",
+      "lang": "lua",
+      "note": "Global (non-local) functions and `M.<name> = ...` module exports are surface; `local M` is not. Adapter emits the full lhs (`M.run`) for module exports, bare name for functions.",
+      "symbols": [
+        { "name": "add", "kind": "function" },
+        { "name": "M.run", "kind": "module_export" }
+      ]
+    },
+    {
+      "path": "scala/public_surface.scala",
+      "lang": "scala",
+      "note": "Top-level case class/class/object/trait/def are public-by-default surface. Adapter emits bare identifiers; kinds: case_class/class/object/trait/def.",
+      "symbols": [
+        { "name": "User", "kind": "case_class" },
+        { "name": "Router", "kind": "class" },
+        { "name": "handle", "kind": "def" },
+        { "name": "Main", "kind": "object" },
+        { "name": "run", "kind": "def" },
+        { "name": "Greeter", "kind": "trait" },
+        { "name": "greet", "kind": "def" }
+      ]
+    },
+    {
+      "path": "dart/public_surface.dart",
+      "lang": "dart",
+      "note": "Top-level class/enum/extension/mixin/function are surface (no underscore-prefixed names here). Adapter emits bare identifiers.",
+      "symbols": [
+        { "name": "User", "kind": "class" },
+        { "name": "Color", "kind": "enum" },
+        { "name": "StringX", "kind": "extension" },
+        { "name": "Serializable", "kind": "mixin" },
+        { "name": "greet", "kind": "function" }
+      ]
+    },
+    {
+      "path": "clojure/public_surface.clj",
+      "lang": "clojure",
+      "note": "defn/defmacro/defprotocol/def are public surface. The `(save [this v])` protocol member line is not a def form and is not emitted. Adapter emits bare identifiers.",
+      "symbols": [
+        { "name": "add", "kind": "defn" },
+        { "name": "unless", "kind": "defmacro" },
+        { "name": "Store", "kind": "defprotocol" },
+        { "name": "VERSION", "kind": "def" }
+      ]
+    },
+    {
+      "path": "ocaml/public_surface.ml",
+      "lang": "ocaml",
+      "note": "Line-based adapter: module/module type/let/val/type are all emitted including inner `let debug` and `val save` — the seed labels exactly what the current adapter emits (no scoping). Bare identifiers.",
+      "symbols": [
+        { "name": "Config", "kind": "module" },
+        { "name": "debug", "kind": "let" },
+        { "name": "STORE", "kind": "module_type" },
+        { "name": "save", "kind": "val" },
+        { "name": "point", "kind": "type" },
+        { "name": "add", "kind": "let" }
+      ]
+    },
+    {
+      "path": "fsharp/public_surface.fs",
+      "lang": "fsharp",
+      "note": "module/type/let are surface; `let private hidden` is skipped by the adapter's private filter. Kind for let-bound values is `value`. Bare identifiers.",
+      "symbols": [
+        { "name": "Config", "kind": "module" },
+        { "name": "Point", "kind": "type" },
+        { "name": "add", "kind": "value" }
+      ]
+    },
+    {
+      "path": "perl/public_surface.pl",
+      "lang": "perl",
+      "note": "package/use-constant/sub are surface. Adapter emits the full package path (`MyApp::Store`) and bare names for sub/constant.",
+      "symbols": [
+        { "name": "MyApp::Store", "kind": "package" },
+        { "name": "MAX_SIZE", "kind": "constant" },
+        { "name": "save", "kind": "sub" }
+      ]
+    },
+    {
+      "path": "javascript/public_surface.js",
+      "lang": "javascript",
+      "note": "`export`-prefixed lines are surface; class body method `greet()` is not. Name = first non-keyword identifier (export_name); kind via classify_ts_export. `export default function main` -> name `main`, kind `default_export`.",
+      "symbols": [
+        { "name": "add", "kind": "function" },
+        { "name": "Greeter", "kind": "class" },
+        { "name": "VERSION", "kind": "binding" },
+        { "name": "main", "kind": "default_export" }
+      ]
+    },
+    {
+      "path": "typescript/public_surface.ts",
+      "lang": "typescript",
+      "note": "Adapter parses at TS 4.0: `export type Point` emits BOTH (Point,type_export) and (Point,type) — the seed labels exactly what the adapter emits. Class/interface members without `export` are not emitted.",
+      "symbols": [
+        { "name": "add", "kind": "function" },
+        { "name": "Router", "kind": "class" },
+        { "name": "Repo", "kind": "interface" },
+        { "name": "Point", "kind": "type_export" },
+        { "name": "Point", "kind": "type" },
+        { "name": "Color", "kind": "enum" },
+        { "name": "VERSION", "kind": "binding" }
+      ]
+    },
+    {
+      "path": "haskell/public_surface.hs",
+      "lang": "haskell",
+      "note": "Top-level function signature AND equation both emit (add,function) — the harness is set-based so the duplicate collapses. data/newtype/class/type emit the first type token. Bare identifiers.",
+      "symbols": [
+        { "name": "add", "kind": "function" },
+        { "name": "Point", "kind": "data" },
+        { "name": "Name", "kind": "newtype" },
+        { "name": "Showable", "kind": "class" },
+        { "name": "Alias", "kind": "type" }
+      ]
+    },
+    {
+      "path": "vue/public_surface.vue",
+      "lang": "vue",
+      "note": "Only <script> content is parsed; defineProps/defineEmits/defineExpose macro lines are surface and the WHOLE trimmed line is the symbol name (macro-granularity emission — see CALIBRATION; finer prop-level granularity is a parked model change).",
+      "symbols": [
+        { "name": "const props = defineProps({", "kind": "props" },
+        { "name": "const emit = defineEmits([\"save\"]);", "kind": "emits" },
+        { "name": "defineExpose({ focus });", "kind": "expose" }
+      ]
+    },
+    {
+      "path": "svelte/public_surface.svelte",
+      "lang": "svelte",
+      "note": "Only <script> content; `export let` -> prop, `export const`/`export function` -> export. Name = the declaration remainder after the keyword(s). Svelte 4 syntax, so no rune symbols.",
+      "symbols": [
+        { "name": "title = \"hi\";", "kind": "prop" },
+        { "name": "VERSION = \"1.0\";", "kind": "export" },
+        { "name": "focus() {", "kind": "export" }
+      ]
+    },
+    {
+      "path": "astro/public_surface.astro",
+      "lang": "astro",
+      "note": "Only frontmatter (---) is parsed; `export ` lines -> export (name = remainder), lines containing `Astro.props` -> props (name = whole line).",
+      "symbols": [
+        { "name": "interface Props {", "kind": "export" },
+        { "name": "const { title } = Astro.props;", "kind": "props" }
+      ]
+    },
+    {
+      "path": "scss/public_surface.scss",
+      "lang": "scss",
+      "note": "SCSS variables/mixins/css-vars/@forward are surface. variable/css_var/forward names are the WHOLE trimmed line; mixin name is the remainder after `@mixin ` (trailing `{` included).",
+      "symbols": [
+        { "name": "$primary: #0055ff;", "kind": "variable" },
+        { "name": "rounded {", "kind": "mixin" },
+        { "name": "--bg: #ffffff;", "kind": "css_var" },
+        { "name": "@forward \"colors\";", "kind": "forward" }
+      ]
+    },
+    {
+      "path": "htmlcss/public_surface.css",
+      "lang": "htmlcss",
+      "note": "CSS custom properties and class selectors with a `{` are surface; the WHOLE trimmed line is the symbol name. `:root {` matches neither prefix rule and is not emitted.",
+      "symbols": [
+        { "name": "--bg: #ffffff;", "kind": "css_var" },
+        { "name": ".container {", "kind": "css_class" }
+      ]
+    }
+  ]
+}

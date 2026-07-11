@@ -1,0 +1,4 @@
+enum state {
+    IDLE,
+    RUNNING
+};

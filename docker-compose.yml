@@ -10,6 +10,9 @@
 # - Secrets are read from the environment; there are no hardcoded credentials.
 #   Create a `.env` next to this file (never commit it) with at least:
 #       POSTGRES_PASSWORD=<strong-random>
+# - Images are pinned by digest. Application services run with
+#   `no-new-privileges`, all Linux capabilities dropped, and a read-only root
+#   filesystem (writable state lives on dedicated volumes / tmpfs).
 #
 # Bring up just the daemon:  docker compose up -d daemon
 # Bring up the static site too: docker compose --profile web up -d
@@ -18,8 +21,10 @@ version: "3.8"
 
 services:
   postgres:
-    image: postgres:15-alpine
+    image: postgres:15-alpine@sha256:3d0f7584ed7d04e27fa050d6683a74746608faf21f202be78460d679cc56461f
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-kaptaind}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in the environment}
@@ -42,6 +47,13 @@ services:
       dockerfile: Dockerfile
     container_name: kaptaind-daemon
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
     environment:
       KAPTAIND_HEALTH_PORT: "9090"
     volumes:
@@ -52,9 +64,17 @@ services:
 
   web:
     profiles: ["web"]
-    image: nginx:alpine
+    image: nginx:alpine@sha256:54f2a904c251d5a34adf545a72d32515a15e08418dae0266e23be2e18c66fefa
     container_name: kaptaind-web
     restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=16m
+      - /var/run:size=8m
     ports:
       - "8080:80"
     volumes:

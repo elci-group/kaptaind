@@ -128,15 +128,15 @@ export default function SecurityPage() {
             <div className="grid gap-6 sm:grid-cols-3 text-center text-xs">
               <div className="p-4 border border-zinc-800 bg-zinc-950 rounded-lg">
                 <span className="font-semibold text-zinc-200 block mb-1">macOS Distribution</span>
-                <p className="text-zinc-500">Developer ID signing, hardened runtime enabled, and notarized under Gatekeeper standards.</p>
+                <p className="text-zinc-500">CLI release archives are keyless-signed with cosign. The desktop app is a preview build and is not yet Developer ID signed or notarized.</p>
               </div>
               <div className="p-4 border border-zinc-800 bg-zinc-950 rounded-lg">
                 <span className="font-semibold text-zinc-200 block mb-1">Windows Distribution</span>
-                <p className="text-zinc-500">Production MSIX/NSIS installers signed using trusted Code Signing certificates.</p>
+                <p className="text-zinc-500">CLI release archives are keyless-signed with cosign. MSIX/NSIS desktop installers are not yet code-signed.</p>
               </div>
               <div className="p-4 border border-zinc-800 bg-zinc-950 rounded-lg">
-                <span className="font-semibold text-zinc-200 block mb-1">Auto-Update Policy</span>
-                <p className="text-zinc-500">Updates are signed cryptographically, with rollback prevention. Disabled on self-hosted enterprise unless enabled by admins.</p>
+                <span className="font-semibold text-zinc-200 block mb-1">Release Integrity</span>
+                <p className="text-zinc-500">Every release ships SHA256SUMS.txt plus cosign keyless signatures and certificates. Self-hosted installs verify via the checksums; no silent auto-update runs by default.</p>
               </div>
             </div>
           </div>

@@ -1,5 +1,6 @@
 use super::super::adapter::{ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter};
 use super::common::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct JavaScriptAdapter;
@@ -23,15 +24,15 @@ impl LanguageAdapter for JavaScriptAdapter {
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
         let mut symbols = Vec::new();
+        let mut signatures = HashMap::new();
         if let Ok(lines) = read_lines_safe(file) {
             for line in lines {
                 let trimmed = line.trim();
                 if let Some(rest) = trimmed.strip_prefix("export ") {
                     let kind = classify_ts_export(rest);
-                    symbols.push(super::super::adapter::Symbol {
-                        name: rest.to_string(),
-                        kind,
-                    });
+                    let name = export_name(rest);
+                    signatures.insert(name.clone(), rest.to_string());
+                    symbols.push(super::super::adapter::Symbol { name, kind });
                 } else if let Some(rest) = trimmed.strip_prefix("module.exports") {
                     symbols.push(super::super::adapter::Symbol {
                         name: rest.to_string(),
@@ -44,7 +45,7 @@ impl LanguageAdapter for JavaScriptAdapter {
                     && !trimmed.contains("// ")
                 {
                     symbols.push(super::super::adapter::Symbol {
-                        name: trimmed.to_string(),
+                        name: export_name(trimmed.strip_prefix("export ").unwrap_or(trimmed)),
                         kind: "hook".to_string(),
                     });
                 }
@@ -54,6 +55,7 @@ impl LanguageAdapter for JavaScriptAdapter {
         Ok(AstRepresentation {
             symbols,
             structure_hash: hash,
+            signatures,
             ..Default::default()
         })
     }
@@ -70,3 +72,6 @@ impl LanguageAdapter for JavaScriptAdapter {
         !diff.removed.is_empty()
     }
 }
+
+// `export_name` is shared with `ts_parse`; see `common.rs::export_name` (imported via
+// `use super::common::*`).

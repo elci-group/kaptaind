@@ -1,0 +1,1 @@
+data Widget = Widget Int

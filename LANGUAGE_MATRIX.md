@@ -8,6 +8,35 @@ Kaptaind uses language-specific adapters to detect public API symbols. Each adap
 
 ---
 
+## Newly Wired Adapters (adapter-200 increment)
+
+The following adapters existed as source but were not registered. They are now wired
+into `register_builtin_adapters` with explicit confidences in `src/diff/lang/mod.rs`.
+All are **regex-based scanners**; confidences are reasoning-calibrated and pending
+corpus-measured F1 (see `docs/planning/ADAPTER_200_ROADMAP.md` §7). Full per-adapter
+subsections land as each is calibrated in Phase 1.
+
+| Language | Confidence | Detects (public) | Misses / limits |
+|----------|------------|------------------|-----------------|
+| Java | 0.85 | `public` classes/interfaces/enums/methods | package-private, generics erasure, annotations-as-API |
+| C# | 0.85 | `public` types/members | `internal`/`protected internal`, partial types |
+| PHP | 0.8 | `public` functions/methods | traits, `final`/`abstract` nuances |
+| Scala | 0.8 | `def`/`class`/`trait`/`object` (default public) | `private[this]`, implicits/givens, macros |
+| Elixir | 0.8 | `def` (public) vs `defp` (private) | macros, protocol impls, `__using__` |
+| Erlang | 0.8 | `-export([...])` entries | `-export_type`, behaviour callbacks |
+| Dart | 0.8 | top-level/class members; `_leading` private | `part`/`part of`, extension methods |
+| Ruby | 0.75 | `def` (public by default) | `private`/`protected`, `module_function`, `method_missing` |
+| Clojure | 0.75 | `defn` (public) vs `defn-` (private) | protocols, multimethods, `^:private` |
+| C | 0.7 | non-`static` functions (external linkage) | preprocessor, decl-vs-def, function pointers |
+| C++ | 0.7 | `public:` class members, free functions | templates, namespaces, macros, `friend` |
+| Haskell | 0.7 | module export list; top-level bindings | per-binding visibility, type classes, TH |
+| Lua | 0.7 | `function` (global) vs `local function` | module return tables, metatables |
+| OCaml | 0.7 | `let` bindings; `.mli` interface surface | functors, module types, `private` types |
+| Perl | 0.7 | `sub` (public by default) | `my`/`our`, AUTOLOAD, symbol-table exports |
+| F# | 0.7 | `let` bindings (default public in module) | `private`/`internal`, type providers |
+
+---
+
 ## High Confidence (1.0) — Full AST Parsing
 
 These adapters use proper parsing libraries and detect APIs with high precision.

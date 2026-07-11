@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
-import { getUserTier } from "@/lib/subscription";
+import { getEntitlements } from "@/lib/entitlements";
 import { prisma } from "@/lib/prisma";
 import Card, { CardTitle } from "@/components/ui/Card";
 import { Table, Thead, Th, Td } from "@/components/ui/Table";
@@ -15,8 +15,9 @@ export default async function AuditPage() {
   if (!session?.user?.id) redirect("/auth/signin");
 
   const userId = session.user.id;
-  const tier = await getUserTier(userId);
-  if (tier === "free") return <ProGate feature="Audit Logs" />;
+  const entitlements = await getEntitlements({ userId });
+  if (!entitlements.canExportAuditLogs)
+    return <ProGate feature="Audit Logs" />;
 
   // Verify access to default project
   const project = await prisma.project.findFirst({

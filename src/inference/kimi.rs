@@ -16,6 +16,25 @@ use std::time::Duration;
 
 use super::CommitContext;
 
+/// Cap an untrusted string to `max` bytes (char-boundary safe) and strip ASCII
+/// control characters so it is safe to emit into structured logs without
+/// enabling log injection or runaway payload logging.
+fn sanitize_log_field(input: &str, max: usize) -> String {
+    let mut out = String::with_capacity(input.len().min(max));
+    for ch in input.chars() {
+        if out.len() >= max {
+            out.push('…');
+            break;
+        }
+        if ch.is_control() && ch != '\t' {
+            out.push(' ');
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
 /// Kimi API endpoints
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum KimiEndpoint {
@@ -321,7 +340,8 @@ pub async fn generate(
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        tracing::warn!(status = %status, body = %body, "kimi returned error");
+        tracing::warn!(status = %status, "kimi returned error");
+        tracing::debug!(status = %status, body = %sanitize_log_field(&body, 200), "kimi error body");
         return None;
     }
 

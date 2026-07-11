@@ -1,0 +1,15 @@
+body {
+  color: black;
+}
+#app {
+  width: 100%;
+}
+div.container {
+  margin: 0;
+}
+* {
+  box-sizing: border-box;
+}
+[type="text"] {
+  border: 1px solid gray;
+}

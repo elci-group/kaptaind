@@ -10,13 +10,16 @@
 # self-hosting the daemon.
 #
 # The container starts as root so the entrypoint can fix ownership of the
-# `.kaptaind` data volume, then drops to the unprivileged `kaptaind` user.
+# `.kaptaind` data volume, then drops to the unprivileged `kaptaind` user
+# (UID 1000) via `runuser` before exec'ing the daemon — see docker-entrypoint.sh.
+# Base images are pinned by digest for reproducible, tamper-evident builds.
 
-FROM rust:1.82-bookworm AS builder
+FROM rust:1.82-bookworm@sha256:d9c3c6f1264a547d84560e06ffd79ed7a799ce0bff0980b26cf10d29af888377 AS builder
 WORKDIR /build
 
 # Warm the dependency layer. Manifests first so this layer is cached unless
-# dependencies change. `cargo fetch` only needs manifests, not sources.
+# dependencies change. `cargo fetch` only needs manifests, not sources, and
+# must fail the build if the locked dependencies cannot be fetched.
 COPY Cargo.toml Cargo.lock ./
 COPY crates/kaptaind-diff/Cargo.toml crates/kaptaind-diff/Cargo.toml
 RUN mkdir -p src/cli src/installer crates/kaptaind-diff/src \
@@ -24,14 +27,14 @@ RUN mkdir -p src/cli src/installer crates/kaptaind-diff/src \
     && printf 'fn main(){}\n' > src/cli/main.rs \
     && printf 'fn main(){}\n' > src/installer/gui.rs \
     && printf '' > crates/kaptaind-diff/src/lib.rs \
-    && cargo fetch || true
+    && cargo fetch
 
 # Full source, then the authoritative build.
 COPY . .
 RUN cargo build --release --bin kaptaind --bin kaptaind-cli
 
 # --- runtime ---
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates git libssl3 curl util-linux \

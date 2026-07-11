@@ -2,6 +2,7 @@ use super::super::adapter::{
     ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, Symbol,
 };
 use super::common::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct CsharpAdapter;
@@ -25,6 +26,7 @@ impl LanguageAdapter for CsharpAdapter {
 
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
         let mut symbols = Vec::new();
+        let mut signatures = HashMap::new();
         if let Ok(lines) = read_lines_safe(file) {
             for line in lines {
                 let trimmed = line.trim();
@@ -32,21 +34,30 @@ impl LanguageAdapter for CsharpAdapter {
                     continue;
                 }
 
-                // Type declarations (class, interface, struct, enum). These may be
-                // preceded by access modifiers or other keywords such as `partial`.
-                if let Some(keyword) = type_keyword(trimmed) {
-                    if let Some(name) = extract_type_name(trimmed, keyword) {
-                        symbols.push(Symbol {
-                            name,
-                            kind: keyword.to_string(),
-                        });
+                // Type declarations (class, interface, struct, enum). Only an
+                // explicitly `public` type is part of the public API surface;
+                // `internal`, `protected`, `private`, and unmodified types
+                // (which default to `internal`) are not.
+                if has_public_modifier(trimmed) {
+                    if let Some(keyword) = type_keyword(trimmed) {
+                        if let Some(name) = extract_type_name(trimmed, keyword) {
+                            symbols.push(Symbol {
+                                name,
+                                kind: keyword.to_string(),
+                            });
+                        }
+                        continue;
                     }
-                    continue;
                 }
 
                 // Public methods and properties.
                 if trimmed.contains("public ") {
                     if let Some((name, kind)) = extract_public_member(trimmed) {
+                        if kind == "method" {
+                            if let Some(sig) = cs_member_signature(trimmed) {
+                                signatures.insert(name.to_string(), sig);
+                            }
+                        }
                         symbols.push(Symbol {
                             name: name.to_string(),
                             kind: kind.to_string(),
@@ -60,6 +71,7 @@ impl LanguageAdapter for CsharpAdapter {
         Ok(AstRepresentation {
             symbols,
             structure_hash: hash,
+            signatures,
             ..Default::default()
         })
     }
@@ -80,6 +92,10 @@ impl LanguageAdapter for CsharpAdapter {
     }
 }
 
+fn has_public_modifier(line: &str) -> bool {
+    line.split_whitespace().any(|t| t == "public")
+}
+
 fn type_keyword(line: &str) -> Option<&'static str> {
     let tokens: Vec<&str> = line.split_whitespace().collect();
     ["class", "interface", "struct", "enum"]
@@ -92,8 +108,7 @@ fn extract_type_name(line: &str, keyword: &str) -> Option<String> {
     while let Some(token) = tokens.next() {
         if token == keyword {
             let name_token = tokens.next()?;
-            let end =
-                name_token.find(['<', ':', '{', '(', ';']);
+            let end = name_token.find(['<', ':', '{', '(', ';']);
             let name = match end {
                 Some(i) => &name_token[..i],
                 None => name_token,
@@ -104,6 +119,34 @@ fn extract_type_name(line: &str, keyword: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// Return the balanced parameter list `( … )` of a method line, so arity / parameter-type
+/// changes register as `modified` while the stable bare-identifier method `name` is kept.
+/// Body-independent: for expression-bodied methods (`=> …`) the scan stops at the closing
+/// `)` and the body is not captured. Returns `None` if the line has no `(`.
+fn cs_member_signature(line: &str) -> Option<String> {
+    let start = line.find('(')?;
+    let mut depth = 0i32;
+    for (i, b) in line.as_bytes().iter().enumerate().skip(start) {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(line[start..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    // Best-effort fallback for an unbalanced line.
+    Some(
+        line[start..]
+            .trim_end_matches(['{', ';'])
+            .trim()
+            .to_string(),
+    )
 }
 
 fn extract_public_member(line: &str) -> Option<(&str, &str)> {
@@ -202,7 +245,7 @@ namespace MyApp
         private void Hidden() {}
     }
 
-    interface IGreeter
+    public interface IGreeter
     {
         void Greet();
     }

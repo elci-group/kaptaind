@@ -1,0 +1,4 @@
+// Sass @function is real public API, but the adapter has NO rule for it -> 0 symbols.
+@function rem($px) {
+  @return $px / 16 * 1rem;
+}

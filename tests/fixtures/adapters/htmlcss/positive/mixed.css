@@ -1,0 +1,6 @@
+:root {
+  --brand: #3366ff;
+}
+.button {
+  background: var(--brand);
+}

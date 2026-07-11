@@ -40,13 +40,13 @@ jobs:
             target: x86_64-pc-windows-msvc
             tool: cargo
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30  # stable
         with:
           targets: ${{ matrix.target }}
 
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
         with:
           key: ${{ matrix.os }}-${{ matrix.target }}
 
@@ -97,7 +97,7 @@ jobs:
             -DestinationPath "kaptaind-$VERSION-$TARGET.zip" -Force
 
       - name: Upload package artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: kaptaind-${{ steps.version.outputs.version }}-${{ matrix.target }}
           path: kaptaind-${{ steps.version.outputs.version }}-${{ matrix.target }}.*
@@ -110,7 +110,7 @@ jobs:
       contents: write
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
           fetch-depth: 0
 
@@ -119,7 +119,7 @@ jobs:
         run: echo "version=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
 
       - name: Download package artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4
         with:
           path: dist
           merge-multiple: true
@@ -128,7 +128,7 @@ jobs:
         working-directory: dist
         run: sha256sum *.tar.gz *.zip > SHA256SUMS.txt
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30  # stable
 
       - name: Install cargo-cyclonedx
         run: cargo install cargo-cyclonedx --locked
@@ -147,7 +147,7 @@ jobs:
           echo "SBOM copied from $SBOM -> dist/sbom-rust.json"
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac  # v3
 
       - name: Keyless-sign packages and checksums
         working-directory: dist
@@ -177,7 +177,7 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2
         with:
           tag_name: v${{ steps.version.outputs.version }}
           name: Kaptaind v${{ steps.version.outputs.version }}

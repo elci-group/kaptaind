@@ -2,6 +2,7 @@ use super::super::adapter::{
     ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, Symbol,
 };
 use super::common::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct CppAdapter;
@@ -29,9 +30,25 @@ impl LanguageAdapter for CppAdapter {
 
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
         let mut symbols = Vec::new();
+        let mut signatures = HashMap::new();
         if let Ok(lines) = read_lines_safe(file) {
+            // Track `/* ... */` regions so declarations inside block comments
+            // are not mistaken for public API (measured messy-corpus FP, rev 24).
+            let mut in_block_comment = false;
             for line in lines {
                 let trimmed = line.trim();
+                if in_block_comment {
+                    if trimmed.contains("*/") {
+                        in_block_comment = false;
+                    }
+                    continue;
+                }
+                if trimmed.starts_with("/*") {
+                    if !trimmed.contains("*/") {
+                        in_block_comment = true;
+                    }
+                    continue;
+                }
                 if trimmed.is_empty() || trimmed.starts_with("//") {
                     continue;
                 }
@@ -52,6 +69,9 @@ impl LanguageAdapter for CppAdapter {
                         kind: "namespace".to_string(),
                     });
                 } else if let Some(name) = extract_function_definition(trimmed) {
+                    if let Some(sig) = cpp_signature(trimmed) {
+                        signatures.insert(name.clone(), sig);
+                    }
                     symbols.push(Symbol {
                         name,
                         kind: "function".to_string(),
@@ -63,6 +83,7 @@ impl LanguageAdapter for CppAdapter {
         Ok(AstRepresentation {
             symbols,
             structure_hash: hash,
+            signatures,
             ..Default::default()
         })
     }
@@ -129,12 +150,18 @@ fn extract_namespace(trimmed: &str) -> Option<String> {
 fn extract_function_definition(trimmed: &str) -> Option<String> {
     // Skip control-flow and non-definition constructs.
     let skip_prefixes = [
-        "if ", "if(",
-        "for ", "for(",
-        "while ", "while(",
-        "switch ", "switch(",
-        "return ", "return(",
-        "static_assert", "assert(",
+        "if ",
+        "if(",
+        "for ",
+        "for(",
+        "while ",
+        "while(",
+        "switch ",
+        "switch(",
+        "return ",
+        "return(",
+        "static_assert",
+        "assert(",
         "using ",
         "namespace ",
         "class ",
@@ -164,6 +191,35 @@ fn extract_function_definition(trimmed: &str) -> Option<String> {
         return None;
     }
     Some(name.to_string())
+}
+
+/// Return the balanced parameter list `( … )` of a C++ function-definition line, so arity /
+/// parameter-type changes register as `modified` while the stable bare-identifier `name` is
+/// kept. Body-independent: the scan stops at the closing `)`, so the `{ … }` body is not
+/// captured. Control-flow / keyword prefixes and `;`-terminated declarations are filtered
+/// upstream by `extract_function_definition`. Returns `None` if the line has no `(`.
+fn cpp_signature(line: &str) -> Option<String> {
+    let start = line.find('(')?;
+    let mut depth = 0i32;
+    for (i, b) in line.as_bytes().iter().enumerate().skip(start) {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(line[start..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    // Best-effort fallback for an unbalanced line.
+    Some(
+        line[start..]
+            .trim_end_matches(['{', ';'])
+            .trim()
+            .to_string(),
+    )
 }
 
 #[cfg(test)]
@@ -228,7 +284,10 @@ void standalone() {}
         assert!(names.contains(&"Baz"), "missing struct Baz: {names:?}");
         assert!(names.contains(&"qux"), "missing namespace qux: {names:?}");
         assert!(names.contains(&"add"), "missing function add: {names:?}");
-        assert!(names.contains(&"standalone"), "missing function standalone: {names:?}");
+        assert!(
+            names.contains(&"standalone"),
+            "missing function standalone: {names:?}"
+        );
     }
 
     #[test]

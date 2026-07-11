@@ -1,0 +1,13 @@
+---
+export const prerender = true;
+const { title } = Astro.props;
+---
+<h1>{title}</h1>
+<style>
+  export const color = "red";
+  h1 { color: var(--c); }
+</style>
+<script>
+  const { x } = Astro.props;
+  export function boot() {}
+</script>

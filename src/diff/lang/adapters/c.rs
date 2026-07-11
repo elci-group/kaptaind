@@ -2,6 +2,7 @@ use super::super::adapter::{
     ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, Symbol,
 };
 use super::common::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct CAdapter;
@@ -43,9 +44,25 @@ impl LanguageAdapter for CAdapter {
 
 fn c_parse(file: &Path) -> anyhow::Result<AstRepresentation> {
     let mut symbols = Vec::new();
+    let mut signatures = HashMap::new();
     if let Ok(lines) = read_lines_safe(file) {
+        // Track `/* ... */` regions so declarations inside block comments are
+        // not mistaken for public API (measured messy-corpus FP, rev 24).
+        let mut in_block_comment = false;
         for line in lines {
             let trimmed = line.trim();
+            if in_block_comment {
+                if trimmed.contains("*/") {
+                    in_block_comment = false;
+                }
+                continue;
+            }
+            if trimmed.starts_with("/*") {
+                if !trimmed.contains("*/") {
+                    in_block_comment = true;
+                }
+                continue;
+            }
             if trimmed.is_empty() || trimmed.starts_with("//") {
                 continue;
             }
@@ -65,7 +82,7 @@ fn c_parse(file: &Path) -> anyhow::Result<AstRepresentation> {
             // struct Name
             if let Some(rest) = trimmed.strip_prefix("struct ") {
                 if let Some(name) = rest.split_whitespace().next() {
-                    let name = name.trim_end_matches(|c: char| c == '{' || c == ';' || c == '*');
+                    let name = name.trim_end_matches(['{', ';', '*']);
                     if is_valid_identifier(name) {
                         symbols.push(Symbol {
                             name: name.to_string(),
@@ -79,7 +96,7 @@ fn c_parse(file: &Path) -> anyhow::Result<AstRepresentation> {
             // enum Name
             if let Some(rest) = trimmed.strip_prefix("enum ") {
                 if let Some(name) = rest.split_whitespace().next() {
-                    let name = name.trim_end_matches(|c: char| c == '{' || c == ';' || c == '*');
+                    let name = name.trim_end_matches(['{', ';', '*']);
                     if is_valid_identifier(name) {
                         symbols.push(Symbol {
                             name: name.to_string(),
@@ -104,6 +121,9 @@ fn c_parse(file: &Path) -> anyhow::Result<AstRepresentation> {
                         && is_valid_identifier(return_type)
                         && !is_control_keyword(name)
                     {
+                        if let Some(sig) = c_signature(trimmed) {
+                            signatures.insert(name.to_string(), sig);
+                        }
                         symbols.push(Symbol {
                             name: name.to_string(),
                             kind: "function".to_string(),
@@ -117,6 +137,7 @@ fn c_parse(file: &Path) -> anyhow::Result<AstRepresentation> {
     Ok(AstRepresentation {
         symbols,
         structure_hash: hash,
+        signatures,
         ..Default::default()
     })
 }
@@ -134,6 +155,34 @@ fn is_control_keyword(s: &str) -> bool {
     matches!(
         s,
         "if" | "for" | "while" | "switch" | "return" | "goto" | "case" | "sizeof"
+    )
+}
+
+/// Return the balanced parameter list `( … )` of a C function line, so arity / parameter-type
+/// changes register as `modified` while the stable bare-identifier `name` is kept.
+/// Body-independent: the scan stops at the closing `)`, so a trailing `;` (declaration) or
+/// `{ … }` (definition) is not captured. Returns `None` if the line has no `(`.
+fn c_signature(line: &str) -> Option<String> {
+    let start = line.find('(')?;
+    let mut depth = 0i32;
+    for (i, b) in line.as_bytes().iter().enumerate().skip(start) {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(line[start..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    // Best-effort fallback for an unbalanced line.
+    Some(
+        line[start..]
+            .trim_end_matches(['{', ';'])
+            .trim()
+            .to_string(),
     )
 }
 
@@ -187,11 +236,23 @@ void print_point(struct point *p);
         let adapter = CAdapter;
         let ast = adapter.parse_ast(&path).unwrap();
         let names: Vec<&str> = ast.symbols.iter().map(|s| s.name.as_str()).collect();
-        assert!(names.contains(&"MAX_SIZE"), "missing macro MAX_SIZE: {:?}", names);
-        assert!(names.contains(&"point"), "missing struct point: {:?}", names);
+        assert!(
+            names.contains(&"MAX_SIZE"),
+            "missing macro MAX_SIZE: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"point"),
+            "missing struct point: {:?}",
+            names
+        );
         assert!(names.contains(&"color"), "missing enum color: {:?}", names);
         assert!(names.contains(&"add"), "missing function add: {:?}", names);
-        assert!(names.contains(&"print_point"), "missing function print_point: {:?}", names);
+        assert!(
+            names.contains(&"print_point"),
+            "missing function print_point: {:?}",
+            names
+        );
     }
 
     #[test]

@@ -21,6 +21,7 @@ fn warn_if_git_lock_exists(repo_path: &Path) {
 }
 
 pub async fn start(config: Config) -> anyhow::Result<()> {
+    // Local-user capability gate only — NOT network/HTTP auth. See `crate::rbac`.
     crate::rbac::check_permission(&config.rbac, "daemon.start")?;
 
     // Initialize trace database

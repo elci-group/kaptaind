@@ -2,6 +2,7 @@ use super::super::adapter::{
     ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, Symbol,
 };
 use super::common::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct ScalaAdapter;
@@ -26,6 +27,7 @@ impl LanguageAdapter for ScalaAdapter {
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
         let mut symbols = Vec::new();
+        let mut signatures = HashMap::new();
         if let Ok(lines) = read_lines_safe(file) {
             for line in lines {
                 let line = line.trim();
@@ -52,26 +54,34 @@ impl LanguageAdapter for ScalaAdapter {
                         name: name.to_string(),
                         kind: "case_class".to_string(),
                     });
-                } else if let Some(name) = rest.strip_prefix("class ").and_then(extract_identifier) {
+                } else if let Some(name) = rest.strip_prefix("class ").and_then(extract_identifier)
+                {
                     symbols.push(Symbol {
                         name: name.to_string(),
                         kind: "class".to_string(),
                     });
-                } else if let Some(name) = rest.strip_prefix("object ").and_then(extract_identifier) {
+                } else if let Some(name) = rest.strip_prefix("object ").and_then(extract_identifier)
+                {
                     symbols.push(Symbol {
                         name: name.to_string(),
                         kind: "object".to_string(),
                     });
-                } else if let Some(name) = rest.strip_prefix("trait ").and_then(extract_identifier) {
+                } else if let Some(name) = rest.strip_prefix("trait ").and_then(extract_identifier)
+                {
                     symbols.push(Symbol {
                         name: name.to_string(),
                         kind: "trait".to_string(),
                     });
-                } else if let Some(name) = rest.strip_prefix("def ").and_then(extract_identifier) {
-                    symbols.push(Symbol {
-                        name: name.to_string(),
-                        kind: "def".to_string(),
-                    });
+                } else if let Some(def_rest) = rest.strip_prefix("def ") {
+                    if let Some(name) = extract_identifier(def_rest) {
+                        if let Some(sig) = scala_signature(def_rest) {
+                            signatures.insert(name.to_string(), sig);
+                        }
+                        symbols.push(Symbol {
+                            name: name.to_string(),
+                            kind: "def".to_string(),
+                        });
+                    }
                 }
             }
         }
@@ -79,6 +89,7 @@ impl LanguageAdapter for ScalaAdapter {
         Ok(AstRepresentation {
             symbols,
             structure_hash: hash,
+            signatures,
             ..Default::default()
         })
     }
@@ -129,8 +140,16 @@ fn strip_leading_modifiers(mut s: &str) -> &str {
         s = trimmed;
 
         let modifiers = [
-            "abstract", "final", "sealed", "lazy", "implicit", "inline", "opaque",
-            "transparent", "open", "override",
+            "abstract",
+            "final",
+            "sealed",
+            "lazy",
+            "implicit",
+            "inline",
+            "opaque",
+            "transparent",
+            "open",
+            "override",
         ];
         let mut matched = false;
         for m in &modifiers {
@@ -155,6 +174,35 @@ fn extract_identifier(s: &str) -> Option<&str> {
     s.split(|c: char| c.is_whitespace() || c == '[' || c == '(' || c == '{' || c == ':' || c == '=')
         .next()
         .filter(|n| !n.is_empty())
+}
+
+/// Return the balanced parameter list `( … )` of a Scala `def` (the text after `def `), so
+/// arity / parameter-type changes register as `modified` while the stable bare-identifier
+/// `name` is kept. Body-independent: the scan stops at the closing `)`, so the `=` body and
+/// any `: returnType` are not captured. For curried defs (`def f(a)(b)`) only the first list
+/// is captured (best-effort). Returns `None` if the input has no `(`.
+fn scala_signature(def_rest: &str) -> Option<String> {
+    let start = def_rest.find('(')?;
+    let mut depth = 0i32;
+    for (i, b) in def_rest.as_bytes().iter().enumerate().skip(start) {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(def_rest[start..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    // Best-effort fallback for an unbalanced line.
+    Some(
+        def_rest[start..]
+            .trim_end_matches(['{', '='])
+            .trim()
+            .to_string(),
+    )
 }
 
 #[cfg(test)]
@@ -216,13 +264,37 @@ object Active extends Status
         let ast = adapter.parse_ast(&path).unwrap();
 
         let names: Vec<&str> = ast.symbols.iter().map(|s| s.name.as_str()).collect();
-        assert!(names.contains(&"Config"), "missing object Config: {:?}", names);
-        assert!(names.contains(&"Logger"), "missing trait Logger: {:?}", names);
-        assert!(names.contains(&"FileLogger"), "missing class FileLogger: {:?}", names);
+        assert!(
+            names.contains(&"Config"),
+            "missing object Config: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"Logger"),
+            "missing trait Logger: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"FileLogger"),
+            "missing class FileLogger: {:?}",
+            names
+        );
         assert!(names.contains(&"log"), "missing def log: {:?}", names);
-        assert!(names.contains(&"User"), "missing case class User: {:?}", names);
-        assert!(names.contains(&"Status"), "missing class Status: {:?}", names);
-        assert!(names.contains(&"Active"), "missing object Active: {:?}", names);
+        assert!(
+            names.contains(&"User"),
+            "missing case class User: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"Status"),
+            "missing class Status: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"Active"),
+            "missing object Active: {:?}",
+            names
+        );
         assert!(
             !names.contains(&"internal"),
             "private def internal should not be public API: {:?}",

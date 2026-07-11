@@ -2,6 +2,7 @@ use super::super::adapter::{
     ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, Symbol,
 };
 use super::common::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct RubyAdapter;
@@ -26,6 +27,7 @@ impl LanguageAdapter for RubyAdapter {
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
         let mut symbols = Vec::new();
+        let mut signatures = HashMap::new();
         if let Ok(lines) = read_lines_safe(file) {
             for line in lines {
                 let trimmed = line.trim();
@@ -45,6 +47,9 @@ impl LanguageAdapter for RubyAdapter {
                     });
                 } else if let Some(rest) = trimmed.strip_prefix("def ") {
                     let name = rest.split(['(', ' ', ';']).next().unwrap_or(rest);
+                    if let Some(sig) = ruby_signature(rest) {
+                        signatures.insert(name.to_string(), sig);
+                    }
                     symbols.push(Symbol {
                         name: name.to_string(),
                         kind: "method".to_string(),
@@ -65,6 +70,7 @@ impl LanguageAdapter for RubyAdapter {
         Ok(AstRepresentation {
             symbols,
             structure_hash: hash,
+            signatures,
             ..Default::default()
         })
     }
@@ -80,6 +86,34 @@ impl LanguageAdapter for RubyAdapter {
     fn detect_breaking_changes(&self, diff: &AstDiff) -> bool {
         !diff.removed.is_empty()
     }
+}
+
+/// Return the balanced parameter list `( … )` of a Ruby `def` (the text after `def `), so arity
+/// / parameter changes register as `modified` while the stable bare-identifier `name` is kept.
+/// Body-independent: the scan stops at the closing `)`, so the method body is not captured. A
+/// method defined without parentheses has no parameter list and returns `None`.
+fn ruby_signature(rest: &str) -> Option<String> {
+    let start = rest.find('(')?;
+    let mut depth = 0i32;
+    for (i, b) in rest.as_bytes().iter().enumerate().skip(start) {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(rest[start..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    // Best-effort fallback for an unbalanced line.
+    Some(
+        rest[start..]
+            .trim_end_matches(['{', ';'])
+            .trim()
+            .to_string(),
+    )
 }
 
 #[cfg(test)]

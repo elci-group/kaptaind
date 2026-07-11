@@ -2,7 +2,7 @@ import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { getServerSession } from "next-auth";
 import { authOptions } from "@/lib/auth";
-import { getUserTier } from "@/lib/subscription";
+import { getUserTier } from "@/lib/api-auth";
 import Sidebar from "@/components/layout/Sidebar";
 
 export const dynamic = "force-dynamic";

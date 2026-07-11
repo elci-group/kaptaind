@@ -37,6 +37,12 @@ impl LanguageAdapter for VueAdapter {
                 if !in_script {
                     continue;
                 }
+                // Comment lines are not API: the substring macro match would
+                // otherwise leak `defineProps` mentions out of comments
+                // (measured messy-corpus FP, rev 24).
+                if trimmed.starts_with("//") {
+                    continue;
+                }
                 // Detect defineProps, defineEmits, defineExpose (Vue 3 macros)
                 if trimmed.contains("defineProps") {
                     symbols.push(Symbol {

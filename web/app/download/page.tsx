@@ -4,21 +4,21 @@ import CopyButton from "@/components/CopyButton";
 
 export const metadata = {
   title: "Kaptaind | Download Local CLI & Desktop App",
-  description: "Get the local-first Kaptaind release daemon CLI or the official signed desktop control plane for macOS, Windows, and Linux.",
+  description: "Get the local-first Kaptaind release daemon CLI for macOS, Windows, and Linux, plus the desktop governance dashboard (preview).",
 };
 
 const desktopDownloads = [
   {
     os: "macOS (Apple Silicon & Intel)",
-    format: "DMG (Signed & Notarized)",
-    desc: "Signed with Developer ID, optimized for Gatekeeper compliance on Apple macOS.",
+    format: "DMG (preview, unsigned)",
+    desc: "Preview build; not yet Developer ID signed or notarized. Bypass Gatekeeper only for evaluation.",
     link: "#",
     btnText: "Download for Mac",
   },
   {
     os: "Windows 10 / 11",
-    format: "MSIX Installer (Signed)",
-    desc: "Fully signed Windows Package for smooth installation under SmartScreen verification.",
+    format: "MSIX Installer (preview, unsigned)",
+    desc: "Preview build; not yet code-signed. SmartScreen will warn until signing lands.",
     link: "#",
     btnText: "Download for Windows",
   },

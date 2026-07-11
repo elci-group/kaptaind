@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import {
   requireAuth,
   requireProjectAccess,
+  requireEntitlement,
   isAuthError,
 } from "@/lib/api-auth";
 import { queryAuditLogs } from "@/lib/audit";
@@ -11,11 +12,21 @@ export async function GET(req: Request) {
   try {
     const session = await requireAuth(req);
 
+    // Audit log reads/export are Enterprise-only.
+    await requireEntitlement(req, "canExportAuditLogs");
+
     const { searchParams } = new URL(req.url);
     const orgId = searchParams.get("orgId") || undefined;
     const projectId = searchParams.get("projectId") || undefined;
     const limit = parseInt(searchParams.get("limit") || "50", 10);
     const offset = parseInt(searchParams.get("offset") || "0", 10);
+
+    if (!orgId && !projectId) {
+      return NextResponse.json(
+        { error: "orgId or projectId is required" },
+        { status: 400 }
+      );
+    }
 
     if (projectId) {
       await requireProjectAccess(req, projectId);

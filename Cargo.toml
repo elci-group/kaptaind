@@ -72,6 +72,9 @@ git2 = ["dep:git2"]
 [dev-dependencies]
 tempfile = "3"
 divan = "0.1"
+# Needed by tests/claims_audit.rs to construct timestamped FsEvents when
+# locking the documented structural-score formula.
+chrono = "0.4"
 
 [[bench]]
 name = "bench_cluster"

@@ -441,12 +441,21 @@ impl WebhookManager {
         let response = request.body(body).send().await?;
         let status = response.status();
 
-        // Read response body for logging
+        // Read response body for logging (capped + control-stripped to avoid
+        // log injection and unbounded payload logging).
         let body_text = response.text().await.unwrap_or_default();
+        let mut body_preview: String = body_text
+            .chars()
+            .take(200)
+            .map(|c| if c.is_control() && c != '\t' { ' ' } else { c })
+            .collect();
+        if body_text.chars().count() > 200 {
+            body_preview.push('…');
+        }
 
         debug!(
             "Webhook {} response: {} - body: {}",
-            endpoint.id, status, body_text
+            endpoint.id, status, body_preview
         );
 
         Ok((status, body_text))
@@ -557,6 +566,77 @@ pub fn verify_signature(
     crate::util::constant_time::constant_time_eq(signature.as_bytes(), expected.as_bytes())
 }
 
+/// Verify a webhook signature that embeds a Unix timestamp, rejecting replays
+/// whose timestamp skew exceeds `max_skew_secs`.
+///
+/// `timestamped_payload` must be in the `"<unix_ts>.<payload>"` form produced
+/// by [`WebhookSender::sign_payload`] when timestamps are enabled. The HMAC is
+/// computed over the *entire* string (timestamp + "." + payload), so the
+/// timestamp is covered by the signature and cannot be stripped or altered.
+///
+/// Returns `false` when the timestamp is missing, unparseable, outside the
+/// allowed skew window, or the signature does not match.
+///
+/// Note: full replay protection also requires a nonce/jti cache on the
+/// receiving side. That is deferred until kaptaind ships an inbound webhook
+/// listener; callers without a receiver should use [`verify_signature`].
+pub fn verify_signature_with_timestamp(
+    timestamped_payload: &str,
+    signature: &str,
+    secret: &str,
+    algorithm: SignatureAlgorithm,
+    max_skew_secs: u64,
+) -> bool {
+    // Split on the first '.' only — the payload itself may contain dots.
+    let (ts_str, payload) = match timestamped_payload.split_once('.') {
+        Some(pair) => pair,
+        None => return false,
+    };
+
+    let ts: u64 = match ts_str.parse() {
+        Ok(v) => v,
+        Err(_) => return false,
+    };
+
+    let now = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+
+    let skew = now.abs_diff(ts);
+    if skew > max_skew_secs {
+        return false;
+    }
+
+    // Recompute over the canonical "<ts>.<payload>" form (not the rejoined
+    // value, to guarantee the signed bytes match the producer exactly).
+    let data = format!("{}.{}", ts_str, payload);
+
+    let expected = match algorithm {
+        SignatureAlgorithm::HmacSha256 => {
+            let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
+                .expect("HMAC can take key of any size");
+            mac.update(data.as_bytes());
+            format!(
+                "sha256={}",
+                crate::util::hex::encode(mac.finalize().into_bytes())
+            )
+        }
+        SignatureAlgorithm::HmacSha512 => {
+            let mut mac = HmacSha512::new_from_slice(secret.as_bytes())
+                .expect("HMAC can take key of any size");
+            mac.update(data.as_bytes());
+            format!(
+                "sha512={}",
+                crate::util::hex::encode(mac.finalize().into_bytes())
+            )
+        }
+        SignatureAlgorithm::Ed25519 => return false,
+    };
+
+    crate::util::constant_time::constant_time_eq(signature.as_bytes(), expected.as_bytes())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -643,6 +723,78 @@ mod tests {
             &signature,
             "wrong_secret",
             SignatureAlgorithm::HmacSha256
+        ));
+    }
+
+    fn sign_timestamped(ts: u64, payload: &str, secret: &str) -> String {
+        let data = format!("{}.{}", ts, payload);
+        let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).unwrap();
+        mac.update(data.as_bytes());
+        format!(
+            "sha256={}",
+            crate::util::hex::encode(mac.finalize().into_bytes())
+        )
+    }
+
+    #[test]
+    fn test_verify_signature_with_timestamp_accepts_fresh() {
+        let secret = "ts_secret";
+        let payload = r#"{"commit":"abc"}"#;
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let signed = format!("{}.{}", now, payload);
+        let sig = sign_timestamped(now, payload, secret);
+
+        assert!(verify_signature_with_timestamp(
+            &signed,
+            &sig,
+            secret,
+            SignatureAlgorithm::HmacSha256,
+            300,
+        ));
+    }
+
+    #[test]
+    fn test_verify_signature_with_timestamp_rejects_stale() {
+        let secret = "ts_secret";
+        let payload = "body";
+        let old_ts = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+            - 10_000;
+        let signed = format!("{}.{}", old_ts, payload);
+        let sig = sign_timestamped(old_ts, payload, secret);
+
+        assert!(!verify_signature_with_timestamp(
+            &signed,
+            &sig,
+            secret,
+            SignatureAlgorithm::HmacSha256,
+            300,
+        ));
+    }
+
+    #[test]
+    fn test_verify_signature_with_timestamp_rejects_tampered_timestamp() {
+        let secret = "ts_secret";
+        let payload = "body.with.dots";
+        let now = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let sig = sign_timestamped(now, payload, secret);
+        // Attacker rewinds the timestamp but keeps the old signature.
+        let tampered = format!("{}.{}", now - 10_000, payload);
+
+        assert!(!verify_signature_with_timestamp(
+            &tampered,
+            &sig,
+            secret,
+            SignatureAlgorithm::HmacSha256,
+            300,
         ));
     }
 

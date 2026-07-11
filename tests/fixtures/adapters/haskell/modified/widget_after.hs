@@ -1,0 +1,1 @@
+newtype Widget = Widget Int

@@ -1,0 +1,3 @@
+struct widget {
+    int id;
+};

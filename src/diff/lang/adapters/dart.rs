@@ -2,6 +2,7 @@ use super::super::adapter::{
     ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, Symbol,
 };
 use super::common::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct DartAdapter;
@@ -22,6 +23,7 @@ impl LanguageAdapter for DartAdapter {
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
         let mut symbols = Vec::new();
+        let mut signatures = HashMap::new();
         if let Ok(lines) = read_lines_safe(file) {
             for line in lines {
                 let trimmed = line.trim();
@@ -54,6 +56,9 @@ impl LanguageAdapter for DartAdapter {
                         kind: "mixin".to_string(),
                     });
                 } else if let Some(name) = extract_top_level_function_name(trimmed) {
+                    if let Some(sig) = dart_signature(trimmed) {
+                        signatures.insert(name.to_string(), sig);
+                    }
                     symbols.push(Symbol {
                         name: name.to_string(),
                         kind: "function".to_string(),
@@ -65,6 +70,7 @@ impl LanguageAdapter for DartAdapter {
         Ok(AstRepresentation {
             symbols,
             structure_hash: hash,
+            signatures,
             ..Default::default()
         })
     }
@@ -184,6 +190,34 @@ fn strip_any_prefix<'a>(line: &'a str, prefixes: &[&str]) -> &'a str {
 fn clean_identifier(token: &str) -> Option<&str> {
     let name = token.split('<').next()?;
     Some(name.trim_end_matches('{').trim())
+}
+
+/// Return the balanced parameter list `( … )` of a top-level Dart function line, so arity /
+/// parameter-type changes register as `modified` while the stable bare-identifier `name` is
+/// kept. Body-independent: the scan stops at the closing `)`, so an `=> …` expression body or
+/// `{ … }` block is not captured. Returns `None` if the line has no `(`.
+fn dart_signature(line: &str) -> Option<String> {
+    let start = line.find('(')?;
+    let mut depth = 0i32;
+    for (i, b) in line.as_bytes().iter().enumerate().skip(start) {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(line[start..=i].to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    // Best-effort fallback for an unbalanced line.
+    Some(
+        line[start..]
+            .trim_end_matches(['{', ';'])
+            .trim()
+            .to_string(),
+    )
 }
 
 #[cfg(test)]

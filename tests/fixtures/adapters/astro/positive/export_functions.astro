@@ -1,0 +1,9 @@
+---
+export function getStaticPaths() {
+  return [{ params: { slug: "a" } }];
+}
+export async function GET() {
+  return new Response("ok");
+}
+---
+<slot />

@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
-import { getUserTier } from "@/lib/subscription";
+import { getEntitlements } from "@/lib/entitlements";
 import { listAnalysisArtifacts } from "@/lib/kaptaind/analysis";
 import ProGate from "@/components/dashboard/ProGate";
 import Card, { CardHeader, CardTitle } from "@/components/ui/Card";
@@ -14,8 +14,9 @@ export default async function AiCommitsPage() {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) redirect("/auth/signin");
 
-  const tier = await getUserTier(session.user.id);
-  if (tier !== "pro") return <ProGate feature="AI Commit Messages" />;
+  const entitlements = await getEntitlements({ userId: session.user.id });
+  if (!entitlements.canUseAi)
+    return <ProGate feature="AI Commit Messages" />;
 
   const artifacts = await listAnalysisArtifacts(REPO_PATH, 20);
 

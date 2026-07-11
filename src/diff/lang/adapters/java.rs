@@ -2,6 +2,7 @@ use super::super::adapter::{
     ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, Symbol,
 };
 use super::common::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct JavaAdapter;
@@ -22,9 +23,30 @@ impl LanguageAdapter for JavaAdapter {
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
         let mut symbols = Vec::new();
+        let mut signatures = HashMap::new();
+        let mut in_block_comment = false;
         if let Ok(lines) = read_lines_safe(file) {
             for line in lines {
                 let trimmed = line.trim();
+
+                // Track `/* ... */` and `/** ... */` regions so declarations
+                // inside block comments are not mistaken for public API.
+                if in_block_comment {
+                    if trimmed.contains("*/") {
+                        in_block_comment = false;
+                    }
+                    continue;
+                }
+                if trimmed.starts_with("/*") {
+                    if !trimmed.contains("*/") {
+                        in_block_comment = true;
+                    }
+                    continue;
+                }
+                if trimmed.is_empty() || trimmed.starts_with("//") {
+                    continue;
+                }
+
                 if let Some(rest) = trimmed.strip_prefix("public class ") {
                     if let Some(name) = extract_type_name(rest) {
                         symbols.push(Symbol {
@@ -48,6 +70,9 @@ impl LanguageAdapter for JavaAdapter {
                     }
                 } else if is_public_method_line(trimmed) {
                     if let Some(name) = extract_method_name(trimmed) {
+                        if let Some(sig) = method_signature(trimmed) {
+                            signatures.insert(name.to_string(), sig);
+                        }
                         symbols.push(Symbol {
                             name: name.to_string(),
                             kind: "method".to_string(),
@@ -60,6 +85,7 @@ impl LanguageAdapter for JavaAdapter {
         Ok(AstRepresentation {
             symbols,
             structure_hash: hash,
+            signatures,
             ..Default::default()
         })
     }
@@ -81,14 +107,24 @@ impl LanguageAdapter for JavaAdapter {
 /// bracket, or opening brace. For `Foo<T>` this returns `Foo`; for
 /// `Foo implements Bar {` it returns `Foo`.
 fn extract_type_name(rest: &str) -> Option<&str> {
-    let name = rest
-        .split(|c: char| c == '{' || c == ' ' || c == '<')
-        .next()?
-        .trim();
+    let name = rest.split(['{', ' ', '<']).next()?.trim();
     if name.is_empty() {
         None
     } else {
         Some(name)
+    }
+}
+
+/// Return the method signature portion (from the first `(` to end, with a trailing `{`
+/// stripped) so arity / parameter changes register as `modified` while the stable method
+/// `name` (bare identifier) is preserved.
+fn method_signature(line: &str) -> Option<String> {
+    let idx = line.find('(')?;
+    let sig = line[idx..].trim_end_matches('{').trim();
+    if sig.is_empty() {
+        None
+    } else {
+        Some(sig.to_string())
     }
 }
 

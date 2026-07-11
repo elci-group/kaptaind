@@ -1,0 +1,4 @@
+enum mode {
+    OFF,
+    ON
+};

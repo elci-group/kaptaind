@@ -1,7 +1,7 @@
 import { getServerSession } from "next-auth";
 import { redirect } from "next/navigation";
 import { authOptions } from "@/lib/auth";
-import { getUserTier } from "@/lib/subscription";
+import { getEntitlements } from "@/lib/entitlements";
 import { listAnalysisArtifacts } from "@/lib/kaptaind/analysis";
 import { readTelemetry } from "@/lib/kaptaind/telemetry";
 import ProGate from "@/components/dashboard/ProGate";
@@ -15,8 +15,8 @@ export default async function TeamPage() {
   const session = await getServerSession(authOptions);
   if (!session?.user?.id) redirect("/auth/signin");
 
-  const tier = await getUserTier(session.user.id);
-  if (tier !== "pro") return <ProGate feature="Team Dashboard" />;
+  const entitlements = await getEntitlements({ userId: session.user.id });
+  if (entitlements.maxUsers <= 1) return <ProGate feature="Team Dashboard" />;
 
   const [members, artifacts, telemetry] = await Promise.all([
     prisma.teamMembership.findMany({

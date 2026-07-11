@@ -1,0 +1,8 @@
+// Less variables: detected as kind "variable" (`@` + `:` and not a reserved at-rule)
+@primary: #007bff;
+@font-size: 16px;
+
+// Reserved at-rules below are NOT detected as variables:
+@media (max-width: 768px) {
+  .box { color: @primary; }
+}

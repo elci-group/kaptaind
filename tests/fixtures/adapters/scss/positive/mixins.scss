@@ -1,0 +1,10 @@
+// Mixins: detected as kind "mixin" (line starts with `@mixin `)
+@mixin flex-center {
+  display: flex;
+  align-items: center;
+}
+
+@mixin size($w, $h) {
+  width: $w;
+  height: $h;
+}

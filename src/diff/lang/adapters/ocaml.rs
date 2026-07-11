@@ -2,6 +2,7 @@ use super::super::adapter::{
     ApiSurface, AstDiff, AstRepresentation, Language, LanguageAdapter, Symbol,
 };
 use super::common::*;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 pub struct OcamlAdapter;
@@ -26,6 +27,7 @@ impl LanguageAdapter for OcamlAdapter {
     }
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
         let mut symbols = Vec::new();
+        let mut signatures = HashMap::new();
         if let Ok(lines) = read_lines_safe(file) {
             for line in lines {
                 let trimmed = line.trim();
@@ -49,6 +51,9 @@ impl LanguageAdapter for OcamlAdapter {
                     }
                 } else if let Some(rest) = trimmed.strip_prefix("let ") {
                     if let Some(name) = first_ocaml_name(rest) {
+                        if let Some(sig) = ocaml_signature(rest, &name) {
+                            signatures.insert(name.clone(), sig);
+                        }
                         symbols.push(Symbol {
                             name,
                             kind: "let".to_string(),
@@ -75,6 +80,7 @@ impl LanguageAdapter for OcamlAdapter {
         Ok(AstRepresentation {
             symbols,
             structure_hash: hash,
+            signatures,
             ..Default::default()
         })
     }
@@ -95,9 +101,13 @@ impl LanguageAdapter for OcamlAdapter {
 /// Extract the first valid OCaml identifier from `rest`, skipping type parameters
 /// such as `'a` or `('a, 'b)` that may appear before the actual name.
 fn first_ocaml_name(rest: &str) -> Option<String> {
-    let mut iter = rest.split_whitespace();
     let mut first = true;
-    while let Some(token) = iter.next() {
+    for token in rest.split_whitespace() {
+        // Reaching `=` means no binding name preceded it (e.g. `let () = ...`
+        // or `let _ = ...`); the tokens after it are the value, not a name.
+        if token == "=" {
+            return None;
+        }
         if token.starts_with('\'') || token.starts_with('(') {
             first = false;
             continue;
@@ -107,13 +117,29 @@ fn first_ocaml_name(rest: &str) -> Option<String> {
             first = false;
             continue;
         }
-        let name = token.trim_end_matches(|c: char| c == ',' || c == ')' || c == '=' || c == ':');
+        let name = token.trim_end_matches([',', ')', '=', ':']);
         if !name.is_empty() && name.chars().next().unwrap_or('0').is_alphabetic() {
             return Some(name.to_string());
         }
         first = false;
     }
     None
+}
+
+/// Return the whitespace-separated argument tokens of an OCaml `let` binding — the text between
+/// the binding `name` and the `=` — so arity changes register as `modified` while the stable
+/// bare-identifier `name` is kept. Body-independent: the right-hand side after `=` is not
+/// captured. Returns `None` for value bindings with no arguments (`let x = 1`).
+fn ocaml_signature(rest: &str, name: &str) -> Option<String> {
+    let pos = rest.find(name)?;
+    let after = &rest[pos + name.len()..];
+    let eq = after.find('=')?;
+    let args = after[..eq].trim();
+    if args.is_empty() {
+        None
+    } else {
+        Some(args.to_string())
+    }
 }
 
 #[cfg(test)]

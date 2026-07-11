@@ -1,0 +1,1 @@
+#define mode 1
