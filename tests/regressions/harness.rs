@@ -116,11 +116,16 @@ enabled = true
         String::from_utf8_lossy(&output.stdout).into_owned()
     }
 
-    /// Count of daemon-authored commits in the outer repo.
+    /// Count of daemon-authored bumping commits in the outer repo.
+    ///
+    /// Subjects are conventional-commit style since D2, so daemon commits are
+    /// identified by the scorecard body line instead: bumping commits carry
+    /// `kaptaind: <Bump> -> v<version> [...]`, chore captures carry
+    /// `kaptaind: no-bump [...]`.
     pub fn kaptaind_commits(&self) -> usize {
-        self.git(&["log", "--format=%s"])
+        self.git(&["log", "--format=%b"])
             .lines()
-            .filter(|subject| subject.starts_with("kaptaind:"))
+            .filter(|line| line.starts_with("kaptaind: ") && !line.starts_with("kaptaind: no-bump"))
             .count()
     }
 
