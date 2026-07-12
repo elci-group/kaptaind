@@ -55,14 +55,38 @@ const SELF_WRITE_CAP: usize = 64;
 /// is deliberately narrow: exact absolute paths, 60s TTL, and mixed events are
 /// split so a genuine edit that shares an event with a self-write still
 /// clusters.
+///
+/// Hook executions are a second daemon-caused write source: a cargo-based
+/// test (or bundle build) command creates its target dir via an atomic
+/// rename of a tempfile tempdir — `target` plus exactly 6 alphanumeric
+/// chars, e.g. `target3zq9h9` (confirmed by strace on `cargo check`). That
+/// tempdir is neither a recorded self-write nor matched by the default
+/// `.kaptainignore` `target` pattern (which covers the dir `target`, not
+/// `targetXXXXXX`), so it clusters as a phantom change — observed in the
+/// chaos soak as an extra bump commit (a skipped patch) and as a failed
+/// empty chore commit. While a cargo-based hook runs (plus one TTL after it
+/// completes) the guard therefore also suppresses repo-root `target*`
+/// build artifacts. Suppression stays path- and time-bounded: outside the
+/// hook window nothing changes, and a genuine edit can never be swallowed
+/// beyond the TTL.
 struct SelfWriteGuard {
     writes: VecDeque<(PathBuf, Instant)>,
+    /// Repo root; hook-artifact suppression is anchored here because cargo
+    /// creates its tempdir next to the target dir, i.e. at the root.
+    repo_root: PathBuf,
+    /// Hook-artifact suppression is active until this instant. Armed when a
+    /// cargo-based hook starts and re-armed when it completes, so the TTL
+    /// covers events that queue in the watcher channel while the scheduler
+    /// is busy running the hook.
+    hook_artifacts_until: Option<Instant>,
 }
 
 impl SelfWriteGuard {
-    fn new() -> Self {
+    fn new(repo_root: PathBuf) -> Self {
         Self {
             writes: VecDeque::new(),
+            repo_root,
+            hook_artifacts_until: None,
         }
     }
 
@@ -75,6 +99,11 @@ impl SelfWriteGuard {
         while self.writes.len() > SELF_WRITE_CAP {
             self.writes.pop_front();
         }
+    }
+
+    /// Arm hook-artifact suppression for SELF_WRITE_TTL from now.
+    fn arm_hook_artifacts(&mut self) {
+        self.hook_artifacts_until = Some(Instant::now() + SELF_WRITE_TTL);
     }
 
     /// Drop expired entries. Pushes are chronological, so the front is oldest.
@@ -91,8 +120,60 @@ impl SelfWriteGuard {
     /// True if `path` is a daemon-caused write within the TTL window.
     fn is_self_write(&mut self, path: &Path) -> bool {
         self.prune();
-        self.writes.iter().any(|(recorded, _)| recorded == path)
+        self.writes.iter().any(|(recorded, _)| recorded == path) || self.is_hook_artifact(path)
     }
+
+    /// True while a cargo-based hook is running or within the TTL after it.
+    fn hook_artifacts_active(&self) -> bool {
+        self.hook_artifacts_until
+            .is_some_and(|until| Instant::now() < until)
+    }
+
+    /// True if `path` is a transient hook-build artifact at the repo root:
+    /// the `target` dir itself (the rename destination of cargo's tempdir,
+    /// plus its build churn for setups whose ignore file doesn't cover it)
+    /// or the `targetXXXXXX` tempdir. Anything deeper or elsewhere is a
+    /// genuine path and must cluster normally.
+    fn is_hook_artifact(&self, path: &Path) -> bool {
+        if !self.hook_artifacts_active() {
+            return false;
+        }
+        let Ok(relative) = path.strip_prefix(&self.repo_root) else {
+            return false;
+        };
+        let mut components = relative.components();
+        let Some(first) = components.next() else {
+            return false;
+        };
+        let Some(name) = first.as_os_str().to_str() else {
+            return false;
+        };
+        if name == "target" {
+            return true;
+        }
+        // Cargo's atomic target-dir create: tempfile names the tempdir
+        // prefix + exactly 6 alphanumeric chars, at the repo root only.
+        components.next().is_none()
+            && name.strip_prefix("target").is_some_and(|suffix| {
+                suffix.len() == 6 && suffix.bytes().all(|b| b.is_ascii_alphanumeric())
+            })
+    }
+}
+
+/// True if a hook command invokes cargo (`cargo test`,
+/// `RUSTFLAGS=... cargo build`, `/usr/bin/cargo check`). Only cargo-based
+/// hooks create the repo-root `targetXXXXXX` tempdir, so hook-artifact
+/// suppression is gated on this and non-cargo hooks are unaffected. A
+/// command that merely mentions cargo (e.g. `echo cargo`) also arms it;
+/// the worst case is bounded suppression of repo-root `target*` paths for
+/// one hook window + TTL.
+fn hook_command_uses_cargo(command: Option<&str>) -> bool {
+    let Some(command) = command else {
+        return false;
+    };
+    command
+        .split(|c: char| !(c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '/' | '.')))
+        .any(|token| token == "cargo" || token.ends_with("/cargo") || token.starts_with("cargo-"))
 }
 
 pub async fn run(
@@ -151,7 +232,7 @@ pub async fn run(
 
     let mut ignore_matcher = IgnoreMatcher::load(&config.repo_path, &config.watch.ignore_file);
     let mut last_commit_at: Option<DateTime<Utc>> = None;
-    let mut self_writes = SelfWriteGuard::new();
+    let mut self_writes = SelfWriteGuard::new(config.repo_path.clone());
 
     // Crash-safety (C2): a stale pid file from a kill -9 is detected and
     // removed before we start processing clusters; a live pid only warns.
@@ -555,7 +636,24 @@ async fn process_cluster(
         .unwrap_or(false);
 
     test_outcome = if should_run_tests(&config.test, &cluster_paths) {
-        run_test_hook(config).await
+        // A cargo-based test hook creates its target dir via an atomic-rename
+        // `targetXXXXXX` tempdir at the repo root; that path is neither a
+        // recorded self-write nor matched by the default `.kaptainignore`
+        // `target` pattern, so without suppression it clusters as a phantom
+        // change (chaos soak: an extra bump commit with a skipped patch, and
+        // failed empty chore commits). Bounded: cargo hooks only, repo-root
+        // target artifacts only, hook duration + SELF_WRITE_TTL.
+        let cargo_hook = hook_command_uses_cargo(config.test.command.as_deref());
+        if cargo_hook {
+            self_writes.arm_hook_artifacts();
+        }
+        let outcome = run_test_hook(config).await;
+        if cargo_hook {
+            // Re-arm so the TTL starts after completion: the hook's fs events
+            // queue in the watcher channel while the scheduler is busy here.
+            self_writes.arm_hook_artifacts();
+        }
+        outcome
     } else {
         tracing::debug!("docs-only cluster; skipping test hook (command_on = code_only)");
         TestOutcome::Skipped
@@ -661,7 +759,16 @@ async fn process_cluster(
 
     let mut diff = crate::diff::analyze_with_plugins(&cluster, &config.repo_path, &config.plugins);
     if config.bundle.command.is_some() && config.capabilities.bundle_scoring {
+        // Same hook-artifact suppression as the test hook: a cargo-based
+        // bundle build command creates the repo-root `targetXXXXXX` tempdir.
+        let cargo_build = hook_command_uses_cargo(config.bundle.command.as_deref());
+        if cargo_build {
+            self_writes.arm_hook_artifacts();
+        }
         diff.bundle = crate::diff::bundle::bundle_score(&config.bundle, &config.repo_path).score;
+        if cargo_build {
+            self_writes.arm_hook_artifacts();
+        }
     }
     crate::daemon::telemetry::update_cache_metrics(
         &config.repo_path,
@@ -2187,11 +2294,11 @@ impl TestFailureStreak {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_test_outcome, cluster_is_docs_only, format_commit, is_config_path, looks_like_glob,
-        parse_failed_tests, persist_analysis_artifact, rate_limit_allows, reload_config,
-        run_test_hook, save_version, should_block_commit, should_run_tests, AnalysisArtifact,
-        IgnoreMatcher, SelfWriteGuard, TestFailureStreak, TestOutcome, SELF_WRITE_CAP,
-        SELF_WRITE_TTL,
+        apply_test_outcome, cluster_is_docs_only, format_commit, hook_command_uses_cargo,
+        is_config_path, looks_like_glob, parse_failed_tests, persist_analysis_artifact,
+        rate_limit_allows, reload_config, run_test_hook, save_version, should_block_commit,
+        should_run_tests, AnalysisArtifact, IgnoreMatcher, SelfWriteGuard, TestFailureStreak,
+        TestOutcome, SELF_WRITE_CAP, SELF_WRITE_TTL,
     };
     use crate::cluster::engine::Cluster;
     use crate::config::loader::{Config, TestCommandOn, TestConfig};
@@ -2223,7 +2330,7 @@ mod tests {
     /// cannot form.
     #[test]
     fn self_write_guard_suppresses_recorded_paths_within_ttl() {
-        let mut guard = SelfWriteGuard::new();
+        let mut guard = SelfWriteGuard::new("/repo".into());
         let version = std::path::PathBuf::from("/repo/VERSION");
         guard.record([version.clone()]);
         assert!(guard.is_self_write(&version));
@@ -2232,7 +2339,7 @@ mod tests {
 
     #[test]
     fn self_write_guard_expires_entries_after_ttl() {
-        let mut guard = SelfWriteGuard::new();
+        let mut guard = SelfWriteGuard::new("/repo".into());
         let path = std::path::PathBuf::from("/repo/VERSION");
         // Backdate beyond the TTL instead of sleeping.
         guard.writes.push_back((
@@ -2245,11 +2352,64 @@ mod tests {
 
     #[test]
     fn self_write_guard_caps_memory() {
-        let mut guard = SelfWriteGuard::new();
+        let mut guard = SelfWriteGuard::new("/repo".into());
         for i in 0..(SELF_WRITE_CAP + 10) {
             guard.record([std::path::PathBuf::from(format!("/repo/file{i}"))]);
         }
         assert!(guard.writes.len() <= SELF_WRITE_CAP);
+    }
+
+    /// Regression (chaos soak): a cargo hook's atomic target-dir tempdir
+    /// (`target` + 6 alphanumeric chars at the repo root) is suppressed
+    /// while the hook window is armed, and only then.
+    #[test]
+    fn hook_artifact_suppression_covers_cargo_tempdir_at_root() {
+        let mut guard = SelfWriteGuard::new("/repo".into());
+        let tempdir = std::path::PathBuf::from("/repo/target3zq9h9");
+        // Not armed: the tempdir clusters like any other path.
+        assert!(!guard.is_self_write(&tempdir));
+
+        guard.arm_hook_artifacts();
+        assert!(guard.is_self_write(&tempdir), "cargo tempdir at root");
+        assert!(
+            guard.is_self_write(&std::path::PathBuf::from("/repo/target")),
+            "rename destination of the tempdir"
+        );
+        assert!(
+            guard.is_self_write(&std::path::PathBuf::from("/repo/target/debug/build")),
+            "build churn inside target (setups without a `target` ignore)"
+        );
+
+        // Lookalikes must still cluster: wrong suffix length/charset, a
+        // tempdir nested below the root, unrelated paths.
+        assert!(!guard.is_self_write(&std::path::PathBuf::from("/repo/target12345")));
+        assert!(!guard.is_self_write(&std::path::PathBuf::from("/repo/target1234567")));
+        assert!(!guard.is_self_write(&std::path::PathBuf::from("/repo/targetab!def")));
+        assert!(!guard.is_self_write(&std::path::PathBuf::from("/repo/target3zq9h9/inner")));
+        assert!(!guard.is_self_write(&std::path::PathBuf::from("/repo/src/target3zq9h9")));
+        assert!(!guard.is_self_write(&std::path::PathBuf::from("/repo/src/main.rs")));
+        assert!(!guard.is_self_write(&std::path::PathBuf::from("/other/target3zq9h9")));
+    }
+
+    #[test]
+    fn hook_artifact_suppression_expires_with_ttl() {
+        let mut guard = SelfWriteGuard::new("/repo".into());
+        // Backdate the window instead of sleeping.
+        guard.hook_artifacts_until = Some(std::time::Instant::now() - Duration::from_secs(1));
+        assert!(!guard.is_self_write(&std::path::PathBuf::from("/repo/target3zq9h9")));
+    }
+
+    #[test]
+    fn cargo_hook_detection_matches_word_tokens() {
+        assert!(hook_command_uses_cargo(Some("cargo test")));
+        assert!(hook_command_uses_cargo(Some(
+            "RUSTFLAGS=-Awarnings cargo test --release"
+        )));
+        assert!(hook_command_uses_cargo(Some("/usr/bin/cargo check")));
+        assert!(hook_command_uses_cargo(Some("cargo-nextest run")));
+        assert!(!hook_command_uses_cargo(Some("npm test")));
+        assert!(!hook_command_uses_cargo(Some("true")));
+        assert!(!hook_command_uses_cargo(None));
     }
 
     #[test]

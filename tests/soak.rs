@@ -135,17 +135,9 @@ fn daemon_soak_chaos_invariants() {
 
     let log_file = std::fs::File::create(&log_path).expect("daemon log file");
     let log_file_err = log_file.try_clone().expect("clone log handle");
-    // Isolate the daemon test hook's `cargo test` target dir inside the
-    // ignored .kaptaind/ tree: cargo creates its target dir via a
-    // `targetXXXXXX` tempdir next to it, and without this that transient
-    // dir lands in the watched root, clusters, and produces a phantom
-    // second commit (daemon-side gap: the self-write guard only covers the
-    // version meta files).
-    let cargo_target_dir = kaptaind_dir.join("soak-target");
     // tracing_subscriber::fmt writes to stdout; stderr carries panics.
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(&project)
-        .env("CARGO_TARGET_DIR", &cargo_target_dir)
         .stdout(Stdio::from(log_file))
         .stderr(Stdio::from(log_file_err))
         .spawn()

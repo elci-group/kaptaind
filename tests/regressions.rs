@@ -486,6 +486,85 @@ fn daemon_survives_invalid_config_edit() {
     }
 }
 
+/// Chaos-soak finding: the daemon's default `cargo test` hook creates its
+/// target dir via an atomic-rename `targetXXXXXX` tempdir at the project
+/// root. That path is neither a recorded self-write nor matched by the
+/// `.kaptainignore` `target` pattern (which covers the dir `target`, not
+/// `targetXXXXXX`), so without hook-artifact suppression it clusters as a
+/// phantom second commit — observed both as an extra bump commit (VERSION
+/// skipped a patch) and as a failed empty chore commit logging ERROR.
+///
+/// This fixture runs the REAL `cargo test` hook (the harness default) with
+/// NO `CARGO_TARGET_DIR` workaround: the daemon must handle hook artifacts
+/// natively.
+#[test]
+fn no_phantom_cluster_from_test_hook_target_dir() {
+    let fixture = MonorepoFixture::new(19115);
+
+    let kaptaind_dir = fixture.project().join(".kaptaind");
+    std::fs::create_dir_all(&kaptaind_dir).expect("mkdir .kaptaind");
+    let log_path = kaptaind_dir.join("regression-daemon.log");
+    let log_file = std::fs::File::create(&log_path).expect("daemon log file");
+    let log_file_err = log_file.try_clone().expect("clone log handle");
+
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
+        .current_dir(fixture.project())
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_file_err))
+        .spawn()
+        .expect("daemon spawns");
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // Let the watcher settle before editing.
+        std::thread::sleep(Duration::from_secs(2));
+
+        substantial_edit(&fixture.project());
+
+        // The first (and only) commit: cluster window is 1s, the fixture's
+        // cargo test hook compiles a tiny crate.
+        wait_for(Duration::from_secs(45), || fixture.kaptaind_commits() >= 1);
+
+        // Watch well beyond the cluster window: the phantom cluster from
+        // the hook's target tempdir would land here as a second commit.
+        std::thread::sleep(Duration::from_secs(10));
+        assert_eq!(
+            fixture.kaptaind_commits(),
+            1,
+            "phantom commit from the test hook's cargo target tempdir"
+        );
+        assert_eq!(
+            fixture.chore_commits(),
+            0,
+            "hook target tempdir must not produce a chore commit either"
+        );
+
+        // Exactly one patch bump: 0.1.0 -> 0.1.1, never a skipped patch.
+        assert_eq!(
+            fixture.git(&["show", "HEAD:proj/VERSION"]).trim(),
+            "0.1.1",
+            "VERSION must advance by exactly one patch"
+        );
+
+        // Reap the daemon so its log is final, then scan it.
+        let _ = daemon.kill();
+        let _ = daemon.wait();
+        let log = std::fs::read_to_string(&log_path).expect("read daemon log");
+        let errors: Vec<&str> = log.lines().filter(|line| line.contains("ERROR")).collect();
+        assert!(
+            errors.is_empty(),
+            "daemon logged ERROR lines:\n{}",
+            errors.join("\n")
+        );
+    }));
+
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
 fn wait_for(timeout: Duration, mut condition: impl FnMut() -> bool) {
     let start = Instant::now();
     while start.elapsed() < timeout {
