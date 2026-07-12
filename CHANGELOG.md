@@ -13,6 +13,29 @@ All notable changes to kaptaind are documented here. The format follows
 > here. Per-commit detail for the `v0.1.44 → v9.x` range lives in `git log`;
 > the consolidated capability set is summarized under `[9.7.16]` below.
 
+## [10.0.1] — 2026-07-12
+
+Patch release: a cascade fix found by the new nightly chaos soak.
+
+### Fixed
+- **Phantom commits from test-hook cargo tempdirs.** Cargo creates its
+  target dir as a root-level `targetXXXXXX` tempdir atomically renamed to
+  `target`. That path escaped the version-file self-write guard and is not
+  matched by the default `target` ignore pattern, so the daemon's own
+  `cargo test` hook clustered a phantom change — observed skipping a patch
+  version and logging `ERROR` on empty chore commits. The self-write guard
+  now carries a hook-artifact window: while a cargo-based test/bundle hook
+  runs (plus the existing 60s TTL), root-level `target`/tempdir events are
+  suppressed. Path- and time-bounded; non-cargo hooks unaffected.
+
+### Added
+- **Nightly chaos soak** (`tests/soak.rs`, `.github/workflows/soak.yml`):
+  a deterministic wave-based workload generator runs the real daemon for
+  30 minutes in CI, asserting ≤1 commit per genuine cluster, version-triple
+  consistency at every commit, lockfile consistency, and zero daemon
+  errors. Run locally with
+  `KAPTAIND_SOAK_SECS=600 cargo test --test soak -- --ignored --nocapture`.
+
 ## [10.0.0] — 2026-07-11
 
 Workstream D (workflow integrity) of the autonomous-commit safety plan — the
