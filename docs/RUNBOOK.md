@@ -89,6 +89,25 @@ resolved from `VERSION`, then `Cargo.toml [package].version`, and never
 guessed; a computed downgrade is refused (commit fails with
 `version_write_failed` in the decisions log).
 
+## Chaos soak
+
+`tests/soak.rs` drives the real daemon against a synthetic workload
+generator and asserts: ≤1 commit per genuine cluster (wave), the
+VERSION/Cargo.toml/Cargo.lock triple agrees at every commit in history,
+`cargo metadata --locked` passes at every commit (plus a full
+`cargo build --locked` at HEAD when `KAPTAIND_SOAK_BUILD=1`), and the
+daemon log is free of ERROR lines. It is `#[ignore]`d, so run it
+explicitly:
+
+```sh
+KAPTAIND_SOAK_SECS=600 cargo test --test soak -- --ignored --nocapture
+```
+
+A JSON report lands in the fixture's `.kaptaind/soak-<timestamp>.json`;
+set `KAPTAIND_SOAK_LOG_DIR` to also export the daemon log and report. CI
+runs the full 30-minute soak nightly via `.github/workflows/soak.yml`
+(03:17 UTC, or manually with workflow_dispatch).
+
 ## Monorepo notes
 
 The daemon distinguishes the **git root** (where git commands anchor) from

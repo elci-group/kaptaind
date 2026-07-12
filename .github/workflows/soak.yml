@@ -1,0 +1,43 @@
+name: Chaos Soak
+
+# Nightly 30-minute daemon soak (AUTONOMOUS_COMMIT_SAFETY_PLAN.md §7.5):
+# drives the real daemon against a synthetic workload and asserts
+# ≤1 commit per genuine cluster, version-triple consistency at every
+# commit, and a green `cargo build --locked` at HEAD.
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  soak:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30  # stable
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32  # v2
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Run chaos soak (30 min)
+        run: cargo test --release --test soak -- --ignored --nocapture
+        env:
+          KAPTAIND_SOAK_SECS: "1800"
+          KAPTAIND_SOAK_BUILD: "1"
+          KAPTAIND_SOAK_LOG_DIR: soak-artifacts
+
+      - name: Upload soak artifacts
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+        with:
+          name: soak-artifacts-${{ github.run_id }}
+          path: soak-artifacts/
+          if-no-files-found: warn
