@@ -32,10 +32,23 @@ impl LanguageAdapter for ClojureAdapter {
         let mut symbols = Vec::new();
         let mut signatures = HashMap::new();
         if let Ok(lines) = read_lines_safe(file) {
+            // Paren depth of a `(comment ...)` form: its body is not public
+            // API (measured messy-corpus FP, rev 26).
+            let mut comment_depth: i32 = 0;
             for line in lines {
                 let trimmed = line.trim();
                 // Clojure comments start with `;`.
                 if trimmed.starts_with(';') {
+                    continue;
+                }
+                if comment_depth > 0 {
+                    comment_depth +=
+                        trimmed.matches('(').count() as i32 - trimmed.matches(')').count() as i32;
+                    continue;
+                }
+                if trimmed.starts_with("(comment") {
+                    comment_depth +=
+                        trimmed.matches('(').count() as i32 - trimmed.matches(')').count() as i32;
                     continue;
                 }
                 if let Some(rest) = trimmed.strip_prefix("(defn ") {

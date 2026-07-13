@@ -33,8 +33,23 @@ impl LanguageAdapter for PerlAdapter {
         let mut signatures = HashMap::new();
         let lines = read_lines_safe(file)?;
 
+        // Track POD documentation blocks (`=pod`/`=head1`/... until `=cut`) so
+        // documented-but-dead subs are not mistaken for public API (measured
+        // messy-corpus FP, rev 26).
+        let mut in_pod = false;
         for line in lines {
             let trimmed = line.trim();
+            if in_pod {
+                if trimmed.starts_with("=cut") {
+                    in_pod = false;
+                }
+                continue;
+            }
+            if trimmed.starts_with('=') && trimmed.chars().nth(1).is_some_and(|c| c.is_alphabetic())
+            {
+                in_pod = true;
+                continue;
+            }
 
             if let Some(rest) = trimmed.strip_prefix("package ") {
                 let name = rest

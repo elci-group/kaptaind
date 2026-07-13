@@ -777,24 +777,250 @@ and a corrected diagnosis showing the residual 4 are oracle questions, not adapt
    waiting for: per-adapter comment/docstring stripping is now justified for c, cpp, kotlin,
    python (docstrings), typescript (route markers), vue (macro substrings) — fixes land one at a
    time, measure → change → re-measure against BOTH labels.json (must stay 1.000) and
-   labels_messy.json (must rise), calibration unchanged. Confidence re-table decision (rev 22):** the gold
+   labels_messy.json (must rise), calibration unchanged. **Comment-leak fixes DONE (rev 24):**
+   all 7 measured FPs fixed in two waves — wave 1: java-style block-comment tracking added to
+   `c.rs`/`cpp.rs`/`kotlin.rs` (c 0.857→1.000, cpp 0.750→1.000, kotlin 0.800→1.000); wave 2:
+   `python.rs` triple-quoted docstring tracking (0.889→1.000), `common.rs` route-marker branch
+   excludes `//` comment lines (typescript 0.800→1.000), `vue.rs` skips `//` comments before
+   macro substring matching (0.667→1.000). **Messy TOTAL 0.857 → 1.000 (TP 21 / FP 0 / FN 0)**;
+   clean TOTAL stays 1.000; calibration unchanged (pos 150/150, neg 3/101, breaking 79/82,
+   modified 78/112, signature 15/15); 441 lib tests, fmt/clippy clean, guard green. **Messy
+   corpus widened to all 28 adapters (rev 25):** +20 probes (29 files total) → **TOTAL F1 0.866
+   (P 0.763 / R 1.000, TP 58 / FP 18 / FN 0)**; recall perfect everywhere. 18 FPs across 16
+   adapters, all comment/substring leakage: block-comment leaks (no tracking) in go, ruby
+   (`=begin`), perl (`=pod`), lua (`--[[`), scala, dart, javascript, typescript, php, scss,
+   htmlcss; multi-line-comment-state leaks in fsharp/ocaml (`(* *)` openers skipped but no
+   state), haskell (`{- -}`); clojure `(comment ...)` form bodies leak (line-based);
+   token/substring leaks in csharp (`has_public_modifier` is token-based — `// public class X`
+   leaks), svelte (`$props(` substring in comment), astro (`Astro.props` substring in comment).
+   Measured CLEAN (1.000): c/cpp/kotlin/python/typescript-markers/vue (rev-24 fixes hold), java,
+   rust, swift, erlang, elixir. **Structural finding (parked):** svelte `rune_state`/
+   `rune_derived` are unreachable in the default (Svelte 4) parse — the rune gate is
+   `is_svelte5 || line.contains("$props(")`, so `$state(`/`$derived(` lines never enter the
+   branch without a `$props(` on the same line or a versioned parse; needs an emission-model
+   decision, not a corpus tweak. **Leaker fixes DONE (rev 26):** all 16 fixed in three waves —
+   wave A `/* */` tracking for go/scala/dart/javascript/typescript(common.rs)/php/scss/htmlcss;
+   wave B language-specific block comments: ruby `=begin/=end`, perl POD (`=<alpha>`…`=cut`),
+   lua `--[[ ]]`, haskell `{- -}`, fsharp/ocaml `(* *)` state (replacing opener-only skips);
+   wave C: clojure `(comment …)` paren-balance tracking, csharp `/* */` tracking (its `//` skip
+   already worked — measured FP was block-only), svelte/astro `//` comment guards before
+   substring matches. **Messy TOTAL 0.866 → 1.000 (TP 58 / FP 0 / FN 0); clean TOTAL stays
+   1.000; calibration unchanged; 461 lib tests; clippy clean; fmt clean on arc files** (one fmt
+   diff in `tests/regressions.rs` belongs to another session — hands-off). Confidence re-table decision (rev 22):** the gold
    data proves emission correctness on clean, unambiguous surface for every adapter, and the
    calibration corpus holds at pos 150/150 — but a ~4-symbol-per-file seed does NOT measure
    precision/recall on messy real-world code (comments, macros, codegen, nested visibility).
    Decision: **keep the current confidence table**; the rev-1 downgrades stay withdrawn (the
    only two known emission defects are now fixed and measured), and any re-table is gated on a
    larger real-world gold corpus (next backlog slice), not on clean seeds alone.
-6. **Generated/minified down-weight (X3, P1):** skip codegen/`*.min.*` so they don't
-   register as live API (roadmap §8).
-7. **Per-adapter comment/string stripping (X1)** — **reactivated by rev-23 messy-corpus
-   evidence**: 7 measured FPs, all comment/docstring/substring leakage — c (block-comment fn),
-   cpp (block-comment class+fn), kotlin (block-comment class), python (docstring def),
-   typescript (route-marker substring in `//` comment), vue (`defineProps` substring in `//`
-   comment). Falsified for swift (1.000 on messy probe); scss/svelte/astro still unprobed.
-   Fix per-adapter (java-style block-comment tracking / prefix checks), one at a time,
-   measured against both gold label sets.
-8. **Re-table confidence** on gold-label data, then re-measure (not before).
-9. **AST-grade T1** (C/C++/Java/C#/PHP) — sequential, one language at a time.
-10. **New T2/T3 adapters** (SQL, Terraform/HCL, Solidity, Groovy, Julia, R, Objective-C,
-   Zig, …) — sequential; each edits the shared registry (not swarm-safe).
+6. ~~**Generated/minified down-weight (X3, P1):** skip codegen/`*.min.*` so they don't
+   register as live API (roadmap §8).~~ — **DONE (rev 28):** `is_generated_artifact()`
+   (`src/diff/ast.rs:328`) guards the top of the `api_score_inner` per-file loop, covering both
+   the adapter and fallback branches. Filename conventions: `.min.`, `.generated.`,
+   `_generated.`, `.pb.go`, `.designer.`; header markers (first 4 KiB, 5 lines): Go
+   `Code generated … DO NOT EDIT`, .NET `<auto-generated`, GraphQL/Relay `@generated`.
+   Measure-first: new test `generated_artifacts_do_not_register_as_api` failed before the fix
+   (min.js/.pb.go/Code-generated .ts all registered signatures; measured 4 vs control-only 1),
+   passes after. 486 lib tests, fmt/clippy clean, both gold corpora 1.000, calibration
+   unchanged.
+7. **Per-adapter comment/string stripping (X1)** — **DONE (rev 24)**: reactivated by rev-23
+   messy-corpus evidence (7 measured FPs: c/cpp/kotlin block comments, python docstring,
+   typescript route-marker comment, vue macro-substring comment); all 7 fixed one adapter at a
+   time (block-comment tracking for c/cpp/kotlin, docstring tracking for python, `//` comment
+   guards for typescript route markers and vue macros). Messy TOTAL 0.857 → 1.000, clean stays
+   1.000, calibration unchanged. Falsified for swift (1.000 on messy probe); scss/svelte/astro
+   remain unprobed — probe them if the messy corpus widens.
+8. ~~**Re-table confidence** on gold-label data, then re-measure (not before).~~ — **EVALUATED
+   (rev 27), table kept unchanged.** `normalize()` (`src/diff/lang/mod.rs:9`) tiers vs evidence:
+   every defect motivating the rev-1 downgrade proposals is fixed and verified (php modifiers,
+   python underscores/docstrings, 23 comment-leak FPs across 22 adapters); clean gold 1.000 and
+   messy gold 1.000 across all 28 adapters; calibration pos 150/150. Tier ordering matches
+   structural capability: parser-grade (rust 1.0) > visibility-aware line parsers (go/swift/
+   kotlin 1.0, java/csharp 0.85, scala/dart 0.8) > export/underscore-gated (ts 0.9,
+   python/php/elixir/erlang 0.8, js/ruby/clojure 0.75-0.7) > no-visibility line parsers
+   (c/cpp/haskell/lua/ocaml/perl/fsharp 0.7) > line/macro-granular (scss 0.5, htmlcss 0.4).
+   Noted anomaly (no numeric action): vue/svelte/astro 0.85 sit above python 0.8 despite
+   macro/whole-line granularity, and svelte has the parked unreachable-rune recall gap (rev 25)
+   — but the corpora measure precision/recall on probes, not tier placement at 0.05 resolution,
+   so moving numbers now would be unevidenced. **Criteria for any future re-table:** a
+   per-language recall corpus of ≥20 real-world files per adapter (mixed visibility, generics,
+   decorators, re-exports) measured against human labels; tier moves require measured F1
+   separation at that scale.
+9. ~~**AST-grade T1** (C/C++/Java/C#/PHP) — sequential, one language at a time.~~ — **DEFERRED
+   (rev 29), evidence-backed.** Evaluation: no measured defect requires grammar-grade parsing.
+   Both gold corpora are 1.000 across all 28 adapters; calibration pos 150/150; the remaining
+   soft metrics are semantics, not parse-grade: the per-adapter modified 3/4 "miss" was verified
+   to be the by-design control pair (e.g. `tests/fixtures/adapters/c/modified/control_*.h` adds
+   a struct field — symbols unchanged, correctly not a kind-change; a real AST parser would
+   score it identically), and neg 3/101 / breaking 79/82 are corpus-labeling questions.
+   Cost side: AST-grade means tree-sitter + 5 grammar crates (C builds) — zero such deps exist
+   today, and the project's supply-chain policy (deny.toml, DEPENDENCY_AUDIT.md, in-house
+   replacements) forbids unevidenced dependency growth. **Trigger criteria to re-open:** (a) a
+   gold-corpus failure attributable to line-parsing that bounded line-based logic cannot fix;
+   (b) a per-language recall corpus (≥20 real-world files, human-labeled) showing F1 separation
+   only grammar-grade parsing can close; (c) a user-reported mis-analysis traced to line-parsing.
+10. **New T2/T3 adapters** (~~SQL~~, ~~Terraform/HCL~~, ~~Solidity~~, ~~Groovy~~, ~~Julia~~, ~~R~~, ~~Objective-C~~,
+   ~~Zig~~, …) — sequential; each edits the shared registry (not swarm-safe). **SQL DONE (rev 30,
+   first new adapter):** `src/diff/lang/adapters/sql.rs` — T2 structured scanner; `CREATE`/`DROP`
+   schema objects (10 object kinds) as surface, DML excluded, `drop_<object>` kinds, modifiers
+   (`OR REPLACE`/`UNIQUE`/`TEMP`/`MATERIALIZED`), `IF [NOT] EXISTS`, quoted/schema-qualified
+   names, case-insensitive keywords, born-correct `--` + `/* */` comment handling. Wired at all
+   four contract points (adapter, mod.rs, `normalize()` 0.7 no-visibility band, LANGUAGE_MATRIX
+   row) + lint EXT_PROBE + SOURCES backlog update. Evidence: 7 unit tests; clean gold 1.000
+   (5 symbols; TOTAL 119 across 29 langs); messy gold 1.000 (born-clean); calibration row
+   exactly as designed (pos 4/4, neg 0/2, breaking 2/3, modified 3/4, sig 0/0); TOTALs rose to
+   154/154 pos, 81/85 breaking, 81/116 modified with zero regressions in existing rows; 493 lib
+   tests, fmt/clippy clean, no-orphan lint green. **HCL DONE (rev 31, second new adapter):**
+   `src/diff/lang/adapters/hcl.rs` — T2 structured scanner; Terraform labeled blocks as surface
+   (`variable`/`output`/`module`/`provider`; `resource`/`data` as qualified `type.name`
+   addresses), unlabeled blocks (`terraform`/`locals`/`moved`/`import`) structural, `.tfvars`
+   excluded, born-correct `#`/`//`/`/* */` comment + `<<TAG` heredoc tracking. Wired at all
+   four contract points + lint EXT_PROBE (`tf`, `hcl`) + SOURCES backlog update. Evidence: 6
+   unit tests; clean gold 1.000 (5 symbols; TOTAL 124 across 30 langs); messy gold 1.000
+   (comment/heredoc fakes rejected, born-clean); calibration row exactly as designed (pos 4/4,
+   neg 0/2, breaking 2/3, modified 3/4, sig 0/0); TOTALs rose to 158/158 pos, 83/88 breaking,
+   84/120 modified with zero regressions; 499 lib tests, fmt/clippy clean (pre-existing
+   `tests/soak.rs` fmt diff belongs to another session), no-orphan lint green. **SOLIDITY DONE
+   (rev 32, third new adapter):** `src/diff/lang/adapters/solidity.rs` — T2 structured scanner;
+   ABI surface: `contract`/`interface`/`library` declarations, `public`/`external` functions,
+   `public` state variables, `event`/`error`/`modifier`/`struct`/`enum`, and
+   constructor/fallback/receive entry points; `internal`/`private` skipped (explicit visibility
+   model honored → 0.8 confidence band); file-level free functions (no visibility keyword)
+   treated as surface. Selector-grade signatures: function/event/error/constructor headers
+   recorded as canonical parameter-type tuples (`(address,uint256)`, data-location/indexed/
+   payable tokens and parameter names stripped) via multi-line header accumulation to the
+   `{`/`;` terminator at paren depth 0 — parameter renames are invisible, parameter-type changes
+   register as modifications. Born-correct `//`/`///`/`/* */` comment handling. Wired at all
+   four contract points + lint EXT_PROBE (`sol`) + SOURCES backlog update. Evidence: 9 unit
+   tests; clean gold 1.000 (6 symbols; TOTAL 130 across 31 langs); messy gold 1.000 (comment
+   fakes rejected, born-clean); calibration row exactly as designed (pos 4/4, neg 0/2, breaking
+   2/3, modified 3/4, sig 1/2 — first rev-30+ adapter with a signature corpus: param-type change
+   detected, param-rename control invisible); TOTALs rose to 162/162 pos, 85/91 breaking,
+   87/124 modified, 16/17 signature with zero regressions; 508 lib tests, fmt/clippy clean
+   (pre-existing `tests/soak.rs` fmt diff belongs to another session), no-orphan lint green.
+   **GROOVY DONE (rev 33, fourth new adapter):** `src/diff/lang/adapters/groovy.rs` — T2
+   structured scanner; public-by-default semantics: `class`/`interface`/`trait`/`enum`/
+   `@interface` declarations, methods (`def`/typed, incl. script-level), PascalCase
+   constructors, and depth-1 properties (fields without visibility keywords generate
+   getters/setters — brace-depth gating keeps method-locals out); `private`/`protected`
+   skipped. Canonical param-type signatures (`(int,String)`, bare params → `def`, defaults
+   and annotations dropped) via multi-line header accumulation completing at `{`/`;` OR on
+   balanced parens (Groovy interface methods need no terminator). Born-correct `//`/`/* */`
+   comments, `#!` shebang, and `'''`/`"""` triple-quoted string tracking. Call-site defense:
+   prefix `=`/`)`/`.` rejection, statement-keyword reject sets, annotation-only prefix
+   rejection, and a return-type-token requirement (`def`/primitive/PascalCase) that kills
+   `println greet("world")`-style FPs. Two bugs found and fixed mid-slice (empty-prefix
+   `all()` vacuous-truth constructor kill; terminator-less interface methods). Wired at all
+   four contract points + lint EXT_PROBE (`groovy`) + SOURCES backlog update. Evidence: 11
+   unit tests; clean gold 1.000 (6 symbols; TOTAL 136 across 32 langs); messy gold 1.000
+   (comment/triple-quote fakes rejected, born-clean); calibration row exactly as designed
+   (pos 4/4, neg 0/2, breaking 2/3, modified 3/4, sig 1/2); TOTALs rose to 166/166 pos,
+   87/94 breaking, 90/128 modified, 17/19 signature with zero regressions; 522 lib tests,
+   fmt/clippy clean (pre-existing `tests/soak.rs` fmt diff belongs to another session),
+   no-orphan lint green. **JULIA DONE (rev 34, fifth new adapter):**
+   `src/diff/lang/adapters/julia.rs` — T2 structured scanner; convention-gated surface:
+   `module`/`baremodule`, `struct`/`mutable struct`, `abstract type`, long/short-form
+   functions, `macro`, `const`, and struct fields (dot-accessible, define the default
+   constructor); `_`-prefixed names internal; qualified definitions (`function Base.show`)
+   emit the final dotted component; declarations below keyword-delimited (`end`) block
+   depth 1 excluded. Canonical dispatch-type signatures (`(Int,String)`, untyped → `Any`,
+   defaults dropped, `{}` parametric commas preserved) via balanced-paren header completion.
+   Born-correct `#`/`#= =#` comments and `"""` docstring tracking. Three bugs found and
+   fixed mid-slice (struct-field branch unreachable behind `depth <= 1`; parametric struct
+   name `Point{T}` over-capture; underscore structs still activating field tracking) plus
+   the `unsupported_languages_fall_back` lint updated (Julia graduated; R remains the pinned
+   unsupported language, `UNSUPPORTED_PROBE` const). Wired at all four contract points +
+   lint EXT_PROBE (`jl`) + SOURCES backlog update. Evidence: 11 unit tests; clean gold 1.000
+   (9 symbols; TOTAL 145 across 33 langs); messy gold 1.000 (comment/docstring fakes
+   rejected, born-clean); calibration row exactly as designed (pos 4/4, neg 0/2, breaking
+   2/3, modified 3/4, sig 1/2); TOTALs rose to 170/170 pos, 89/97 breaking, 93/132 modified,
+   18/21 signature with zero regressions; 533 lib tests, fmt/clippy clean (pre-existing
+   `tests/soak.rs` fmt diff belongs to another session), no-orphan lint green.
+   **R DONE (rev 35, sixth new adapter):** `src/diff/lang/adapters/r.rs` — T2 structured
+   scanner; R's assignment-of-`function` idiom: `name <- function()` in all operator forms
+   (`<-`, `=`, `<<-`, glued), R6 classes (`Name <- R6Class(...)`), S4 `setClass`/
+   `setGeneric`; dot-prefix internal convention (`.helper` skipped — NAMESPACE export
+   cross-referencing documented as follow-up); definitions below brace depth 0 excluded.
+   Parameter-NAME signatures (`(x,factor,...)` — defaults stripped): R callers bind by
+   name, so renames/additions register as modifications while default-value changes do not
+   (a genuinely different signature semantics from the type-tuple adapters). Boundary-
+   respecting keyword search (`myfunction` ≠ `function`), assignment-prefix validation
+   (anonymous `lapply(xs, function(x))` rejected), and quote-containing prefix rejection
+   (definition-shaped text inside string literals — one FP found and fixed mid-slice).
+   Born-correct `#`/`#'` comment handling (R has no block comments). Wired at all four
+   contract points + lint EXT_PROBE (`r`) + `UNSUPPORTED_PROBE` redesigned to never-modeled
+   extensions (`txt`, `dat`) so the fallback pin survives the adapter-200 queue + SOURCES
+   backlog update. Evidence: 10 unit tests; clean gold 1.000 (4 symbols; TOTAL 149 across
+   34 langs); messy gold 1.000 (comment/string fakes rejected, born-clean); calibration row
+   exactly as designed (pos 4/4, neg 0/2, breaking 2/3, modified 3/4, sig 2/3 — rename_param
+   and add_param fire, change_default_value control invisible); TOTALs rose to 174/174 pos,
+   91/100 breaking, 96/136 modified, 20/24 signature with zero regressions; 543 lib tests,
+   fmt/clippy clean (pre-existing `tests/soak.rs` fmt diff belongs to another session),
+   no-orphan lint green.
+
+   **OBJC DONE (rev 36, seventh new adapter):** `src/diff/lang/adapters/objc.rs` — T2
+   structured scanner; Objective-C's API is its *runtime* surface: `@interface`/
+   `@implementation`/`@protocol`, `@property`, `NS_ENUM`/`NS_OPTIONS`, and methods
+   identified by their **selector** — the full keyword name with colons
+   (`setName:age:active:`), the stable identity used by message dispatch and `@selector`.
+   The selector is the symbol name directly, so renaming any keyword segment registers
+   as breaking, matching ObjC semantics. Parameter types/names are dispatch-invisible
+   (no signatures, 0/0 by design). Character-level keyword scan: a keyword is an
+   identifier immediately followed by `:(` — the colon is fused to the parameter-type
+   paren with no space, so whitespace tokenization missed it (one mid-slice bug:
+   `setName:(NSString` is a single token; fixed by scanning chars and requiring the
+   `:(` shape, which also rejects `::` in `.mm`). Apple underscore-prefix internal
+   convention gates surface (no visibility model — `.h` is owned by the C adapter,
+   this adapter claims `.m`/`.mm`; confidence band 0.7). Multi-line headers (one
+   keyword segment per line) accumulate to the `;`/`{` terminator at paren depth 0.
+   Born-correct `//` + `/* */` comment handling (rev-24/26 discipline). Wired at all
+   four contract points + lint EXT_PROBE (`m`, `mm`) + SOURCES backlog update.
+   Evidence: 9 unit tests; clean gold 1.000 (4 symbols incl. full-selector method);
+   messy gold 1.000 (comment fakes rejected, born-clean); calibration row exactly as
+   designed (pos 4/4, neg 0/2, breaking 2/3, modified 3/4, sig 0/0 — underscore control
+   invisible, body-change control invisible); TOTALs rose to 178/178 pos, 93/103
+   breaking, 99/140 modified, 20/24 signature with zero regressions; 552 lib tests,
+   fmt/clippy clean (pre-existing `tests/soak.rs` fmt diff belongs to another session),
+   no-orphan lint green. Incident (recovered): a stale `.git/index.lock` from another
+   session was removed after process inspection, but the subsequent `git checkout --`
+   on the two label files also discarded six slices' uncommitted label entries
+   (sql/hcl/solidity/groovy/julia/r); all 12 entries were rebuilt from a probe test
+   that printed adapter-extracted symbols plus the fixture files (untracked, so
+   untouched), and both gold corpora re-verified at TOTAL 153 clean / 34 messy @
+   1.000. Lesson: label-file edits are append-only string surgery — never
+   `git checkout --` them on this shared host.
+
+   **ZIG DONE (rev 37, eighth new adapter):** `src/diff/lang/adapters/zig.rs` — T2
+   structured scanner; Zig's visibility model is explicit: a declaration is public
+   exactly when it carries `pub` (or `export`, implying a public C-ABI entry point),
+   so the adapter joins the explicit-visibility 0.8 band. Surface: `pub fn` (incl.
+   `export`/`pub extern "..."` forms), `pub const` containers (`struct` incl.
+   `packed`/`extern`, `enum`, `union`/`union(enum)`, `opaque`), other `pub const`
+   values, `pub var`, and struct-body fields (`name: Type` — Zig has no field-level
+   privacy, so every field of an accessible container is reachable; brace-depth
+   gating keeps enum/union members and function-body locals out). Methods are
+   container-level `pub fn`s emitted flat under their own name (groovy precedent —
+   cross-type collisions merge, documented T2 limitation). Canonical parameter-type
+   signatures: `name: Type` pairs reduce to their type, so renames are invisible and
+   type changes register (`comptime` prefixes dropped, variadic `...` skipped,
+   commas inside `fn (i32, u8) void` pointer types kept via paren/bracket-depth
+   splitting — Zig has no angle-bracket generics). Multi-line headers (one parameter
+   per line is idiomatic) accumulate to the `;`/`{` terminator at paren depth 0.
+   Born-correct comment handling: Zig has ONLY `//` line comments (`///` doc, `//!`
+   module — no block comments); the stripper is string-aware (a `//` inside a URL
+   default survives) and `\\`-prefixed multi-line string literal lines are never
+   parsed — both covered by the messy probe. Exclusions documented: non-pub
+   declarations, plain `extern fn` imports, `usingnamespace` re-exports,
+   `test`/`comptime` blocks, single-line container-body fields. Wired at all four
+   contract points + lint EXT_PROBE (`zig`) + LANGUAGE_MATRIX row + SOURCES backlog
+   update. Evidence: 11 unit tests (first-run green); clean gold 1.000 (8 symbols:
+   VERSION|const, Point|struct, x/y|field, distance|function flat from the struct
+   body, Color|enum, greet|function, counter|variable; TOTAL 161); messy gold 1.000
+   (comment/doc-comment/module-comment/multiline-string fakes rejected, born-clean;
+   TOTAL 36); calibration row exactly as designed (pos 4/4, neg 0/2, breaking 2/3,
+   modified 3/4, sig 2/3 — change_param_type and add_param fire, rename_param control
+   invisible: Zig callers bind positionally, so types not names are the contract);
+   TOTALs rose to 182/182 pos, 95/106 breaking, 102/144 modified, 22/27 signature
+   with zero regressions; 563 lib tests, fmt/clippy clean (pre-existing
+   `tests/soak.rs` fmt diff belongs to another session), no-orphan lint green.
 11. **Per-language feature flags** for behavior-changing rollout (ROADMAP §10).

@@ -34,6 +34,14 @@ subsections land as each is calibrated in Phase 1.
 | OCaml | 0.7 | `let` bindings; `.mli` interface surface | functors, module types, `private` types |
 | Perl | 0.7 | `sub` (public by default) | `my`/`our`, AUTOLOAD, symbol-table exports |
 | F# | 0.7 | `let` bindings (default public in module) | `private`/`internal`, type providers |
+| SQL | 0.7 | `CREATE`/`DROP` schema objects (table/view/function/procedure/index/sequence/type/trigger/schema/database) | column-level shape, `ALTER`, dialect-specific DDL, DML is not surface |
+| HCL (Terraform) | 0.7 | labeled blocks: `variable`/`output`/`module`/`provider`, `resource`/`data` as `type.name` | unlabeled blocks structural, tfvars excluded, dynamic blocks, for_each/count expansion |
+| Solidity | 0.8 | ABI surface: `public`/`external` functions, `public` state vars, `event`/`error`/`modifier`/`struct`/`enum`, contract/interface/library, constructor/fallback/receive; selector-form signatures | `internal`/`private` not surface, assembly, tuple-param canonicalization approximate, string-embedded code |
+| Groovy | 0.8 | public-by-default members: `class`/`interface`/`trait`/`enum`/`@interface`, methods, PascalCase constructors, depth-1 properties; canonical param-type signatures | `private`/`protected` not surface, nested-class members, PascalCase call-with-closure FPs, `.gradle` DSL out of scope |
+| Julia | 0.8 | convention-gated surface: `module`/`struct`/`abstract type`/`function`/`macro`/`const`, struct fields, short-form `f(x) = expr`; canonical dispatch-type signatures | `_`-prefixed internal, nested declarations, operator overloads, `where` clauses, export-list cross-referencing |
+| R | 0.8 | dot-convention-gated surface: `name <- function()` assignments, R6 `R6Class`, S4 `setClass`/`setGeneric`; parameter-NAME signatures (callers bind by name) | `.`-prefixed internal, nested definitions, right-assignment, S3 methods, plain variables, NAMESPACE cross-referencing |
+| Objective-C | 0.7 | `@interface`/`@protocol`/`@implementation`, methods as full selectors (`setName:age:`), `@property`, `NS_ENUM`/`NS_OPTIONS` | `_`-prefixed internal, header/impl visibility split unresolved, param types untracked, `.h` owned by C adapter |
+| Zig | 0.8 | explicit-`pub` surface: `pub fn` (+`export`/`pub extern`), `pub const` containers (`struct`/`enum`/`union`/`opaque`) and constants, `pub var`, struct fields; canonical param-type signatures | non-`pub` not surface, enum/union members not emitted, flat method names, single-line container fields, `usingnamespace` re-exports, `comptime` blocks |
 
 ---
 

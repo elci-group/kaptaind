@@ -73,8 +73,8 @@ note, never silently in a patch (ROADMAP §10).
 - **T1 not yet present as even an orphan:** none outstanding — every T1 language now
   has at least a wired scanner. Depth work (AST-grade for C/C++/Java/C#/PHP) is Phase 1.
 - **T2/T3 with no adapter file yet** (fallback-only today, candidates for plugin or new
-  adapters): SQL, GraphQL (schema-level exists via API-surface rules), Terraform/HCL,
-  Solidity, Groovy, Julia, R, Objective-C, Zig, Nim, Crystal, PowerShell, Visual Basic,
+  adapters): ~~SQL~~ (**wired rev 30** — adapter + gold seeds + calibration corpus), GraphQL (schema-level exists via API-surface rules), ~~Terraform/HCL~~ (**wired rev 31** — adapter + gold seeds + calibration corpus),
+  ~~Solidity~~ (**wired rev 32** — adapter + gold seeds + calibration corpus), ~~Groovy~~ (**wired rev 33** — adapter + gold seeds + calibration corpus), ~~Julia~~ (**wired rev 34** — adapter + gold seeds + calibration corpus), ~~R~~ (**wired rev 35** — adapter + gold seeds + calibration corpus), ~~Objective-C~~ (**wired rev 36** — adapter + gold seeds + calibration corpus), ~~Zig~~ (**wired rev 37** — adapter + gold seeds + calibration corpus), Nim, Crystal, PowerShell, Visual Basic,
   V, Bicep, Puppet, Fortran, COBOL, Ada, Delphi — tracked in the ROADMAP §9 promotion
   queue; promote by telemetry or demand.
 

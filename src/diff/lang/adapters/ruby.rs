@@ -29,8 +29,21 @@ impl LanguageAdapter for RubyAdapter {
         let mut symbols = Vec::new();
         let mut signatures = HashMap::new();
         if let Ok(lines) = read_lines_safe(file) {
+            // Track `=begin ... =end` block comments so commented-out decls are
+            // not mistaken for public API (measured messy-corpus FP, rev 26).
+            let mut in_block_comment = false;
             for line in lines {
                 let trimmed = line.trim();
+                if in_block_comment {
+                    if trimmed.starts_with("=end") {
+                        in_block_comment = false;
+                    }
+                    continue;
+                }
+                if trimmed.starts_with("=begin") {
+                    in_block_comment = true;
+                    continue;
+                }
                 if let Some(rest) = trimmed.strip_prefix("module ") {
                     let name = rest.split_whitespace().next().unwrap_or(rest);
                     let name = name.split("::").next().unwrap_or(name);

@@ -1,0 +1,3 @@
+CREATE FUNCTION counter() RETURNS integer AS $$
+SELECT 1;
+$$ LANGUAGE SQL;

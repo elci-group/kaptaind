@@ -47,8 +47,23 @@ impl LanguageAdapter for GoAdapter {
 fn go_parse(file: &Path, ver: (u32, u32)) -> anyhow::Result<AstRepresentation> {
     let mut symbols = Vec::new();
     if let Ok(lines) = read_lines_safe(file) {
+        // Track `/* ... */` regions so declarations inside block comments are
+        // not mistaken for public API (measured messy-corpus FP, rev 26).
+        let mut in_block_comment = false;
         for line in lines {
             let line = line.trim();
+            if in_block_comment {
+                if line.contains("*/") {
+                    in_block_comment = false;
+                }
+                continue;
+            }
+            if line.starts_with("/*") {
+                if !line.contains("*/") {
+                    in_block_comment = true;
+                }
+                continue;
+            }
             if let Some(rest) = line.strip_prefix("func ") {
                 // Exported if first letter is uppercase
                 let name_start = rest.chars().next().unwrap_or('a');

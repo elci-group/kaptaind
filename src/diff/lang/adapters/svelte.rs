@@ -68,6 +68,11 @@ fn svelte_parse(file: &Path, is_svelte5: bool) -> anyhow::Result<AstRepresentati
             if !in_script {
                 continue;
             }
+            // Comment lines are not API: substring rune matches would otherwise
+            // leak `$props(` mentions out of comments (measured messy-corpus FP, rev 26).
+            if trimmed.starts_with("//") {
+                continue;
+            }
             if let Some(rest) = trimmed.strip_prefix("export let ") {
                 symbols.push(Symbol {
                     name: rest.to_string(),

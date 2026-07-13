@@ -1235,6 +1235,9 @@ fn nightly_version(repo_path: &Path, base: &str) -> anyhow::Result<String> {
 }
 
 fn git_short_commit(repo_path: &Path) -> anyhow::Result<String> {
+    if !repo_path.join(".git").exists() {
+        anyhow::bail!("not a git repository: {}", repo_path.display());
+    }
     let output = std::process::Command::new("git")
         .args([
             "-C",

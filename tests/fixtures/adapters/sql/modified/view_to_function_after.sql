@@ -1,0 +1,3 @@
+CREATE FUNCTION stats() RETURNS integer AS $$
+SELECT 1;
+$$ LANGUAGE SQL;

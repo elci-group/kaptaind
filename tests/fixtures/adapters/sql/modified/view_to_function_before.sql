@@ -1,0 +1,2 @@
+CREATE VIEW stats AS
+SELECT 1;

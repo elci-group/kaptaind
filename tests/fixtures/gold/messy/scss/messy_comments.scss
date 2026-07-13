@@ -1,0 +1,11 @@
+// $old-primary: #000000;
+
+/*
+$legacy-accent: #111111;
+*/
+
+$primary: #0055ff;
+
+@mixin rounded {
+  border-radius: 4px;
+}

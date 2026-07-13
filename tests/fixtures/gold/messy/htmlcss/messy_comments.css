@@ -1,0 +1,9 @@
+/*
+.legacy-container {
+  display: none;
+}
+*/
+
+.container {
+  display: flex;
+}

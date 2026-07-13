@@ -1,0 +1,3 @@
+variable "endpoint" {
+  type = string
+}

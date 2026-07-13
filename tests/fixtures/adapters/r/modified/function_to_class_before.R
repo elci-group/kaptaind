@@ -1,0 +1,3 @@
+Counter <- function() {
+  0
+}

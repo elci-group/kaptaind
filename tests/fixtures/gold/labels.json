@@ -333,5 +333,116 @@
         { "name": ".container {", "kind": "css_class" }
       ]
     }
+,
+    {
+      "path": "objc/public_surface.m",
+      "lang": "objc",
+      "note": "Runtime surface: @interface class, @property, and methods identified by their full selector (`greet:withPunctuation:`). Class methods (`+`) and instance methods (`-`) are both surface. `_resetCache` is internal (Apple underscore-prefix convention). No signatures \u2014 parameter types are not part of ObjC dispatch. Confidence band 0.7 (no visibility model; the header/implementation split is a convention).",
+      "symbols": [
+        { "name": "Greeter", "kind": "class" },
+        { "name": "name", "kind": "property" },
+        { "name": "greet:withPunctuation:", "kind": "method" },
+        { "name": "sharedGreeter", "kind": "method" }
+      ]
+    }
+,
+    {
+      "path": "sql/public_surface.sql",
+      "lang": "sql",
+      "note": "Schema-object surface: CREATE/DROP statements only (DML excluded) \u2014 table, view (`OR REPLACE`), index (`UNIQUE`), function with `$$` body, and `DROP TABLE` recorded as kind `drop_table` (deletions are surface events). Modifiers and `IF [NOT] EXISTS` handled; keywords case-insensitive; quoted/schema-qualified names supported. Confidence band 0.7 (no visibility model).",
+      "symbols": [
+        { "name": "users", "kind": "table" },
+        { "name": "active_users", "kind": "view" },
+        { "name": "idx_users_email", "kind": "index" },
+        { "name": "user_count", "kind": "function" },
+        { "name": "legacy_sessions", "kind": "drop_table" }
+      ]
+    }
+,
+    {
+      "path": "hcl/public_surface.tf",
+      "lang": "hcl",
+      "note": "Terraform labeled-block surface: `variable`/`output`/`module` by label; `resource`/`data` as qualified `type.name` addresses (`aws_instance.web`). Unlabeled blocks (`terraform`/`locals`/`moved`/`import`) are structural, not surface. `.tfvars` files excluded. Confidence band 0.7 (no visibility model).",
+      "symbols": [
+        { "name": "region", "kind": "variable" },
+        { "name": "endpoint", "kind": "output" },
+        { "name": "aws_instance.web", "kind": "resource" },
+        { "name": "aws_ami.ubuntu", "kind": "data" },
+        { "name": "network", "kind": "module" }
+      ]
+    }
+,
+    {
+      "path": "solidity/public_surface.sol",
+      "lang": "solidity",
+      "note": "ABI surface with explicit visibility: contract, `public` state variable (`name`; `private supply` skipped), event, error, constructor, and `external` function (`internal mint` skipped). Selector-grade signatures recorded as canonical parameter-type tuples (data-location/indexed/payable tokens and parameter names stripped) \u2014 parameter renames are invisible, type changes register as modifications. Confidence band 0.8 (explicit visibility model honored).",
+      "symbols": [
+        { "name": "Token", "kind": "contract" },
+        { "name": "name", "kind": "variable" },
+        { "name": "Transfer", "kind": "event" },
+        { "name": "InsufficientBalance", "kind": "error" },
+        { "name": "constructor", "kind": "constructor" },
+        { "name": "transfer", "kind": "function" }
+      ]
+    }
+,
+    {
+      "path": "groovy/public_surface.groovy",
+      "lang": "groovy",
+      "note": "Public-by-default surface: class, depth-1 property (`String name` generates getters/setters; `private int count` skipped), PascalCase constructor, `def` method (`private reset` skipped), trait + its method. Canonical param-type signatures (bare params \u2192 `def`, defaults and annotations dropped) via multi-line header accumulation. Confidence band 0.8 (explicit visibility honored).",
+      "symbols": [
+        { "name": "Greeter", "kind": "class" },
+        { "name": "name", "kind": "property" },
+        { "name": "Greeter", "kind": "constructor" },
+        { "name": "greet", "kind": "method" },
+        { "name": "Loggable", "kind": "trait" },
+        { "name": "log", "kind": "method" }
+      ]
+    }
+,
+    {
+      "path": "julia/public_surface.jl",
+      "lang": "julia",
+      "note": "Convention-gated surface: module, const, abstract type, struct + fields (dot-accessible, define the default constructor), long-form and short-form functions, macro. Underscore-prefixed names are internal. Signatures recorded as canonical dispatch-type tuples \u2014 (Point,Point) for distance. Confidence band 0.8 (export/underscore-gated; export-list cross-referencing is a follow-up).",
+      "symbols": [
+        { "name": "Geometry", "kind": "module" },
+        { "name": "VERSION", "kind": "const" },
+        { "name": "Shape", "kind": "abstract" },
+        { "name": "Point", "kind": "struct" },
+        { "name": "x", "kind": "field" },
+        { "name": "y", "kind": "field" },
+        { "name": "distance", "kind": "function" },
+        { "name": "area", "kind": "function" },
+        { "name": "logged", "kind": "macro" }
+      ]
+    }
+,
+    {
+      "path": "r/public_surface.R",
+      "lang": "r",
+      "note": "Dot-convention-gated surface: R6 class (assignment target), function assignments (`<-` and `=` forms), S4 generic. `.helper` is internal (dot-prefix). Signatures recorded as canonical parameter-NAME tuples \u2014 (a,b) for distance, (obj) for describe \u2014 because R callers bind arguments by name. Confidence band 0.8 (NAMESPACE export cross-referencing is a follow-up).",
+      "symbols": [
+        { "name": "Point", "kind": "class" },
+        { "name": "distance", "kind": "function" },
+        { "name": "area", "kind": "function" },
+        { "name": "describe", "kind": "generic" }
+      ]
+    }
+,
+    {
+      "path": "zig/public_surface.zig",
+      "lang": "zig",
+      "note": "Explicit-`pub` surface: `pub const` value, `pub const Point = struct` with fields (`x`, `y` \u2014 Zig has no field-level privacy), `pub const Color = enum` (members not emitted), `pub fn` incl. container methods emitted flat (`distance`; non-pub `reset`/`helper` skipped), `pub var`. Canonical param-type signatures recorded (parameter renames invisible, type changes register). Confidence band 0.8 (explicit visibility model).",
+      "symbols": [
+        { "name": "VERSION", "kind": "const" },
+        { "name": "Point", "kind": "struct" },
+        { "name": "x", "kind": "field" },
+        { "name": "y", "kind": "field" },
+        { "name": "distance", "kind": "function" },
+        { "name": "Color", "kind": "enum" },
+        { "name": "greet", "kind": "function" },
+        { "name": "counter", "kind": "variable" }
+      ]
+    }
   ]
 }

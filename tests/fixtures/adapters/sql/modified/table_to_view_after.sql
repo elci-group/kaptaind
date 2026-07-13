@@ -1,0 +1,2 @@
+CREATE VIEW users AS
+SELECT 1 AS id;

@@ -86,5 +86,84 @@
         { "name": "Router {", "kind": "class" }
       ]
     }
+,
+    {
+      "path": "messy/objc/messy_comments.m",
+      "lang": "objc",
+      "note": "Human truth: Real class + genuine method only. Fake declarations in `//` line comments and a `/* ... */` block comment are NOT surface \u2014 the adapter is born-correct with comment tracking (rev-24/26 discipline). Expected clean.",
+      "symbols": [
+        { "name": "Real", "kind": "class" },
+        { "name": "genuine", "kind": "method" }
+      ]
+    }
+,
+    {
+      "path": "messy/sql/messy_comments.sql",
+      "lang": "sql",
+      "note": "Human truth: sessions table + session_count view only. Fake DDL in `--` line comments and `/* ... */` block comments is NOT surface \u2014 the adapter is born-correct with comment tracking (rev-24/26 discipline). Expected clean.",
+      "symbols": [
+        { "name": "sessions", "kind": "table" },
+        { "name": "session_count", "kind": "view" }
+      ]
+    }
+,
+    {
+      "path": "messy/hcl/messy_comments.tf",
+      "lang": "hcl",
+      "note": "Human truth: one real resource only. Fake blocks in `#` and `//` line comments, a `/* ... */` block comment, and inside a `<<-EOF` heredoc body are NOT surface \u2014 the adapter is born-correct with comment and heredoc tracking (rev-24/26 discipline). Expected clean.",
+      "symbols": [
+        { "name": "aws_s3_bucket.assets", "kind": "resource" }
+      ]
+    }
+,
+    {
+      "path": "messy/solidity/messy_comments.sol",
+      "lang": "solidity",
+      "note": "Human truth: Real contract + genuine function only. Fake declarations in `//` line comments, a `/* ... */` block comment, and function-shaped text inside a `///` NatSpec line are NOT surface \u2014 the adapter is born-correct with comment tracking (rev-24/26 discipline). Expected clean.",
+      "symbols": [
+        { "name": "Real", "kind": "contract" },
+        { "name": "genuine", "kind": "function" }
+      ]
+    }
+,
+    {
+      "path": "messy/groovy/messy_comments.groovy",
+      "lang": "groovy",
+      "note": "Human truth: Real class + genuine method only. Fake declarations in `//` line comments, a `/* ... */` block comment, and inside a triple-quoted string literal are NOT surface \u2014 the adapter is born-correct with comment, shebang, and triple-quote tracking (rev-24/26 discipline). Expected clean.",
+      "symbols": [
+        { "name": "Real", "kind": "class" },
+        { "name": "genuine", "kind": "method" }
+      ]
+    }
+,
+    {
+      "path": "messy/julia/messy_comments.jl",
+      "lang": "julia",
+      "note": "Human truth: Real struct + v field + genuine function only. Fake declarations in `#` line comments, `#= =#` block comments, and a docstring region are NOT surface \u2014 the adapter is born-correct with comment and docstring tracking (rev-24/26 discipline). Expected clean.",
+      "symbols": [
+        { "name": "Real", "kind": "struct" },
+        { "name": "v", "kind": "field" },
+        { "name": "genuine", "kind": "function" }
+      ]
+    }
+,
+    {
+      "path": "messy/r/messy_comments.R",
+      "lang": "r",
+      "note": "Human truth: real function only. Fake definitions in `#` line comments (incl. Roxygen #') and inside a string literal are NOT surface \u2014 the adapter is born-correct with comment tracking and requires an assignment-operator prefix before `function` (rev-24/26 discipline). Expected clean.",
+      "symbols": [
+        { "name": "real", "kind": "function" }
+      ]
+    }
+,
+    {
+      "path": "messy/zig/messy_comments.zig",
+      "lang": "zig",
+      "note": "Human truth: Real struct + genuine method only. Fake declarations in `//` line comments, `///` doc comments, `//!` module comments, and `\\` multi-line string literal lines are NOT surface \u2014 the adapter is born-correct with string-aware comment stripping and multi-line string skipping (rev-24/26 discipline). Expected clean.",
+      "symbols": [
+        { "name": "Real", "kind": "struct" },
+        { "name": "genuine", "kind": "function" }
+      ]
+    }
   ]
 }

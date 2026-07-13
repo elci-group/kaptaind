@@ -33,6 +33,12 @@ impl LanguageAdapter for AstroAdapter {
                 if !in_frontmatter {
                     continue;
                 }
+                // Comment lines are not API: the `Astro.props` substring match
+                // would otherwise leak mentions out of comments (measured
+                // messy-corpus FP, rev 26).
+                if trimmed.starts_with("//") {
+                    continue;
+                }
                 // Astro frontmatter is TypeScript
                 if let Some(rest) = trimmed.strip_prefix("export ") {
                     symbols.push(Symbol {

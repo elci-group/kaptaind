@@ -25,8 +25,23 @@ impl LanguageAdapter for LuaAdapter {
         let mut symbols = Vec::new();
         let mut signatures = HashMap::new();
         if let Ok(lines) = read_lines_safe(file) {
+            // Track `--[[ ... ]]` block comments so commented-out functions are
+            // not mistaken for public API (measured messy-corpus FP, rev 26).
+            let mut in_block_comment = false;
             for line in lines {
                 let trimmed = line.trim();
+                if in_block_comment {
+                    if trimmed.contains("]]") {
+                        in_block_comment = false;
+                    }
+                    continue;
+                }
+                if trimmed.starts_with("--[[") {
+                    if !trimmed.contains("]]") {
+                        in_block_comment = true;
+                    }
+                    continue;
+                }
 
                 // Module exports: M.foo = ...
                 if let Some(eq_pos) = find_assignment_eq(trimmed) {

@@ -1,0 +1,7 @@
+CREATE TABLE users (
+    id SERIAL PRIMARY KEY
+);
+
+CREATE TABLE orders (
+    id SERIAL PRIMARY KEY
+);

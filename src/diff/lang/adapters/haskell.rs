@@ -31,6 +31,9 @@ impl LanguageAdapter for HaskellAdapter {
         let is_lhs = file.extension().is_some_and(|e| e == "lhs");
         let mut symbols = Vec::new();
 
+        // Track `{- ... -}` block comments so commented-out decls are not
+        // mistaken for public API (measured messy-corpus FP, rev 26).
+        let mut in_block_comment = false;
         for line in read_lines_safe(file)? {
             let code = if is_lhs && line.starts_with('>') {
                 line.strip_prefix('>')
@@ -43,6 +46,18 @@ impl LanguageAdapter for HaskellAdapter {
 
             let trimmed = code.trim_start();
             if trimmed.is_empty() {
+                continue;
+            }
+            if in_block_comment {
+                if trimmed.contains("-}") {
+                    in_block_comment = false;
+                }
+                continue;
+            }
+            if trimmed.starts_with("{-") {
+                if !trimmed.contains("-}") {
+                    in_block_comment = true;
+                }
                 continue;
             }
 

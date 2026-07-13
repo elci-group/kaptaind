@@ -16,7 +16,7 @@ const EXT_PROBE: &[&str] = &[
     "rs", "ts", "js", "py", "go", "swift", "kt", "vue", "svelte", "astro", "scss", "css", "html",
     "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "java", "php", "scala", "sc", "clj", "cljc", "cljs",
     "hs", "lhs", "ex", "exs", "erl", "hrl", "lua", "ml", "mli", "pl", "pm", "fs", "fsx", "rb",
-    "dart",
+    "dart", "sql", "tf", "hcl", "sol", "groovy", "jl", "r", "m", "mm", "zig",
 ];
 
 fn registered_adapter_names() -> BTreeSet<String> {
@@ -56,12 +56,15 @@ fn no_orphan_adapter_files() {
 }
 
 /// The fallback line scanner (confidence 0.0) is the documented baseline for languages
-/// kaptaind does NOT model. Julia and R are the canonical unsupported pair — they must
-/// stay unmodelled unless a real adapter + matrix row + confidence arm are added.
+/// kaptaind does NOT model. Pinned with never-modeled, non-language extensions so the
+/// probe survives the adapter-200 queue (every planned language graduates eventually —
+/// Julia in rev 34, R in rev 35).
+const UNSUPPORTED_PROBE: &[&str] = &["txt", "dat"];
+
 #[test]
 fn unsupported_languages_fall_back() {
     let reg = AdapterRegistry::default_registry();
-    for ext in ["jl", "r"] {
+    for ext in UNSUPPORTED_PROBE {
         assert!(
             reg.resolve(Path::new(&format!("probe.{ext}"))).is_none(),
             ".{ext} unexpectedly resolved to a built-in adapter"

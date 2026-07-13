@@ -31,11 +31,25 @@ impl LanguageAdapter for FsharpAdapter {
     fn parse_ast(&self, file: &Path) -> anyhow::Result<AstRepresentation> {
         let mut symbols = Vec::new();
         let mut signatures = HashMap::new();
+        let mut in_block_comment = false;
         for line in read_lines_safe(file)? {
             let trimmed = line.trim_start();
+            // Track `(* ... *)` regions so declarations inside comments are not
+            // mistaken for public API (measured messy-corpus FP, rev 26).
+            if in_block_comment {
+                if trimmed.contains("*)") {
+                    in_block_comment = false;
+                }
+                continue;
+            }
+            if trimmed.starts_with("(*") {
+                if !trimmed.contains("*)") {
+                    in_block_comment = true;
+                }
+                continue;
+            }
             if trimmed.is_empty()
                 || trimmed.starts_with("//")
-                || trimmed.starts_with("(*")
                 || trimmed.starts_with("#")
                 || trimmed.starts_with("open ")
             {

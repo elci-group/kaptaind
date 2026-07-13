@@ -58,9 +58,9 @@ fn claim_active_adapter_set_matches_docs() {
         names.len(),
         names
     );
-    // Fallback boundary: Julia and R are intentionally unsupported.
-    assert!(reg.resolve(Path::new("probe.jl")).is_none());
-    assert!(reg.resolve(Path::new("probe.r")).is_none());
+    // T2 promotion: Julia and R were promoted to active built-in adapters.
+    assert!(reg.resolve(Path::new("probe.jl")).is_some());
+    assert!(reg.resolve(Path::new("probe.r")).is_some());
 }
 
 /// AGENTS.md / README: structural = 0.5*event_density + 0.35*path_spread + 0.15*churn.
