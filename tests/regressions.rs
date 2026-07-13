@@ -538,11 +538,12 @@ fn no_phantom_cluster_from_test_hook_target_dir() {
             "hook target tempdir must not produce a chore commit either"
         );
 
-        // Exactly one bump: 0.1.0 -> 0.2.0 (three new pub fn APIs → minor).
-        let version = fixture.git(&["show", "HEAD:proj/VERSION"]).trim();
+        // Exactly one patch bump: 0.1.0 -> 0.1.1, never a skipped patch.
+        let version_string = fixture.git(&["show", "HEAD:proj/VERSION"]);
+        let version = version_string.trim();
         assert_eq!(
-            version, "0.2.0",
-            "VERSION must advance by exactly one minor bump (new APIs)"
+            version, "0.1.1",
+            "VERSION must advance by exactly one patch"
         );
 
         // Reap the daemon so its log is final, then scan it.
