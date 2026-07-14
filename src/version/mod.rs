@@ -202,3 +202,90 @@ mod tests {
 
     #[test]
     fn baseline_errors_on_unparseable_manifest_version() {
+        let dir = tempdir().expect("tempdir");
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"garbage\"\n",
+        )
+        .expect("Cargo.toml");
+        let err = resolve_baseline(dir.path()).expect_err("must not guess");
+        assert!(err.to_string().contains("not valid semver"));
+    }
+
+    fn write_pair(dir: &Path, version: &str, manifest: &str) {
+        std::fs::write(dir.join("VERSION"), version).expect("VERSION");
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            format!("[package]\nname = \"x\"\nversion = \"{manifest}\"\n"),
+        )
+        .expect("Cargo.toml");
+    }
+
+    #[test]
+    fn consistency_passes_when_sources_agree() {
+        let dir = tempdir().expect("tempdir");
+        write_pair(dir.path(), "1.2.3\n", "1.2.3");
+        for policy in [
+            crate::config::loader::VersionConsistency::Strict,
+            crate::config::loader::VersionConsistency::Warn,
+            crate::config::loader::VersionConsistency::Off,
+        ] {
+            check_consistency(dir.path(), policy).expect("agreement must pass");
+        }
+    }
+
+    #[test]
+    fn consistency_strict_errors_on_mismatch() {
+        let dir = tempdir().expect("tempdir");
+        write_pair(dir.path(), "2.4.0", "2.3.0");
+        let err = check_consistency(dir.path(), crate::config::loader::VersionConsistency::Strict)
+            .expect_err("strict must refuse a mismatch");
+        let msg = err.to_string();
+        assert!(msg.contains("2.4.0"));
+        assert!(msg.contains("2.3.0"));
+        assert!(msg.contains("consistency"));
+    }
+
+    #[test]
+    fn consistency_warn_and_off_allow_mismatch() {
+        let dir = tempdir().expect("tempdir");
+        write_pair(dir.path(), "2.4.0", "2.3.0");
+        check_consistency(dir.path(), crate::config::loader::VersionConsistency::Warn)
+            .expect("warn must pass");
+        check_consistency(dir.path(), crate::config::loader::VersionConsistency::Off)
+            .expect("off must pass");
+    }
+
+    #[test]
+    fn consistency_passes_with_single_or_no_source() {
+        use crate::config::loader::VersionConsistency;
+        let version_only = tempdir().expect("tempdir");
+        std::fs::write(version_only.path().join("VERSION"), "1.0.0").expect("VERSION");
+        check_consistency(version_only.path(), VersionConsistency::Strict)
+            .expect("VERSION-only must pass");
+
+        let manifest_only = tempdir().expect("tempdir");
+        std::fs::write(
+            manifest_only.path().join("Cargo.toml"),
+            "[package]\nname = \"x\"\nversion = \"1.0.0\"\n",
+        )
+        .expect("Cargo.toml");
+        check_consistency(manifest_only.path(), VersionConsistency::Strict)
+            .expect("manifest-only must pass");
+
+        // Virtual workspace root: manifest parses but has no [package].version.
+        let virtual_ws = tempdir().expect("tempdir");
+        std::fs::write(virtual_ws.path().join("VERSION"), "1.0.0").expect("VERSION");
+        std::fs::write(
+            virtual_ws.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+        )
+        .expect("Cargo.toml");
+        check_consistency(virtual_ws.path(), VersionConsistency::Strict)
+            .expect("virtual workspace must pass");
+
+        let neither = tempdir().expect("tempdir");
+        check_consistency(neither.path(), VersionConsistency::Strict)
+            .expect("no sources must pass");
+    }
+}
