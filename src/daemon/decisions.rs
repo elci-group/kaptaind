@@ -19,6 +19,9 @@ pub mod outcome {
     pub const BLOCKED: &str = "blocked";
     pub const VERSION_WRITE_FAILED: &str = "version_write_failed";
     pub const BASELINE_UNRESOLVABLE: &str = "baseline_unresolvable";
+    /// `VERSION` and `Cargo.toml [package].version` disagree while
+    /// `[versioning].consistency = "strict"` — commit refused.
+    pub const VERSION_MISMATCH: &str = "version_mismatch";
     pub const RATE_LIMITED: &str = "rate_limited";
     pub const CLEAN_TREE: &str = "clean_tree";
     pub const ERROR: &str = "error";
