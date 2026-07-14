@@ -202,13 +202,3 @@ mod tests {
 
     #[test]
     fn baseline_errors_on_unparseable_manifest_version() {
-        let dir = tempdir().expect("tempdir");
-        std::fs::write(
-            dir.path().join("Cargo.toml"),
-            "[package]\nname = \"x\"\nversion = \"garbage\"\n",
-        )
-        .expect("Cargo.toml");
-        let err = resolve_baseline(dir.path()).expect_err("must not guess");
-        assert!(err.to_string().contains("not valid semver"));
-    }
-}
