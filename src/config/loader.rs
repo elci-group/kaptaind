@@ -1913,6 +1913,45 @@ mod tests {
     }
 
     #[test]
+    fn versioning_defaults_to_root_strict_patch() {
+        let config = Config::default();
+        assert_eq!(config.versioning.mode, super::VersioningMode::Root);
+        assert_eq!(
+            config.versioning.consistency,
+            super::VersionConsistency::Strict
+        );
+        assert_eq!(config.versioning.lock_sync, super::LockSyncMode::Patch);
+    }
+
+    #[test]
+    fn versioning_deserializes_from_toml() {
+        let toml_str = r#"
+            [versioning]
+            mode = "root"
+            consistency = "warn"
+            lock_sync = "cargo"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.versioning.mode, super::VersioningMode::Root);
+        assert_eq!(
+            config.versioning.consistency,
+            super::VersionConsistency::Warn
+        );
+        assert_eq!(config.versioning.lock_sync, super::LockSyncMode::Cargo);
+    }
+
+    #[test]
+    fn versioning_members_mode_rejected_at_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("kaptaind.toml");
+        std::fs::write(&path, "[versioning]\nmode = \"members\"\n").unwrap();
+        let err = super::load_from_path(&path).expect_err("members mode must fail");
+        let msg = err.to_string();
+        assert!(msg.contains("not implemented"));
+        assert!(msg.contains("--expand-workspaces"));
+    }
+
+    #[test]
     fn staging_deserializes_from_toml() {
         let toml_str = r#"
             repo_path = "."
