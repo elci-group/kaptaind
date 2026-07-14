@@ -23,6 +23,69 @@ pub fn decide_default(weight: &crate::weight::WeightResult) -> Bump {
     )
 }
 
+/// Read and parse the `VERSION` file under `repo_path`.
+/// `None` when absent; `Some(Err(_))` when present but unreadable/unparseable.
+fn read_version_file(repo_path: &Path) -> Option<anyhow::Result<semver::Version>> {
+    let version_path = repo_path.join("VERSION");
+    if !version_path.exists() {
+        return None;
+    }
+    let content = match std::fs::read_to_string(&version_path) {
+        Ok(content) => content,
+        Err(e) => {
+            return Some(Err(anyhow::anyhow!(
+                "failed to read {}: {e}",
+                version_path.display()
+            )))
+        }
+    };
+    Some(semver::Version::parse(content.trim()).map_err(|e| {
+        anyhow::anyhow!(
+            "{} does not contain a valid semver version: {e}",
+            version_path.display()
+        )
+    }))
+}
+
+/// Read and parse `[package].version` from the root `Cargo.toml` under
+/// `repo_path`. `None` when absent or when the manifest has no
+/// `[package].version` (e.g. a virtual workspace root); `Some(Err(_))` when
+/// present but unreadable/unparseable.
+fn read_manifest_version(repo_path: &Path) -> Option<anyhow::Result<semver::Version>> {
+    let cargo_path = repo_path.join("Cargo.toml");
+    if !cargo_path.exists() {
+        return None;
+    }
+    let content = match std::fs::read_to_string(&cargo_path) {
+        Ok(content) => content,
+        Err(e) => {
+            return Some(Err(anyhow::anyhow!(
+                "failed to read {}: {e}",
+                cargo_path.display()
+            )))
+        }
+    };
+    let doc = match content.parse::<toml_edit::DocumentMut>() {
+        Ok(doc) => doc,
+        Err(e) => {
+            return Some(Err(anyhow::anyhow!(
+                "failed to parse {}: {e}",
+                cargo_path.display()
+            )))
+        }
+    };
+    let raw = doc
+        .get("package")
+        .and_then(|p| p.get("version"))
+        .and_then(|v| v.as_str())?;
+    Some(semver::Version::parse(raw).map_err(|e| {
+        anyhow::anyhow!(
+            "{} [package].version is not valid semver: {e}",
+            cargo_path.display()
+        )
+    }))
+}
+
 /// Resolve the project's baseline version without ever guessing.
 ///
 /// Precedence: `VERSION` file, then `Cargo.toml` `[package].version`.
@@ -31,43 +94,56 @@ pub fn decide_default(weight: &crate::weight::WeightResult) -> Bump {
 /// against the real manifest version and desync the VERSION/manifest
 /// pair.
 pub fn resolve_baseline(repo_path: &Path) -> anyhow::Result<semver::Version> {
-    let version_path = repo_path.join("VERSION");
-    if version_path.exists() {
-        let content = std::fs::read_to_string(&version_path)
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", version_path.display()))?;
-        return semver::Version::parse(content.trim()).map_err(|e| {
-            anyhow::anyhow!(
-                "{} does not contain a valid semver version: {e}",
-                version_path.display()
-            )
-        });
+    if let Some(version) = read_version_file(repo_path) {
+        return version;
     }
-
-    let cargo_path = repo_path.join("Cargo.toml");
-    if cargo_path.exists() {
-        let content = std::fs::read_to_string(&cargo_path)
-            .map_err(|e| anyhow::anyhow!("failed to read {}: {e}", cargo_path.display()))?;
-        let doc = content
-            .parse::<toml_edit::DocumentMut>()
-            .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", cargo_path.display()))?;
-        if let Some(raw) = doc
-            .get("package")
-            .and_then(|p| p.get("version"))
-            .and_then(|v| v.as_str())
-        {
-            return semver::Version::parse(raw).map_err(|e| {
-                anyhow::anyhow!(
-                    "{} [package].version is not valid semver: {e}",
-                    cargo_path.display()
-                )
-            });
-        }
+    if let Some(version) = read_manifest_version(repo_path) {
+        return version;
     }
-
     anyhow::bail!(
         "no VERSION file and no Cargo.toml [package].version in {} — refusing to guess a baseline",
         repo_path.display()
     );
+}
+
+/// Enforce the `[versioning].consistency` policy: when both `VERSION` and
+/// root `Cargo.toml [package].version` exist, they must agree.
+///
+/// Precedence alone (VERSION wins) would silently ignore manual manifest
+/// edits; surfacing the disagreement immediately is safer. Only the strict
+/// policy errors — `warn` logs and proceeds, `off` is a no-op. When one or
+/// both sources are absent, unreadable, or unparseable there is nothing to
+/// compare (parse errors are reported by `resolve_baseline` instead).
+pub fn check_consistency(
+    repo_path: &Path,
+    policy: crate::config::loader::VersionConsistency,
+) -> anyhow::Result<()> {
+    use crate::config::loader::VersionConsistency;
+
+    if matches!(policy, VersionConsistency::Off) {
+        return Ok(());
+    }
+    let (Some(Ok(version_file)), Some(Ok(manifest))) = (
+        read_version_file(repo_path),
+        read_manifest_version(repo_path),
+    ) else {
+        return Ok(());
+    };
+    if version_file == manifest {
+        return Ok(());
+    }
+    let detail = format!(
+        "VERSION ({version_file}) and Cargo.toml [package].version ({manifest}) disagree — \
+         reconcile them manually, or set [versioning].consistency = \"warn\" or \"off\""
+    );
+    match policy {
+        VersionConsistency::Strict => anyhow::bail!(detail),
+        VersionConsistency::Warn => {
+            tracing::warn!(%version_file, %manifest, "version sources disagree; using VERSION");
+            Ok(())
+        }
+        VersionConsistency::Off => Ok(()), // unreachable: returned early above
+    }
 }
 
 #[cfg(test)]
