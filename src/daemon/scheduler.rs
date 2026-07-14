@@ -913,6 +913,53 @@ async fn process_cluster(
         return;
     }
 
+    // Consistency gate: VERSION and Cargo.toml [package].version must agree
+    // before we derive the next version from them. With strict policy (the
+    // default) a mismatch means someone edited one source manually — surface
+    // it instead of silently letting VERSION precedence hide the drift.
+    if let Err(err) = crate::version::check_consistency(
+        &config.repo_path,
+        config.versioning.consistency,
+    ) {
+        tracing::error!(error = %err, "version sources disagree; skipping commit");
+        write_trace_if_active(
+            &config.repo_path,
+            &cluster,
+            tracer::TraceResult::Skipped {
+                reason: "version_mismatch".to_string(),
+            },
+            test_outcome.trace_test(),
+            agent_event.clone(),
+        );
+        record_decision(
+            config,
+            &cluster,
+            crate::daemon::decisions::outcome::VERSION_MISMATCH,
+            err.to_string(),
+            Some(&diff),
+            Some(&weight),
+            Some(bump),
+            None,
+        );
+        status.set_failed(err.to_string());
+        write_status(&config.repo_path, status);
+        crate::daemon::notification::notify_warning(
+            &config.notify,
+            &err.to_string(),
+            "Version mismatch",
+            config.capabilities.network_webhooks,
+        );
+        broadcast_event(
+            &event_tx,
+            "warning",
+            serde_json::json!({
+                "title": err.to_string(),
+                "source": "Version mismatch",
+            }),
+        );
+        return;
+    }
+
     let previous = match crate::version::resolve_baseline(&config.repo_path) {
         Ok(version) => version,
         Err(err) => {
