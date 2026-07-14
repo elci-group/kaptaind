@@ -1,7 +1,6 @@
 use std::path::Path;
 
 pub use kaptaind_diff::version::{apply, Bump};
-
 /// Decide the version bump using configurable score thresholds.
 pub fn decide(
     weight: &crate::weight::WeightResult,
