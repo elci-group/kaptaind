@@ -1113,7 +1113,7 @@ async fn process_cluster(
     }
 
     let version_path = config.repo_path.join("VERSION");
-    if let Err(err) = save_version(&version_path, &next) {
+    if let Err(err) = save_version(&version_path, &next, config.versioning.lock_sync) {
         tracing::error!(error = %err, path = ?version_path, "failed writing VERSION file");
         // Still write trace for visibility
         write_trace_if_active(
@@ -1963,7 +1963,11 @@ pub(crate) fn load_version(path: &Path) -> Option<Version> {
     Version::parse(content.trim()).ok()
 }
 
-fn save_version(path: &Path, version: &Version) -> anyhow::Result<()> {
+fn save_version(
+    path: &Path,
+    version: &Version,
+    lock_sync: crate::config::loader::LockSyncMode,
+) -> anyhow::Result<()> {
     // Monotonic guard: never write a version below the current baseline
     // (VERSION file or manifest). A missing/unresolvable baseline skips
     // the guard — the first save is what creates VERSION.
@@ -2005,12 +2009,50 @@ fn save_version(path: &Path, version: &Version) -> anyhow::Result<()> {
             }
         }
 
-        if let Some(name) = package_name {
-            sync_cargo_lock(&repo_path.join("Cargo.lock"), &name, version);
-        }
+        sync_lock(repo_path, package_name.as_deref(), version, lock_sync);
     }
 
     Ok(())
+}
+
+/// Apply the `[versioning].lock_sync` policy after the manifest writeback.
+fn sync_lock(
+    repo_path: &Path,
+    package_name: Option<&str>,
+    version: &Version,
+    lock_sync: crate::config::loader::LockSyncMode,
+) {
+    use crate::config::loader::LockSyncMode;
+    match lock_sync {
+        LockSyncMode::Off => {}
+        LockSyncMode::Patch => {
+            if let Some(name) = package_name {
+                sync_cargo_lock(&repo_path.join("Cargo.lock"), name, version);
+            }
+        }
+        // Let Cargo regenerate the lockfile itself rather than editing it
+        // by hand. Offline: the bump introduces no new dependencies, and the
+        // daemon must never block on the network. Fall back to patching so
+        // the version triple stays consistent even when Cargo fails.
+        LockSyncMode::Cargo => {
+            let ok = std::process::Command::new("cargo")
+                .args(["metadata", "--format-version", "1", "--offline"])
+                .current_dir(repo_path)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !ok {
+                tracing::warn!(
+                    "cargo metadata --offline failed; falling back to patching Cargo.lock"
+                );
+                if let Some(name) = package_name {
+                    sync_cargo_lock(&repo_path.join("Cargo.lock"), name, version);
+                }
+            }
+        }
+    }
 }
 
 /// Update `[[package]]` entries named `package_name` in a Cargo.lock to
@@ -2348,7 +2390,7 @@ mod tests {
         TestOutcome, SELF_WRITE_CAP, SELF_WRITE_TTL,
     };
     use crate::cluster::engine::Cluster;
-    use crate::config::loader::{Config, TestCommandOn, TestConfig};
+    use crate::config::loader::{Config, LockSyncMode, TestCommandOn, TestConfig};
     use crate::diff::DiffAnalysis;
     use crate::watcher::{FsEvent, FsEventKind};
     use crate::weight::WeightResult;
