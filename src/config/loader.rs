@@ -44,6 +44,8 @@ pub struct Config {
     #[serde(default)]
     pub version_thresholds: VersionThresholdConfig,
     #[serde(default)]
+    pub versioning: VersioningConfig,
+    #[serde(default)]
     pub plugins: PluginsConfig,
     #[serde(default)]
     pub vacs: VacsConfig,
@@ -1611,6 +1613,7 @@ impl Default for Config {
             distribution: DistributionConfig::default(),
             ship: ShipConfig::default(),
             version_thresholds: VersionThresholdConfig::default(),
+            versioning: VersioningConfig::default(),
             plugins: PluginsConfig::default(),
             vacs: VacsConfig::default(),
             trawl: TrawlConfig::default(),
@@ -1647,6 +1650,15 @@ pub fn load() -> anyhow::Result<Config> {
 pub fn load_from_path(path: &Path) -> anyhow::Result<Config> {
     let content = std::fs::read_to_string(path)?;
     let cfg: Config = toml::from_str(&content)?;
+    if !matches!(cfg.versioning.mode, VersioningMode::Root) {
+        anyhow::bail!(
+            "[versioning].mode = {:?} is not implemented yet — only \"root\" (a single \
+             VERSION at the repository root) is supported. For per-member versioning today, \
+             run `kaptaind-cli trawl --expand-workspaces` so each member crate gets its own \
+             kaptaind.toml and VERSION lifecycle.",
+            cfg.versioning.mode
+        );
+    }
     let base_dir = path
         .parent()
         .map(Path::to_path_buf)
@@ -1723,6 +1735,77 @@ impl Default for VersionThresholdConfig {
             patch: 0.1,
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// Versioning policy config
+// ---------------------------------------------------------------------------
+
+/// `[versioning]` block in `kaptaind.toml`.
+///
+/// Versioning *policy* lives here rather than being baked into project
+/// discovery: the trawler identifies structure (workspace roots, member
+/// crates), and this section determines how versions are owned and written.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct VersioningConfig {
+    /// How versions are owned within the repository.
+    ///
+    /// Only `Root` is implemented: a single `VERSION` at the repo root, with
+    /// the root `Cargo.toml`/`Cargo.lock` kept in sync. `Members`/`Hybrid`
+    /// parse but are rejected at load time; use
+    /// `kaptaind-cli trawl --expand-workspaces` for per-member versioning.
+    #[serde(default)]
+    pub mode: VersioningMode,
+    /// How to react when `VERSION` and root `Cargo.toml [package].version`
+    /// disagree (default `strict`: refuse to commit).
+    #[serde(default)]
+    pub consistency: VersionConsistency,
+    /// How to keep `Cargo.lock` in sync after a version bump (default
+    /// `patch`: update the own-package entry in place).
+    #[serde(default)]
+    pub lock_sync: LockSyncMode,
+}
+
+/// Version ownership model (`[versioning].mode`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VersioningMode {
+    /// One `VERSION` at the repository root; member crates are not bumped.
+    #[default]
+    Root,
+    /// Reserved: each workspace member versioned independently.
+    Members,
+    /// Reserved: named version domains spanning groups of crates.
+    Hybrid,
+}
+
+/// Policy for `VERSION` vs `Cargo.toml [package].version` disagreement
+/// (`[versioning].consistency`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VersionConsistency {
+    /// Refuse to commit while the two sources disagree (default). The daemon
+    /// writes both together, so drift means a manual edit that should surface.
+    #[default]
+    Strict,
+    /// Log a warning and proceed with `VERSION` taking precedence.
+    Warn,
+    /// Silently use `VERSION` precedence (legacy behavior).
+    Off,
+}
+
+/// How `Cargo.lock` is kept in sync after a version bump
+/// (`[versioning].lock_sync`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LockSyncMode {
+    /// Update the own-package `[[package]]` entry in place (default).
+    Patch,
+    /// Regenerate via `cargo metadata --offline`; falls back to `Patch` on
+    /// failure so the version triple never drifts.
+    Cargo,
+    /// Leave `Cargo.lock` untouched (e.g. CI regenerates it).
+    Off,
 }
 
 // ---------------------------------------------------------------------------
