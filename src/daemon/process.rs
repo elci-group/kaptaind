@@ -1,22 +1,29 @@
+#[cfg(unix)]
 use anyhow::{anyhow, Context};
+#[cfg(unix)]
 use std::ffi::CString;
 use std::fs::File;
+#[cfg(unix)]
 use std::io::Write;
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
 use std::path::Path;
 
+#[cfg(unix)]
 enum Fork {
     Parent,
     Child,
     Failed,
 }
 
+#[cfg(unix)]
 #[derive(Debug)]
 enum DaemonizeOutcome {
     ParentExit,
     ChildContinues,
 }
 
+#[cfg(unix)]
 trait ProcessOps {
     fn fork(&mut self) -> Fork;
     fn setsid(&mut self) -> bool;
@@ -25,8 +32,10 @@ trait ProcessOps {
     fn pid(&self) -> libc::pid_t;
 }
 
+#[cfg(unix)]
 struct RealProcessOps;
 
+#[cfg(unix)]
 impl ProcessOps for RealProcessOps {
     fn fork(&mut self) -> Fork {
         match unsafe { libc::fork() } {
@@ -58,6 +67,7 @@ impl ProcessOps for RealProcessOps {
 /// This intentionally implements only the daemon behavior Kaptaind needs:
 /// fork, create a new session, switch working directory, redirect stdio,
 /// and record the child pid. The parent process exits after the fork.
+#[cfg(unix)]
 pub fn daemonize(
     workdir: &Path,
     pid_path: &Path,
@@ -71,6 +81,19 @@ pub fn daemonize(
     }
 }
 
+/// Non-Unix platforms have no fork(2): refuse background mode instead of
+/// failing to compile. Foreground operation is unaffected.
+#[cfg(not(unix))]
+pub fn daemonize(
+    _workdir: &Path,
+    _pid_path: &Path,
+    _stdout: File,
+    _stderr: File,
+) -> anyhow::Result<()> {
+    anyhow::bail!("--daemon is only supported on Unix; run kaptaind in the foreground")
+}
+
+#[cfg(unix)]
 fn daemonize_inner(
     ops: &mut dyn ProcessOps,
     workdir: &Path,
@@ -109,6 +132,7 @@ fn daemonize_inner(
     Ok(DaemonizeOutcome::ChildContinues)
 }
 
+#[cfg(unix)]
 fn redirect_fd(ops: &mut dyn ProcessOps, from: i32, to: i32) -> anyhow::Result<()> {
     if !ops.dup2(from, to) {
         return Err(anyhow!("failed to redirect file descriptor"));
@@ -116,7 +140,7 @@ fn redirect_fd(ops: &mut dyn ProcessOps, from: i32, to: i32) -> anyhow::Result<(
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::*;
     use tempfile::tempdir;

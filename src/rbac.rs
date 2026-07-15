@@ -9,6 +9,7 @@
 
 use crate::config::loader::RbacConfig;
 use anyhow::bail;
+#[cfg(unix)]
 use std::ffi::CStr;
 
 /// Permissions enforced by kaptaind's fine-grained RBAC.
@@ -72,6 +73,7 @@ pub fn current_user() -> String {
 ///
 /// Uses `libc::getgroups` and `libc::getgrgid` to resolve numeric group IDs to
 /// names. Any resolution errors result in an empty vector rather than a failure.
+#[cfg(unix)]
 pub fn current_groups() -> Vec<String> {
     unsafe {
         let mut count = libc::getgroups(0, std::ptr::null_mut());
@@ -93,6 +95,14 @@ pub fn current_groups() -> Vec<String> {
     }
 }
 
+/// Non-Unix platforms have no getgroups(2): report no supplementary groups,
+/// so group-based RBAC rules simply do not match.
+#[cfg(not(unix))]
+pub fn current_groups() -> Vec<String> {
+    Vec::new()
+}
+
+#[cfg(unix)]
 unsafe fn group_name_from_gid(gid: libc::gid_t) -> Option<String> {
     let gr = libc::getgrgid(gid);
     if gr.is_null() {

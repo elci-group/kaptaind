@@ -28,7 +28,7 @@ kaptaind-diff = { path = "crates/kaptaind-diff" }
 # clean machine (CI, Docker, release). Bump `rev` deliberately to advance it.
 # For local development against a sibling checkout, create a gitignored
 # `.cargo/config.toml` with: paths = ["../deckhand"]
-deckhand = { git = "https://github.com/elci-group/deckhand", rev = "02fa6906e40c57f9abbbf62893cee5a387b882a6" }
+deckhand = { git = "https://github.com/elci-group/deckhand", rev = "b5c221b6182e871ffeb150d050af518c4121a753" }
 anyhow = "1"
 tokio = { version = "1", features = ["full"] }
 notify = "6"

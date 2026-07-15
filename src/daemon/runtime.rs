@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(unix)]
 use tokio::signal::unix::{signal, SignalKind};
 
 fn warn_if_git_lock_exists(repo_path: &Path) {
@@ -206,8 +207,16 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
     ));
     tokio::pin!(scheduler);
 
-    // Setup signal handlers: SIGINT and SIGTERM
-    let mut sigterm = signal(SignalKind::terminate()).context("failed to setup SIGTERM handler")?;
+    // Setup signal handlers: SIGINT on all platforms, SIGTERM on Unix. On
+    // other platforms the SIGTERM branch is a future that never resolves.
+    #[cfg(unix)]
+    let sigterm = {
+        let mut sigterm =
+            signal(SignalKind::terminate()).context("failed to setup SIGTERM handler")?;
+        async move { sigterm.recv().await }
+    };
+    #[cfg(not(unix))]
+    let sigterm = std::future::pending::<Option<()>>();
 
     tokio::select! {
         result = &mut scheduler => {
@@ -217,7 +226,7 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
             tracing::info!("SIGINT received, initiating graceful shutdown");
             shutdown_handle.signal();
         }
-        _ = sigterm.recv() => {
+        _ = sigterm => {
             tracing::info!("SIGTERM received, initiating graceful shutdown");
             shutdown_handle.signal();
         }
