@@ -6,14 +6,55 @@ on:
       - main
     paths:
       - 'VERSION'
+      # Workspace member bumps ([versioning].workspace = "touched") change the
+      # member manifest without touching VERSION; they only need a member tag.
+      - 'crates/kaptaind-diff/Cargo.toml'
   workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  changes:
+    name: Detect bumped versions
+    runs-on: ubuntu-latest
+    outputs:
+      root: ${{ steps.detect.outputs.root }}
+      root_version: ${{ steps.detect.outputs.root_version }}
+      kaptaind_diff: ${{ steps.detect.outputs.kaptaind_diff }}
+      kaptaind_diff_version: ${{ steps.detect.outputs.kaptaind_diff_version }}
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+
+      # A bump is pending when the tag CI cuts for it does not exist yet.
+      # (fetch-depth: 0 makes all tags visible locally.) To re-run a release
+      # that failed after its tag was pushed, delete the tag and re-dispatch.
+      - name: Detect bumped versions
+        id: detect
+        shell: bash
+        run: |
+          set -euo pipefail
+          ROOT_VERSION="$(tr -d '[:space:]' < VERSION)"
+          DIFF_VERSION="$(awk -F'"' '/^\[package\]/{p=1;next} /^\[/{p=0} p && /^version = /{print $2; exit}' crates/kaptaind-diff/Cargo.toml)"
+          echo "root_version=${ROOT_VERSION}" >> "$GITHUB_OUTPUT"
+          echo "kaptaind_diff_version=${DIFF_VERSION}" >> "$GITHUB_OUTPUT"
+          if git rev-parse -q --verify "refs/tags/v${ROOT_VERSION}" >/dev/null; then
+            echo "root=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "root=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -n "${DIFF_VERSION}" ] && ! git rev-parse -q --verify "refs/tags/kaptaind-diff-v${DIFF_VERSION}" >/dev/null; then
+            echo "kaptaind_diff=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "kaptaind_diff=false" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
     name: build (${{ matrix.target }})
+    needs: changes
+    if: needs.changes.outputs.root == 'true'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -104,7 +145,8 @@ jobs:
           if-no-files-found: error
 
   release:
-    needs: build
+    needs: [changes, build]
+    if: needs.changes.outputs.root == 'true'
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -193,3 +235,29 @@ jobs:
             dist/*.cert
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  member-tags:
+    name: Tag workspace member releases
+    needs: changes
+    if: needs.changes.outputs.kaptaind_diff == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          fetch-depth: 0
+
+      - name: Create and push kaptaind-diff tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          TAG="kaptaind-diff-v${{ needs.changes.outputs.kaptaind_diff_version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "Tag ${TAG} already exists; skipping."
+          else
+            git tag -a "${TAG}" -m "kaptaind-diff ${TAG}"
+            git push origin "${TAG}"
+          fi

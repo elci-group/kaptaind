@@ -1,6 +1,6 @@
 # Workspace Version Bumping Plan
 
-**Status:** proposed · **Target:** v10.x (opt-in) → v11.0.0 (default flip) · **Date:** 2026-07-12
+**Status:** in progress — W0+W1+W2 landed 2026-07-14 (W0 `src/version/workspace.rs` discovery; W1 `src/version/writeback.rs` + `[versioning].workspace` = `root_only`(default)/`touched`/`lockstep` + 8 daemon regression tests in `tests/workspace_regressions.rs`; W2 `members_bumped` in decisions.jsonl + `explain` rendering, commit-subject member scope via `dominant_member`, `kaptaind-cli doctor` workspace checks (`workspace_lock_drift`, `workspace_requirement_unsatisfiable`, `workspace_root_only_deflation`), `daemon_soak_workspace_member_waves` in `tests/soak.rs`); W3 partial 2026-07-14 — this repo now dogfoods `[versioning].workspace = "touched"` and `release.yml` cuts member tags (`kaptaind-diff-vX.Y.Z`) via tag-existence detection; running a live daemon here was deferred by the owner, so the "kaptaind-diff self-bump produced by the daemon" criterion stays open · **Target:** v10.x (opt-in) → v11.0.0 (default flip) · **Date:** 2026-07-12
 
 Companion to `AUTONOMOUS_COMMIT_SAFETY_PLAN.md`. That plan made a single-project
 version triple (VERSION ⇔ Cargo.toml ⇔ Cargo.lock) coherent. This plan extends
@@ -99,10 +99,13 @@ New module `src/version/workspace.rs`:
 - Discovery runs once at daemon start and on config hot reload; manifests
   changing members mid-run are picked up by the existing rescan.
 
-### 3.2 Bump policies — `[version] workspace`
+### 3.2 Bump policies — `[versioning] workspace`
+
+(Implemented under the existing `[versioning]` block, which already owns
+version policy — not a new `[version]` section as first drafted.)
 
 ```toml
-[version]
+[versioning]
 workspace = "root_only"   # today's behavior (default through v10.x)
 # workspace = "touched"   # bump only members the cluster touched (v11 default)
 # workspace = "lockstep"  # every bump applies to every member

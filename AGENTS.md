@@ -31,7 +31,7 @@
 | `src/diff/` | Scoring across five dimensions: structural (`text.rs`), API surface (`ast.rs`), dependencies/runtime (`api.rs`), bundle size (`bundle.rs`), and the language adapter framework (`lang/`). |
 | `src/diff/lang/` | `adapter.rs` (traits/representation), `registry.rs` (path→adapter resolution), `adapters/` (concrete adapters), `common.rs` (shared helpers). |
 | `src/weight/` | Weighted score calculation: `s*structural + a*api + d*deps + r*runtime + b*bundle`. |
-| `src/version/` | Semantic bump decision and `semver::Version` mutation. |
+| `src/version/` | Semantic bump decision, `semver::Version` mutation, Cargo workspace discovery (`workspace.rs`), and version writeback (`writeback.rs`: `save_version` + `save_workspace_version` behind `[versioning].workspace`, default `root_only`). |
 | `src/commit/` | Git commit orchestration with configurable staging and optional GPG-signed commits. |
 | `src/push/` | Git push orchestration with retry, safety checks, and required-CI enforcement. |
 | `src/git/` | Thin repository wrapper around `git2`. |
@@ -218,4 +218,6 @@ RUST_LOG=kaptaind=debug cargo run
 - Supply-chain checks run in `.github/workflows/security-audit.yml`: `cargo audit`, `cargo deny check` (config in `deny.toml`), and `npm audit` for `web/`.
 - The Rust toolchain is pinned via `rust-toolchain.toml` (stable, clippy + rustfmt). Keep code building on stable.
 - Do not run the kaptaind daemon against this repository during release work — it dogfood-versions `VERSION` and creates noisy auto-commits. Keep `VERSION`, `Cargo.toml`, `CHANGELOG.md`, and git tags in agreement; tags are cut by CI, not by the daemon.
+- The repo dogfoods `[versioning].workspace = "touched"` (see `docs/planning/WORKSPACE_VERSION_BUMPING_PLAN.md`): a cluster touching only `crates/kaptaind-diff/**` bumps the member manifest, not the root `VERSION`. CI cuts two tag shapes — `vX.Y.Z` (root, drives the release matrix) and `kaptaind-diff-vX.Y.Z` (member, tag only) — each created only when missing.
+- The repo's `kaptaind.toml` sets `[daemon] startup_guard = true`: the daemon refuses to start while the worktree is dirty (accidental starts must not catch-up-commit release work). A deliberate run needs `--force`.
 - `deckhand` is a pinned git dependency (`Cargo.toml`). To hack on it against a sibling checkout, create a local, gitignored `.cargo/config.toml` with `paths = ["../deckhand"]`; bump the `rev` in `Cargo.toml` to ship a newer deckhand.

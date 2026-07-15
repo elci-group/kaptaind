@@ -37,10 +37,24 @@ network_push = true           # Allow outgoing git push
 [ratelimit]
 min_commit_interval = 10      # Minimum seconds between commits
 
+# Daemon runtime behavior.
+[daemon]
+# Refuse to start while the worktree has uncommitted changes. This repo is a
+# release tree — daemon runs here are exceptional (see AGENTS.md), and an
+# accidental start must not catch-up-commit in-flight work. `--force` overrides.
+startup_guard = true
+
 # Version bump thresholds. Score must exceed these to trigger Patch or Minor.
 [version_thresholds]
 patch = 0.0                   # Any non-zero score triggers a patch bump
 minor = 0.6                   # Score above this triggers a minor bump
+
+# Workspace version writeback policy (dogfooding the workspace bumping plan).
+# "touched": bump only the members a cluster touched, plus the root crate when
+# the cluster touched paths outside every member subtree. See
+# docs/planning/WORKSPACE_VERSION_BUMPING_PLAN.md.
+[versioning]
+workspace = "touched"
 
 # Pre-commit validation hook.
 [test]
