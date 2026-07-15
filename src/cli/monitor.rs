@@ -123,11 +123,24 @@ pub fn resume() -> anyhow::Result<()> {
 fn read_live_pid(pid_file: &Path) -> Option<i32> {
     let pid_str = std::fs::read_to_string(pid_file).ok()?;
     let pid = pid_str.trim().parse::<i32>().ok()?;
-    if unsafe { libc::kill(pid, 0) } == 0 {
-        Some(pid)
-    } else {
-        None
+    #[cfg(target_os = "linux")]
+    {
+        if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+            return Some(pid);
+        }
     }
+    #[cfg(all(unix, not(target_os = "linux")))]
+    {
+        // Signal 0 checks if the process is running and we have permissions to signal it.
+        if unsafe { libc::kill(pid, 0) } == 0 {
+            return Some(pid);
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = pid;
+    }
+    None
 }
 
 /// Install the systemd/launchd service that runs `monitor resume` on login.

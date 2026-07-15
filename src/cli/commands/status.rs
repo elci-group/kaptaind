@@ -71,9 +71,22 @@ fn get_daemon_pid(config: &Config) -> Option<i32> {
     let pid_file = config.repo_path.join(".kaptaind").join("daemon.pid");
     if let Ok(pid_str) = fs::read_to_string(pid_file) {
         if let Ok(pid) = pid_str.trim().parse::<i32>() {
-            // Signal 0 checks if the process is running and we have permissions to signal it.
-            if unsafe { libc::kill(pid, 0) } == 0 {
-                return Some(pid);
+            #[cfg(target_os = "linux")]
+            {
+                if std::path::Path::new(&format!("/proc/{pid}")).exists() {
+                    return Some(pid);
+                }
+            }
+            #[cfg(all(unix, not(target_os = "linux")))]
+            {
+                // Signal 0 checks if the process is running and we have permissions to signal it.
+                if unsafe { libc::kill(pid, 0) } == 0 {
+                    return Some(pid);
+                }
+            }
+            #[cfg(not(unix))]
+            {
+                let _ = pid;
             }
         }
     }
