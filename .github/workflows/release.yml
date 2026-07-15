@@ -175,14 +175,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30  # stable
 
       - name: Install cargo-cyclonedx
-        run: cargo install cargo-cyclonedx --locked
+        # Version-pinned: upstream removed --output-pattern in a minor bump
+        # and silently broke this step.
+        run: cargo install cargo-cyclonedx --locked --version 0.5.9
 
       - name: Generate CycloneDX SBOM (sbom-rust.json)
         run: |
           set -euo pipefail
-          cargo cyclonedx --format json --output-pattern bom
-          SBOM="$(find . -type f \( -name '*.cdx.json' -o -name 'bom.json' \) \
-            -not -path './dist/*' | head -n1 || true)"
+          cargo cyclonedx --format json --override-filename bom
+          # cargo cyclonedx emits one bom.json per workspace crate; the
+          # release describes the root crate, so prefer it deterministically.
+          SBOM="$(find . -maxdepth 1 -name 'bom.json' | head -n1 || true)"
+          if [ -z "$SBOM" ]; then
+            SBOM="$(find . -type f \( -name '*.cdx.json' -o -name 'bom.json' \) \
+              -not -path './dist/*' | head -n1 || true)"
+          fi
           if [ -z "$SBOM" ]; then
             echo "error: cargo cyclonedx produced no JSON SBOM" >&2
             exit 1
