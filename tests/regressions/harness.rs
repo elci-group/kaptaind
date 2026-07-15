@@ -1,9 +1,13 @@
-//! Test harness for the regression suite: a monorepo fixture (an outer git
-//! repo with an in-repo kaptaind project) plus helpers to drive the real
-//! daemon binary against it.
+//! Test harness for the regression suites: a monorepo fixture and a Cargo
+//! workspace fixture (both an outer git repo with an in-repo kaptaind
+//! project) plus helpers to drive the real daemon binary against them.
 //!
 //! Every monorepo finding from the live-fire audit was invisible without this
 //! layout; standalone-repo fixtures cannot reproduce them.
+//!
+//! Shared between `tests/regressions.rs` and `tests/workspace_regressions.rs`;
+//! each target uses a subset of the fixtures.
+#![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -106,19 +110,7 @@ enabled = true
 
     /// Run git against the outer repo and return stdout.
     pub fn git(&self, args: &[&str]) -> String {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(self.dir.path())
-            .args(args)
-            .output()
-            .expect("git runs");
-        assert!(
-            output.status.success(),
-            "git {:?} failed: {}",
-            args,
-            String::from_utf8_lossy(&output.stderr)
-        );
-        String::from_utf8_lossy(&output.stdout).into_owned()
+        git(self.dir.path(), args)
     }
 
     /// Count of daemon-authored bumping commits in the outer repo.
@@ -128,10 +120,7 @@ enabled = true
     /// `kaptaind: <Bump> -> v<version> [...]`, chore captures carry
     /// `kaptaind: no-bump [...]`.
     pub fn kaptaind_commits(&self) -> usize {
-        self.git(&["log", "--format=%b"])
-            .lines()
-            .filter(|line| line.starts_with("kaptaind: ") && !line.starts_with("kaptaind: no-bump"))
-            .count()
+        kaptaind_commits(self.dir.path())
     }
 
     /// Count of non-bumping chore commits (D1, `require_bump = false`).
@@ -140,6 +129,185 @@ enabled = true
             .lines()
             .filter(|subject| subject.starts_with("chore:"))
             .count()
+    }
+}
+
+/// Count of daemon-authored bumping commits in the repo at `dir`.
+pub fn kaptaind_commits(dir: &Path) -> usize {
+    git(dir, &["log", "--format=%b"])
+        .lines()
+        .filter(|line| line.starts_with("kaptaind: ") && !line.starts_with("kaptaind: no-bump"))
+        .count()
+}
+
+/// Run git against the repo at `dir` and return stdout.
+pub fn git(dir: &Path, args: &[&str]) -> String {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args(args)
+        .output()
+        .expect("git runs");
+    assert!(
+        output.status.success(),
+        "git {:?} failed: {}",
+        args,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// Workspace fixture for the W1 regression tests
+/// (docs/planning/WORKSPACE_VERSION_BUMPING_PLAN.md §4): an outer git repo
+/// with a `proj/` Cargo workspace — root crate `proj` at 0.1.0, members
+/// `crates/alpha` and `crates/beta` at 0.1.0 (beta depends on alpha with an
+/// exact `=0.1.0` requirement so any alpha bump forces the floor to move),
+/// and `crates/gamma` inheriting `[workspace.package].version = "0.3.0"`.
+pub struct WorkspaceFixture {
+    pub dir: tempfile::TempDir,
+}
+
+impl WorkspaceFixture {
+    /// `policy` is written to `[versioning].workspace`. `virtual_root`
+    /// drops the root `[package]`/`VERSION` for the virtual-workspace test.
+    pub fn new(health_port: u16, policy: &str, virtual_root: bool) -> Self {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path();
+        run(root, &["git", "init", "-q", "-b", "master"]);
+        run(root, &["git", "config", "user.name", "Test"]);
+        run(root, &["git", "config", "user.email", "test@example.com"]);
+
+        let proj = root.join("proj");
+        std::fs::create_dir_all(proj.join("src")).expect("mkdir src");
+        std::fs::write(proj.join("src/main.rs"), "fn main() {}\n").expect("main.rs");
+
+        let mut manifest = String::new();
+        if !virtual_root {
+            manifest.push_str(
+                "[package]\nname = \"proj\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n",
+            );
+        }
+        manifest.push_str(
+            "[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"0.3.0\"\n",
+        );
+        std::fs::write(proj.join("Cargo.toml"), manifest).expect("Cargo.toml");
+
+        for (name, extra) in [
+            ("alpha", ""),
+            (
+                "beta",
+                "\n[dependencies]\nalpha = { path = \"../alpha\", version = \"=0.1.0\" }\n",
+            ),
+        ] {
+            let member = proj.join(format!("crates/{name}"));
+            std::fs::create_dir_all(member.join("src")).expect("member src");
+            std::fs::write(
+                member.join("Cargo.toml"),
+                format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{extra}"),
+            )
+            .expect("member manifest");
+            std::fs::write(
+                member.join("src/lib.rs"),
+                format!("/// {name} identity.\npub fn {name}() -> u64 {{ 1 }}\n"),
+            )
+            .expect("member lib");
+        }
+        let gamma = proj.join("crates/gamma");
+        std::fs::create_dir_all(gamma.join("src")).expect("gamma src");
+        std::fs::write(
+            gamma.join("Cargo.toml"),
+            "[package]\nname = \"gamma\"\nedition = \"2021\"\nversion.workspace = true\n",
+        )
+        .expect("gamma manifest");
+        std::fs::write(
+            gamma.join("src/lib.rs"),
+            "/// gamma identity.\npub fn gamma() -> u64 { 1 }\n",
+        )
+        .expect("gamma lib");
+
+        let mut lock = String::from(
+            "# This file is automatically @generated by Cargo.\n\
+             # It is not intended for manual editing.\n\
+             version = 4\n",
+        );
+        for (name, version, deps) in [
+            ("alpha", "0.1.0", ""),
+            ("beta", "0.1.0", "dependencies = [\n \"alpha\",\n]\n"),
+            ("gamma", "0.3.0", ""),
+            ("proj", "0.1.0", ""),
+        ] {
+            lock.push_str(&format!(
+                "\n[[package]]\nname = \"{name}\"\nversion = \"{version}\"\n{deps}"
+            ));
+        }
+        std::fs::write(proj.join("Cargo.lock"), lock).expect("Cargo.lock");
+        if !virtual_root {
+            std::fs::write(proj.join("VERSION"), "0.1.0\n").expect("VERSION");
+        }
+        std::fs::write(proj.join(".kaptainignore"), ".git\n.kaptaind\ntarget\n")
+            .expect(".kaptainignore");
+        std::fs::write(
+            proj.join("kaptaind.toml"),
+            format!(
+                r#"
+health_port = {health_port}
+
+[watch]
+path = "."
+recursive = true
+ignore_file = ".kaptainignore"
+
+[cluster]
+window = 1
+
+[test]
+command = "true"
+required = false
+
+[push]
+enabled = false
+branch = "master"
+
+[weights]
+s = 0.35
+a = 0.30
+d = 0.20
+r = 0.15
+
+[ratelimit]
+min_commit_interval = 1
+
+[staging]
+mode = "cluster"
+
+[versioning]
+workspace = "{policy}"
+
+[angler.git_hooks]
+enabled = true
+"#
+            ),
+        )
+        .expect("kaptaind.toml");
+
+        run(root, &["git", "add", "-A"]);
+        run(root, &["git", "commit", "-qm", "initial"]);
+
+        Self { dir }
+    }
+
+    pub fn project(&self) -> PathBuf {
+        self.dir.path().join("proj")
+    }
+
+    /// Run git against the outer repo and return stdout.
+    pub fn git(&self, args: &[&str]) -> String {
+        git(self.dir.path(), args)
+    }
+
+    /// Count of daemon-authored bumping commits in the outer repo.
+    pub fn kaptaind_commits(&self) -> usize {
+        kaptaind_commits(self.dir.path())
     }
 }
 

@@ -1,5 +1,8 @@
 use std::path::Path;
 
+pub mod workspace;
+pub mod writeback;
+
 pub use kaptaind_diff::version::{apply, Bump};
 /// Decide the version bump using configurable score thresholds.
 pub fn decide(
@@ -238,8 +241,11 @@ mod tests {
     fn consistency_strict_errors_on_mismatch() {
         let dir = tempdir().expect("tempdir");
         write_pair(dir.path(), "2.4.0", "2.3.0");
-        let err = check_consistency(dir.path(), crate::config::loader::VersionConsistency::Strict)
-            .expect_err("strict must refuse a mismatch");
+        let err = check_consistency(
+            dir.path(),
+            crate::config::loader::VersionConsistency::Strict,
+        )
+        .expect_err("strict must refuse a mismatch");
         let msg = err.to_string();
         assert!(msg.contains("2.4.0"));
         assert!(msg.contains("2.3.0"));

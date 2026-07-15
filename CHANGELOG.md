@@ -13,6 +13,41 @@ All notable changes to kaptaind are documented here. The format follows
 > here. Per-commit detail for the `v0.1.44 → v9.x` range lives in `git log`;
 > the consolidated capability set is summarized under `[9.7.16]` below.
 
+## [10.1.0] — 2026-07-15
+
+Minor release: workspace-aware version bumping, opt-in through v10.x
+(`docs/planning/WORKSPACE_VERSION_BUMPING_PLAN.md`; default flip planned for
+v11). Also a startup guard against accidental daemon runs.
+
+### Added
+- **Workspace-aware version writeback** (`[versioning].workspace`):
+  `root_only` (default; pre-v10 behavior), `touched` (bump only the members
+  the cluster touched, plus the root crate for paths outside every member
+  subtree), or `lockstep` (bump every member together). Discovery handles
+  root-crate, virtual, and single-crate layouts, `version.workspace = true`
+  inheritance, and glob/`exclude` member resolution. Writeback keeps
+  per-member baselines, raises inter-member path-dependency floors (never
+  widens), and does a single lockfile pass. Commit subjects carry the
+  dominant member scope; `decisions.jsonl` records `members_bumped`, rendered
+  by `kaptaind-cli explain`. Covered by 8 daemon regression tests
+  (`tests/workspace_regressions.rs`) and a soak test with member waves.
+- **`kaptaind-cli doctor` workspace checks**: `workspace_lock_drift`,
+  `workspace_requirement_unsatisfiable`, `workspace_root_only_deflation`.
+- **`[daemon] startup_guard`**: refuse to start while the worktree has
+  uncommitted changes, unless `--force` is passed — an accidental start can
+  no longer catch-up-commit in-flight release work.
+
+### Changed
+- The kaptaind repo itself now runs `[versioning].workspace = "touched"`,
+  and release CI additionally cuts member tags (`kaptaind-diff-vX.Y.Z`) when
+  a member manifest version has no tag yet. Root `vX.Y.Z` tags, the build
+  matrix, and the GitHub release flow are unchanged and fire only on root
+  version bumps.
+
+### Fixed
+- Restored the phantom-cluster regression test's version expectation to the
+  designed api-added ⇒ Minor outcome (test drift only; no runtime change).
+
 ## [10.0.1] — 2026-07-12
 
 Patch release: a cascade fix found by the new nightly chaos soak.

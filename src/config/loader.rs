@@ -95,12 +95,18 @@ pub struct DaemonConfig {
     /// before remaining tasks are aborted (default 10).
     #[serde(default = "default_shutdown_grace_secs")]
     pub shutdown_grace_secs: u64,
+    /// Refuse to start when the worktree has uncommitted changes (default
+    /// false). For repos where daemon runs are exceptional — e.g. release
+    /// trees a daemon must never casually bump. Bypass with `--force`.
+    #[serde(default)]
+    pub startup_guard: bool,
 }
 
 impl Default for DaemonConfig {
     fn default() -> Self {
         Self {
             shutdown_grace_secs: default_shutdown_grace_secs(),
+            startup_guard: false,
         }
     }
 }
@@ -1764,6 +1770,11 @@ pub struct VersioningConfig {
     /// `patch`: update the own-package entry in place).
     #[serde(default)]
     pub lock_sync: LockSyncMode,
+    /// Which manifests a bump is written to when the repository is a Cargo
+    /// workspace (default `root_only`). See
+    /// `docs/planning/WORKSPACE_VERSION_BUMPING_PLAN.md`.
+    #[serde(default)]
+    pub workspace: WorkspacePolicy,
 }
 
 /// Version ownership model (`[versioning].mode`).
@@ -1794,12 +1805,30 @@ pub enum VersionConsistency {
     Off,
 }
 
+/// Which manifests a version bump is written to when the repository is a
+/// Cargo workspace (`[versioning].workspace`). Non-workspace projects are
+/// unaffected by every setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspacePolicy {
+    /// Bump only the root `VERSION`/manifest (default through v10.x; the
+    /// pre-workspace behavior, kept for compatibility).
+    #[default]
+    RootOnly,
+    /// Bump only the members the cluster touched, plus the root crate when
+    /// the cluster touched paths outside every member subtree.
+    Touched,
+    /// Every bump applies to every member plus the root.
+    Lockstep,
+}
+
 /// How `Cargo.lock` is kept in sync after a version bump
 /// (`[versioning].lock_sync`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LockSyncMode {
     /// Update the own-package `[[package]]` entry in place (default).
+    #[default]
     Patch,
     /// Regenerate via `cargo metadata --offline`; falls back to `Patch` on
     /// failure so the version triple never drifts.
@@ -1921,6 +1950,42 @@ mod tests {
             super::VersionConsistency::Strict
         );
         assert_eq!(config.versioning.lock_sync, super::LockSyncMode::Patch);
+        assert_eq!(
+            config.versioning.workspace,
+            super::WorkspacePolicy::RootOnly
+        );
+    }
+
+    #[test]
+    fn versioning_workspace_policy_deserializes() {
+        let toml_str = r#"
+            [versioning]
+            workspace = "touched"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(config.versioning.workspace, super::WorkspacePolicy::Touched);
+        let toml_str = r#"
+            [versioning]
+            workspace = "lockstep"
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert_eq!(
+            config.versioning.workspace,
+            super::WorkspacePolicy::Lockstep
+        );
+    }
+
+    #[test]
+    fn daemon_startup_guard_defaults_and_deserializes() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(!config.daemon.startup_guard);
+        let toml_str = r#"
+            [daemon]
+            startup_guard = true
+        "#;
+        let config: Config = toml::from_str(toml_str).unwrap();
+        assert!(config.daemon.startup_guard);
+        assert_eq!(config.daemon.shutdown_grace_secs, 10);
     }
 
     #[test]

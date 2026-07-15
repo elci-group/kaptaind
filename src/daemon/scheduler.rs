@@ -12,6 +12,8 @@ use crate::daemon::trace::write_trace_if_active;
 use crate::diff::DiffAnalysis;
 use crate::git::repo::Repo;
 use crate::release::ship::{run_nightly, run_stable, OutputFormat, ShipKind, ShipOptions};
+use crate::version::workspace::WorkspaceLayout;
+use crate::version::writeback::{save_version, save_workspace_version, WorkspaceBump};
 use crate::version::Bump;
 use crate::watcher::FsEvent;
 use chrono::{DateTime, Utc};
@@ -917,10 +919,9 @@ async fn process_cluster(
     // before we derive the next version from them. With strict policy (the
     // default) a mismatch means someone edited one source manually — surface
     // it instead of silently letting VERSION precedence hide the drift.
-    if let Err(err) = crate::version::check_consistency(
-        &config.repo_path,
-        config.versioning.consistency,
-    ) {
+    if let Err(err) =
+        crate::version::check_consistency(&config.repo_path, config.versioning.consistency)
+    {
         tracing::error!(error = %err, "version sources disagree; skipping commit");
         write_trace_if_active(
             &config.repo_path,
@@ -960,35 +961,60 @@ async fn process_cluster(
         return;
     }
 
-    let previous = match crate::version::resolve_baseline(&config.repo_path) {
-        Ok(version) => version,
+    // Workspace layout discovery (W1). Done per cluster — a few manifest
+    // reads — so membership edits and config reloads are picked up without
+    // caching. A discovery failure never breaks the flow: fall back to the
+    // single-crate path with a warning (plan: "fall back to Single + warn").
+    let layout = match WorkspaceLayout::discover(&config.repo_path) {
+        Ok(layout) => layout,
         Err(err) => {
-            tracing::error!(error = %err, "cannot resolve baseline version; skipping commit");
-            write_trace_if_active(
-                &config.repo_path,
-                &cluster,
-                tracer::TraceResult::Skipped {
-                    reason: "version_baseline_unresolvable".to_string(),
-                },
-                test_outcome.trace_test(),
-                agent_event.clone(),
-            );
-            record_decision(
-                config,
-                &cluster,
-                crate::daemon::decisions::outcome::BASELINE_UNRESOLVABLE,
-                err.to_string(),
-                Some(&diff),
-                Some(&weight),
-                Some(bump),
-                None,
-            );
-            status.set_failed(err.to_string());
-            write_status(&config.repo_path, status);
-            return;
+            tracing::warn!(error = %err, "workspace discovery failed; using single-crate versioning");
+            WorkspaceLayout::Single
         }
     };
-    let next = crate::version::apply(previous.clone(), bump);
+    let workspace_mode = !matches!(layout, WorkspaceLayout::Single)
+        && !matches!(
+            config.versioning.workspace,
+            crate::config::loader::WorkspacePolicy::RootOnly
+        );
+
+    let (previous, next) = if workspace_mode && matches!(layout, WorkspaceLayout::Virtual { .. }) {
+        // A virtual workspace has no root version to resolve or move; member
+        // baselines are resolved inside save_workspace_version. This pair is
+        // a placeholder for messages/artifacts until W2 renders member scope.
+        (Version::new(0, 0, 0), Version::new(0, 0, 0))
+    } else {
+        let previous = match crate::version::resolve_baseline(&config.repo_path) {
+            Ok(version) => version,
+            Err(err) => {
+                tracing::error!(error = %err, "cannot resolve baseline version; skipping commit");
+                write_trace_if_active(
+                    &config.repo_path,
+                    &cluster,
+                    tracer::TraceResult::Skipped {
+                        reason: "version_baseline_unresolvable".to_string(),
+                    },
+                    test_outcome.trace_test(),
+                    agent_event.clone(),
+                );
+                record_decision(
+                    config,
+                    &cluster,
+                    crate::daemon::decisions::outcome::BASELINE_UNRESOLVABLE,
+                    err.to_string(),
+                    Some(&diff),
+                    Some(&weight),
+                    Some(bump),
+                    None,
+                );
+                status.set_failed(err.to_string());
+                write_status(&config.repo_path, status);
+                return;
+            }
+        };
+        let next = crate::version::apply(previous.clone(), bump);
+        (previous, next)
+    };
 
     // Collect cluster paths early for staging and inference
     let cluster_paths: Vec<PathBuf> = cluster
@@ -1113,56 +1139,79 @@ async fn process_cluster(
     }
 
     let version_path = config.repo_path.join("VERSION");
-    if let Err(err) = save_version(&version_path, &next, config.versioning.lock_sync) {
-        tracing::error!(error = %err, path = ?version_path, "failed writing VERSION file");
-        // Still write trace for visibility
-        write_trace_if_active(
+    // W1: in a workspace with a member-aware policy the decided bump lands
+    // on the touched members (per their own baselines) instead of always
+    // moving the root; otherwise the unchanged single-crate writeback.
+    let writeback = if workspace_mode {
+        save_workspace_version(
+            &layout,
+            config.versioning.workspace,
+            bump,
+            &cluster_paths,
             &config.repo_path,
-            &cluster,
-            tracer::TraceResult::Skipped {
-                reason: "version_write_failed".to_string(),
-            },
-            test_outcome.trace_test(),
-            agent_event.clone(),
-        );
-        record_decision(
-            config,
-            &cluster,
-            crate::daemon::decisions::outcome::VERSION_WRITE_FAILED,
-            err.to_string(),
-            Some(&diff),
-            Some(&weight),
-            Some(bump),
-            Some(&next),
-        );
-        status.set_failed(err.to_string());
-        write_status(&config.repo_path, status);
-        crate::daemon::notification::notify_warning(
-            &config.notify,
-            &err.to_string(),
-            "Version write failed",
-            config.capabilities.network_webhooks,
-        );
-        broadcast_event(
-            &event_tx,
-            "warning",
-            serde_json::json!({
-                "title": err.to_string(),
-                "source": "Version write failed",
-            }),
-        );
-        return;
-    }
+            config.versioning.lock_sync,
+        )
+    } else {
+        save_version(&version_path, &next, config.versioning.lock_sync)
+            .map(|()| WorkspaceBump::single(&config.repo_path))
+    };
+    let bumped = match writeback {
+        Ok(bumped) => bumped,
+        Err(err) => {
+            tracing::error!(error = %err, path = ?version_path, "failed writing VERSION file");
+            // Still write trace for visibility
+            write_trace_if_active(
+                &config.repo_path,
+                &cluster,
+                tracer::TraceResult::Skipped {
+                    reason: "version_write_failed".to_string(),
+                },
+                test_outcome.trace_test(),
+                agent_event.clone(),
+            );
+            record_decision(
+                config,
+                &cluster,
+                crate::daemon::decisions::outcome::VERSION_WRITE_FAILED,
+                err.to_string(),
+                Some(&diff),
+                Some(&weight),
+                Some(bump),
+                Some(&next),
+            );
+            status.set_failed(err.to_string());
+            write_status(&config.repo_path, status);
+            crate::daemon::notification::notify_warning(
+                &config.notify,
+                &err.to_string(),
+                "Version write failed",
+                config.capabilities.network_webhooks,
+            );
+            broadcast_event(
+                &event_tx,
+                "warning",
+                serde_json::json!({
+                    "title": err.to_string(),
+                    "source": "Version write failed",
+                }),
+            );
+            return;
+        }
+    };
 
     // Record the daemon's own writes so the watcher suppresses the events
     // they generate — otherwise each auto-commit re-clusters its version
     // writeback and cascades. Cargo.lock is included preemptively: the next
-    // build may refresh it after the bump.
-    self_writes.record([
-        config.repo_path.join("VERSION"),
-        config.repo_path.join("Cargo.toml"),
-        config.repo_path.join("Cargo.lock"),
-    ]);
+    // build may refresh it after the bump. Workspace writebacks add every
+    // bumped member manifest (W1) so multi-member writes cannot cascade.
+    let mut self_written = bumped.written_paths.clone();
+    for rel in ["VERSION", "Cargo.toml", "Cargo.lock"] {
+        let path = config.repo_path.join(rel);
+        if !self_written.contains(&path) {
+            self_written.push(path);
+        }
+    }
+    self_writes.record(self_written);
 
     if let Err(err) = persist_analysis_artifact(
         config,
@@ -1176,7 +1225,23 @@ async fn process_cluster(
         tracing::warn!(error = %err, "failed to persist analysis artifact");
     }
 
-    let metadata_line = format_commit(&cluster, &diff, &weight, bump, &next, &agent_event);
+    // W2: when one workspace member dominates the cluster, its name scopes
+    // the conventional-commit subject (`feat(kaptaind-diff): …`).
+    let member_scope = if workspace_mode {
+        WorkspaceLayout::dominant_member(&layout, &cluster_paths, &config.repo_path)
+            .map(|m| m.name.clone())
+    } else {
+        None
+    };
+    let metadata_line = format_commit(
+        &cluster,
+        &diff,
+        &weight,
+        bump,
+        &next,
+        &agent_event,
+        member_scope.as_deref(),
+    );
 
     let msg = if config.inference.enabled
         && weight.score >= config.inference.min_score_for_inference as f32
@@ -1248,11 +1313,18 @@ async fn process_cluster(
     );
 
     let repo_ctx = crate::git::repo::RepoContext::new(repo.root(), &config.repo_path);
+    // Cluster staging adds VERSION/Cargo.toml/Cargo.lock itself; bumped
+    // member manifests (W1) ride along so the bump lands in the same commit.
+    let staging_paths: Vec<PathBuf> = cluster_paths
+        .iter()
+        .cloned()
+        .chain(bumped.written_paths.iter().cloned())
+        .collect();
     if let Err(err) = crate::commit::orchestrator::commit_with_staging(
         &repo_ctx,
         &msg,
         &config.staging,
-        &cluster_paths,
+        &staging_paths,
         &config.commit,
     ) {
         tracing::error!(error = %err, "commit failed");
@@ -1304,7 +1376,7 @@ async fn process_cluster(
 
     metrics.commits_made.fetch_add(1, Ordering::Relaxed);
 
-    record_decision(
+    record_decision_full(
         config,
         &cluster,
         crate::daemon::decisions::outcome::COMMIT,
@@ -1313,6 +1385,11 @@ async fn process_cluster(
         Some(&weight),
         Some(bump),
         Some(&next),
+        if bumped.bumped.is_empty() {
+            None
+        } else {
+            Some(bumped.bumped.iter().map(|(name, _)| name.clone()).collect())
+        },
     );
 
     crate::audit::log_commit(
@@ -1915,6 +1992,25 @@ fn record_decision(
     bump: Option<Bump>,
     version: Option<&Version>,
 ) {
+    record_decision_full(
+        config, cluster, outcome, reason, diff, weight, bump, version, None,
+    );
+}
+
+/// [`record_decision`] plus the W2 workspace member list: the successful
+/// commit path records which packages the bump was actually written to.
+#[allow(clippy::too_many_arguments)]
+fn record_decision_full(
+    config: &Config,
+    cluster: &Cluster,
+    outcome: &str,
+    reason: impl Into<String>,
+    diff: Option<&DiffAnalysis>,
+    weight: Option<&crate::weight::WeightResult>,
+    bump: Option<Bump>,
+    version: Option<&Version>,
+    members_bumped: Option<Vec<String>>,
+) {
     use crate::daemon::decisions::{
         append_decision, DecisionRecord, DecisionScores, DecisionThresholds,
     };
@@ -1950,6 +2046,7 @@ fn record_decision(
         },
         bump: bump.map(|b| format!("{b:?}")),
         version: version.map(|v| v.to_string()),
+        members_bumped,
         reason: reason.into(),
         paths,
     };
@@ -1961,131 +2058,6 @@ fn record_decision(
 pub(crate) fn load_version(path: &Path) -> Option<Version> {
     let content = std::fs::read_to_string(path).ok()?;
     Version::parse(content.trim()).ok()
-}
-
-fn save_version(
-    path: &Path,
-    version: &Version,
-    lock_sync: crate::config::loader::LockSyncMode,
-) -> anyhow::Result<()> {
-    // Monotonic guard: never write a version below the current baseline
-    // (VERSION file or manifest). A missing/unresolvable baseline skips
-    // the guard — the first save is what creates VERSION.
-    if let Some(repo_path) = path.parent() {
-        if let Ok(baseline) = crate::version::resolve_baseline(repo_path) {
-            anyhow::ensure!(
-                version >= &baseline,
-                "refusing version downgrade: next v{version} < current baseline v{baseline}"
-            );
-        }
-    }
-
-    std::fs::write(path, version.to_string())?;
-
-    // Update Cargo.toml version in common locations, and keep Cargo.lock's
-    // own-package entry in sync so the version triple (VERSION, Cargo.toml,
-    // Cargo.lock) never drifts after an auto-commit.
-    if let Some(repo_path) = path.parent() {
-        let mut package_name: Option<String> = None;
-        for cargo_rel in ["Cargo.toml", "src-tauri/Cargo.toml"] {
-            let cargo_toml_path = repo_path.join(cargo_rel);
-            if cargo_toml_path.exists() {
-                if let Ok(content) = std::fs::read_to_string(&cargo_toml_path) {
-                    if let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() {
-                        if let Some(package) = doc.get_mut("package") {
-                            if package.get("version").is_some() {
-                                if package_name.is_none() {
-                                    package_name = package
-                                        .get("name")
-                                        .and_then(|n| n.as_str())
-                                        .map(str::to_string);
-                                }
-                                package["version"] = toml_edit::value(version.to_string());
-                                let _ = std::fs::write(&cargo_toml_path, doc.to_string());
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        sync_lock(repo_path, package_name.as_deref(), version, lock_sync);
-    }
-
-    Ok(())
-}
-
-/// Apply the `[versioning].lock_sync` policy after the manifest writeback.
-fn sync_lock(
-    repo_path: &Path,
-    package_name: Option<&str>,
-    version: &Version,
-    lock_sync: crate::config::loader::LockSyncMode,
-) {
-    use crate::config::loader::LockSyncMode;
-    match lock_sync {
-        LockSyncMode::Off => {}
-        LockSyncMode::Patch => {
-            if let Some(name) = package_name {
-                sync_cargo_lock(&repo_path.join("Cargo.lock"), name, version);
-            }
-        }
-        // Let Cargo regenerate the lockfile itself rather than editing it
-        // by hand. Offline: the bump introduces no new dependencies, and the
-        // daemon must never block on the network. Fall back to patching so
-        // the version triple stays consistent even when Cargo fails.
-        LockSyncMode::Cargo => {
-            if !repo_path.join("Cargo.toml").exists() {
-                return; // nothing for Cargo to resolve
-            }
-            let ok = std::process::Command::new("cargo")
-                .args(["metadata", "--format-version", "1", "--offline"])
-                .current_dir(repo_path)
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            if !ok {
-                tracing::warn!(
-                    "cargo metadata --offline failed; falling back to patching Cargo.lock"
-                );
-                if let Some(name) = package_name {
-                    sync_cargo_lock(&repo_path.join("Cargo.lock"), name, version);
-                }
-            }
-        }
-    }
-}
-
-/// Update `[[package]]` entries named `package_name` in a Cargo.lock to
-/// `version`. Best-effort: a missing/unparseable lock or a package absent
-/// from it is not an error (e.g. workspace locks that don't list the crate).
-fn sync_cargo_lock(lock_path: &Path, package_name: &str, version: &Version) {
-    if !lock_path.exists() {
-        return;
-    }
-    let Ok(content) = std::fs::read_to_string(lock_path) else {
-        return;
-    };
-    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return;
-    };
-    let mut changed = false;
-    if let Some(packages) = doc
-        .get_mut("package")
-        .and_then(|p| p.as_array_of_tables_mut())
-    {
-        for pkg in packages.iter_mut() {
-            if pkg.get("name").and_then(|n| n.as_str()) == Some(package_name) {
-                pkg["version"] = toml_edit::value(version.to_string());
-                changed = true;
-            }
-        }
-    }
-    if changed {
-        let _ = std::fs::write(lock_path, doc.to_string());
-    }
 }
 
 fn persist_analysis_artifact(
@@ -2672,6 +2644,7 @@ test result: FAILED. 1 passed; 2 failed; 0 ignored
             crate::version::Bump::Minor,
             &Version::new(0, 2, 0),
             &None,
+            None,
         );
         assert!(message.contains("api-added"));
         assert!(message.contains("paths=4"));
@@ -2910,8 +2883,12 @@ patch = 0.5
         )
         .expect("write Cargo.lock");
 
-        save_version(&repo_root.join("VERSION"), &Version::new(0, 2, 0), LockSyncMode::Patch)
-            .expect("save");
+        save_version(
+            &repo_root.join("VERSION"),
+            &Version::new(0, 2, 0),
+            LockSyncMode::Patch,
+        )
+        .expect("save");
 
         let lock = std::fs::read_to_string(repo_root.join("Cargo.lock")).expect("read lock");
         assert!(
@@ -2938,8 +2915,12 @@ patch = 0.5
              [[package]]\nname = \"kaptaind\"\nversion = \"0.1.0\"\n";
         std::fs::write(repo_root.join("Cargo.lock"), lock_content).expect("write Cargo.lock");
 
-        save_version(&repo_root.join("VERSION"), &Version::new(0, 2, 0), LockSyncMode::Off)
-            .expect("save");
+        save_version(
+            &repo_root.join("VERSION"),
+            &Version::new(0, 2, 0),
+            LockSyncMode::Off,
+        )
+        .expect("save");
 
         assert_eq!(
             std::fs::read_to_string(repo_root.join("Cargo.lock")).expect("read lock"),
@@ -2968,8 +2949,12 @@ patch = 0.5
         )
         .expect("write Cargo.lock");
 
-        save_version(&repo_root.join("VERSION"), &Version::new(0, 2, 0), LockSyncMode::Cargo)
-            .expect("save");
+        save_version(
+            &repo_root.join("VERSION"),
+            &Version::new(0, 2, 0),
+            LockSyncMode::Cargo,
+        )
+        .expect("save");
 
         let lock = std::fs::read_to_string(repo_root.join("Cargo.lock")).expect("read lock");
         assert!(

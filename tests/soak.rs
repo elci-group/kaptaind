@@ -19,11 +19,20 @@
 //! Knobs: `KAPTAIND_SOAK_SECS` (duration, default 90), `KAPTAIND_SOAK_SEED`
 //! (workload PRNG seed, default fixed), `KAPTAIND_SOAK_BUILD=1` (also build
 //! HEAD), `KAPTAIND_SOAK_LOG_DIR` (copy daemon log + report JSON there).
+//!
+//! A second `#[ignore]`d test, `daemon_soak_workspace_member_waves` (same
+//! duration/seed/log knobs), drives the daemon against `WorkspaceFixture`
+//! with `[versioning] workspace = "touched"`: every wave lands in exactly
+//! one member subtree (alpha, beta, gamma) or the root crate, and invariant
+//! (b) becomes the N-tuple check from
+//! docs/planning/WORKSPACE_VERSION_BUMPING_PLAN.md §4 — proj/alpha/beta
+//! manifest == lock entry, gamma's inherited version == root
+//! `[workspace.package]`, VERSION == root manifest, at EVERY commit.
 
 #[path = "regressions/harness.rs"]
 mod harness;
 
-use harness::MonorepoFixture;
+use harness::{MonorepoFixture, WorkspaceFixture};
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::path::{Path, PathBuf};
@@ -773,7 +782,8 @@ fn write_report(
 }
 
 /// Copy the daemon log and soak report to $KAPTAIND_SOAK_LOG_DIR so the
-/// workflow can upload them on failure.
+/// workflow can upload them on failure. File names are preserved so the two
+/// soak tests' artifacts never clobber each other.
 fn export_artifacts(log_path: &Path, report_path: &Path) {
     let Ok(dir) = std::env::var("KAPTAIND_SOAK_LOG_DIR") else {
         return;
@@ -782,7 +792,7 @@ fn export_artifacts(log_path: &Path, report_path: &Path) {
     if std::fs::create_dir_all(&dir).is_err() {
         return;
     }
-    let _ = std::fs::copy(log_path, dir.join("soak-daemon.log"));
+    let _ = std::fs::copy(log_path, dir.join(log_path.file_name().unwrap_or_default()));
     if report_path.exists() {
         let _ = std::fs::copy(
             report_path,
@@ -796,4 +806,620 @@ fn json_escape(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n")
+}
+
+// ---------------------------------------------------------------------------
+// Workspace member-wave soak (W2, docs/planning/WORKSPACE_VERSION_BUMPING_PLAN.md §4)
+// ---------------------------------------------------------------------------
+
+/// Fresh port: the workspace regression suite occupies 19117–19131.
+const WS_HEALTH_PORT: u16 = 19133;
+
+/// Which subtree a wave lands in.
+#[derive(Clone, Copy, PartialEq)]
+enum WaveTarget {
+    /// `crates/alpha` — beta carries an exact `=0.1.0` requirement on alpha,
+    /// so every alpha bump also exercises the G4 requirement-floor raise.
+    Alpha,
+    /// `crates/beta`.
+    Beta,
+    /// `crates/gamma` — inherits `[workspace.package].version`.
+    Gamma,
+    /// Root crate (`src/`), outside every member subtree.
+    Root,
+}
+
+impl WaveTarget {
+    fn name(self) -> &'static str {
+        match self {
+            WaveTarget::Alpha => "alpha",
+            WaveTarget::Beta => "beta",
+            WaveTarget::Gamma => "gamma",
+            WaveTarget::Root => "root",
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            WaveTarget::Alpha => 0,
+            WaveTarget::Beta => 1,
+            WaveTarget::Gamma => 2,
+            WaveTarget::Root => 3,
+        }
+    }
+}
+
+/// Wave schedule: the first three waves deterministically cover alpha, beta,
+/// and gamma so even a short soak bumps every member once; after that the
+/// PRNG mixes the member subtrees with root-crate edits. The default seed
+/// (0xCAFE) puts a root wave in the very first PRNG draw, so a short soak
+/// still covers all four subtrees.
+fn pick_target(wave: usize, rng: &mut Rng) -> WaveTarget {
+    match wave {
+        0 => WaveTarget::Alpha,
+        1 => WaveTarget::Beta,
+        2 => WaveTarget::Gamma,
+        _ => match rng.below(4) {
+            0 => WaveTarget::Alpha,
+            1 => WaveTarget::Beta,
+            2 => WaveTarget::Gamma,
+            _ => WaveTarget::Root,
+        },
+    }
+}
+
+#[test]
+#[ignore = "nightly workspace soak (.github/workflows/soak.yml); run manually with `cargo test --test soak -- --ignored --nocapture`"]
+fn daemon_soak_workspace_member_waves() {
+    let duration_secs = env_u64("KAPTAIND_SOAK_SECS", 90);
+    // Distinct default from the chaos soak: this seed puts a root wave in
+    // the first PRNG draw, so even a short soak covers all four subtrees.
+    let seed = env_u64("KAPTAIND_SOAK_SEED", 0xCAFE);
+
+    let fixture = WorkspaceFixture::new(WS_HEALTH_PORT, "touched", false);
+    let project = fixture.project();
+
+    // The daemon's state dir is runtime noise, not drift: gitignore it (as
+    // real deployments do) so `git status --porcelain -- proj/` stays a
+    // meaningful invariant. Written and committed before the daemon starts.
+    std::fs::write(project.join(".gitignore"), ".kaptaind\n").expect(".gitignore");
+    fixture.git(&["add", "-A"]);
+    fixture.git(&["commit", "-qm", "test: ignore daemon state dir"]);
+
+    let kaptaind_dir = project.join(".kaptaind");
+    std::fs::create_dir_all(&kaptaind_dir).expect("mkdir .kaptaind");
+    let log_path = kaptaind_dir.join("soak-workspace-daemon.log");
+    let report_path = kaptaind_dir.join(format!(
+        "soak-workspace-{}.json",
+        chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+    ));
+
+    let log_file = std::fs::File::create(&log_path).expect("daemon log file");
+    let log_file_err = log_file.try_clone().expect("clone log handle");
+    // tracing_subscriber::fmt writes to stdout; stderr carries panics.
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
+        .current_dir(&project)
+        .stdout(Stdio::from(log_file))
+        .stderr(Stdio::from(log_file_err))
+        .spawn()
+        .expect("daemon spawns");
+
+    let mut notes: Vec<String> = Vec::new();
+    let mut waves_detail: Vec<WaveRecord> = Vec::new();
+    // Check results are collected (not asserted immediately) so the JSON
+    // report captures the full picture even when a check fails.
+    let mut tuple_failures: Vec<String> = Vec::new();
+    let mut lock_failures: Vec<String> = Vec::new();
+    let mut covered = [false; 4];
+    let mut waves = 0usize;
+    let mut total_commits = 0usize;
+    let mut error_lines: Vec<String> = Vec::new();
+    let mut drift = String::new();
+    let started = Instant::now();
+
+    // Ensure the daemon is reaped however the assertions pan out.
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // Wait for the health endpoint, then let the watcher settle.
+        assert!(
+            poll_until(Duration::from_secs(30), || {
+                http_get(WS_HEALTH_PORT, "/health")
+                    .map(|body| body.contains("\"status\":\"ok\""))
+                    .unwrap_or(false)
+            }),
+            "daemon health endpoint never came up on port {WS_HEALTH_PORT}"
+        );
+        std::thread::sleep(Duration::from_secs(2));
+        let mut prev_commits = count_workspace_commits(&fixture);
+        assert_eq!(
+            prev_commits, 0,
+            "unexpected daemon commits before the first wave"
+        );
+
+        let deadline = Instant::now() + Duration::from_secs(duration_secs);
+        let mut rng = Rng::new(seed);
+        let mut workload = WorkspaceWorkload::default();
+
+        while Instant::now() < deadline {
+            let target = pick_target(waves, &mut rng);
+            let files = write_workspace_wave(&project, target, waves, &mut workload);
+            covered[target.index()] = true;
+
+            // One genuine cluster -> exactly one commit. Generous bound: the
+            // cluster window is 1s and the pipeline is sub-second on this
+            // tiny fixture.
+            let committed = poll_until(Duration::from_secs(45), || {
+                count_workspace_commits(&fixture) > prev_commits
+            });
+            assert!(
+                committed,
+                "wave {waves} ({}): no daemon commit within 45s — daemon stalled or died; see {}",
+                target.name(),
+                log_path.display()
+            );
+            std::thread::sleep(Duration::from_secs(IDLE_GAP_SECS));
+
+            let now = count_workspace_commits(&fixture);
+            let delta = now - prev_commits;
+            assert_eq!(
+                delta,
+                1,
+                "wave {waves} ({}): expected exactly 1 daemon commit, got {delta} \
+                 (cascade or self-write re-cluster?)",
+                target.name()
+            );
+            waves_detail.push(WaveRecord {
+                index: waves,
+                kind: target.name(),
+                files,
+                commits: delta,
+            });
+            prev_commits = now;
+            waves += 1;
+        }
+
+        // Drain: commit count must stay flat for 3s past the last wave.
+        assert!(
+            poll_until(Duration::from_secs(20), || {
+                let before = count_workspace_commits(&fixture);
+                std::thread::sleep(Duration::from_secs(3));
+                count_workspace_commits(&fixture) == before
+            }),
+            "daemon never went idle after the last wave"
+        );
+
+        // The daemon is idle; reap it so the log is final, then scan it.
+        let _ = daemon.kill();
+        let _ = daemon.wait();
+
+        total_commits = count_workspace_commits(&fixture);
+
+        let log = std::fs::read_to_string(&log_path).expect("read daemon log");
+        error_lines = log
+            .lines()
+            .filter(|line| line.contains("ERROR"))
+            .map(str::to_string)
+            .collect();
+
+        // Invariant (b): workspace N-tuple consistency at EVERY commit —
+        // each member's manifest version equals its lock entry (gamma's
+        // inherited version lives in root [workspace.package]), and VERSION
+        // agrees with the root manifest (the daemon only ever moves the two
+        // together).
+        let shas: Vec<String> = fixture
+            .git(&["rev-list", "--reverse", "HEAD"])
+            .lines()
+            .map(str::to_string)
+            .collect();
+        for sha in &shas {
+            let version = fixture.git(&["show", &format!("{sha}:proj/VERSION")]);
+            let version = version.trim().to_string();
+            let root_toml = fixture.git(&["show", &format!("{sha}:proj/Cargo.toml")]);
+            let lock = fixture.git(&["show", &format!("{sha}:proj/Cargo.lock")]);
+            let proj_v = package_version(&root_toml);
+            if proj_v.as_deref() != Some(version.as_str()) {
+                tuple_failures.push(format!(
+                    "{sha}: VERSION={version} proj manifest={}",
+                    proj_v.as_deref().unwrap_or("<none>")
+                ));
+            }
+            let alpha_toml = fixture.git(&["show", &format!("{sha}:proj/crates/alpha/Cargo.toml")]);
+            let beta_toml = fixture.git(&["show", &format!("{sha}:proj/crates/beta/Cargo.toml")]);
+            for (name, manifest_v, lock_v) in [
+                ("proj", proj_v, lock_own_version(&lock, "proj")),
+                (
+                    "alpha",
+                    package_version(&alpha_toml),
+                    lock_own_version(&lock, "alpha"),
+                ),
+                (
+                    "beta",
+                    package_version(&beta_toml),
+                    lock_own_version(&lock, "beta"),
+                ),
+                (
+                    "gamma",
+                    workspace_package_version(&root_toml),
+                    lock_own_version(&lock, "gamma"),
+                ),
+            ] {
+                if manifest_v != lock_v {
+                    tuple_failures.push(format!(
+                        "{sha}: {name} manifest={} lock={}",
+                        manifest_v.as_deref().unwrap_or("<none>"),
+                        lock_v.as_deref().unwrap_or("<none>")
+                    ));
+                }
+            }
+        }
+
+        // Invariant (c): lockfile consistency at every commit, checked in a
+        // scratch clone so the fixture worktree is never disturbed. After an
+        // alpha bump, beta's raised requirement floor must still resolve
+        // against the committed lock (G4).
+        let scratch = tempfile::tempdir().expect("scratch dir");
+        let fixture_path = fixture.dir.path().to_string_lossy().into_owned();
+        let scratch_path = scratch.path().to_string_lossy().into_owned();
+        run_cmd(
+            None,
+            &["git", "clone", "--quiet", &fixture_path, &scratch_path],
+        )
+        .expect("clone fixture");
+        let manifest = scratch.path().join("proj/Cargo.toml");
+        let manifest = manifest.to_string_lossy().into_owned();
+        for sha in &shas {
+            if let Err(err) = run_cmd(Some(scratch.path()), &["git", "checkout", "--quiet", sha]) {
+                lock_failures.push(format!("{sha}: checkout failed: {err}"));
+                continue;
+            }
+            let output = Command::new(cargo_bin())
+                .args([
+                    "metadata",
+                    "--locked",
+                    "--offline",
+                    "--format-version",
+                    "1",
+                    "--manifest-path",
+                    &manifest,
+                ])
+                .output()
+                .expect("cargo metadata runs");
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                lock_failures.push(format!(
+                    "{sha}: cargo metadata --locked failed: {}",
+                    stderr.lines().next().unwrap_or("<no stderr>")
+                ));
+            }
+        }
+
+        // Invariant (d): no writeback may be left uncommitted after the
+        // final commit.
+        drift = fixture.git(&["status", "--porcelain", "--", "proj/"]);
+    }));
+
+    // Reap the daemon if the body panicked before doing so itself.
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+
+    let target_names = ["alpha", "beta", "gamma", "root"];
+    let missing: Vec<&str> = target_names
+        .iter()
+        .zip(covered.iter())
+        .filter(|(_, hit)| !**hit)
+        .map(|(name, _)| *name)
+        .collect();
+    let all_targets = missing.is_empty();
+    let member_waves = waves_detail.iter().filter(|w| w.kind != "root").count();
+    let root_waves = waves_detail.iter().filter(|w| w.kind == "root").count();
+
+    let one_commit_per_wave =
+        total_commits == waves && waves_detail.iter().all(|w| w.commits == 1) && result.is_ok();
+    let pass = one_commit_per_wave
+        && tuple_failures.is_empty()
+        && lock_failures.is_empty()
+        && error_lines.is_empty()
+        && drift.trim().is_empty()
+        && all_targets
+        && waves >= 3;
+
+    for failure in tuple_failures.iter().take(5) {
+        notes.push(format!("N-tuple mismatch: {failure}"));
+    }
+    if tuple_failures.len() > 5 {
+        notes.push(format!(
+            "...and {} more N-tuple mismatches",
+            tuple_failures.len() - 5
+        ));
+    }
+    for failure in lock_failures.iter().take(5) {
+        notes.push(format!("lockfile check: {failure}"));
+    }
+    if lock_failures.len() > 5 {
+        notes.push(format!(
+            "...and {} more lockfile failures",
+            lock_failures.len() - 5
+        ));
+    }
+    for line in error_lines.iter().take(5) {
+        notes.push(format!("daemon log ERROR: {line}"));
+    }
+    if error_lines.len() > 5 {
+        notes.push(format!("...and {} more ERROR lines", error_lines.len() - 5));
+    }
+    if !all_targets {
+        notes.push(format!("subtrees never hit: {}", missing.join(", ")));
+    }
+    if waves < 3 {
+        notes.push(format!(
+            "only {waves} waves completed; raise KAPTAIND_SOAK_SECS for a meaningful soak"
+        ));
+    }
+    if !drift.trim().is_empty() {
+        notes.push(format!("workspace drift left uncommitted:\n{drift}"));
+    }
+
+    write_workspace_report(
+        &report_path,
+        seed,
+        duration_secs,
+        started.elapsed(),
+        waves,
+        total_commits,
+        member_waves,
+        root_waves,
+        error_lines.len(),
+        one_commit_per_wave,
+        tuple_failures.is_empty(),
+        lock_failures.is_empty(),
+        drift.trim().is_empty(),
+        all_targets,
+        pass,
+        &notes,
+        &waves_detail,
+    );
+
+    println!("=== kaptaind workspace member-wave soak report ===");
+    println!(
+        "duration:   {}s (budget {}s)",
+        started.elapsed().as_secs(),
+        duration_secs
+    );
+    println!("waves:      {waves} (member={member_waves}, root={root_waves})");
+    println!("commits:    {total_commits}");
+    println!("errors:     {}", error_lines.len());
+    println!(
+        "checks:     one_commit_per_wave={} n_tuple={} lockfile={} no_errors={} clean_tree={} all_targets={}",
+        one_commit_per_wave,
+        tuple_failures.is_empty(),
+        lock_failures.is_empty(),
+        error_lines.is_empty(),
+        drift.trim().is_empty(),
+        all_targets
+    );
+    println!("artifact:   {}", report_path.display());
+    println!("verdict:    {}", if pass { "PASS" } else { "FAIL" });
+    for note in &notes {
+        println!("  - {note}");
+    }
+
+    // Export artifacts for CI upload even when the soak failed.
+    export_artifacts(&log_path, &report_path);
+
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+
+    assert_eq!(
+        total_commits, waves,
+        "one commit per genuine wave: daemon commits ({total_commits}) must equal waves ({waves})"
+    );
+    assert!(
+        tuple_failures.is_empty(),
+        "invariant (b): workspace N-tuple drifted at {} commit(s), first: {}",
+        tuple_failures.len(),
+        tuple_failures.first().map(String::as_str).unwrap_or("")
+    );
+    assert!(
+        lock_failures.is_empty(),
+        "invariant (c): cargo metadata --locked failed at {} commit(s), first: {}",
+        lock_failures.len(),
+        lock_failures.first().map(String::as_str).unwrap_or("")
+    );
+    assert!(
+        error_lines.is_empty(),
+        "invariant (a): daemon logged {} ERROR line(s), first: {}",
+        error_lines.len(),
+        error_lines.first().map(String::as_str).unwrap_or("")
+    );
+    assert!(
+        drift.trim().is_empty(),
+        "invariant (d): workspace drift left uncommitted after soak:\n{drift}"
+    );
+    assert!(
+        all_targets,
+        "soak must hit all four subtrees; never hit: {}",
+        missing.join(", ")
+    );
+    assert!(
+        waves >= 3,
+        "only {waves} waves completed; raise KAPTAIND_SOAK_SECS"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Workspace workload generator
+// ---------------------------------------------------------------------------
+
+/// Waves that have hit each subtree so far. Edits are regenerated
+/// cumulatively from these lists, so a repeat hit only ADDS public functions
+/// and never reads as a breaking removal.
+#[derive(Default)]
+struct WorkspaceWorkload {
+    alpha: Vec<usize>,
+    beta: Vec<usize>,
+    gamma: Vec<usize>,
+    root: Vec<usize>,
+}
+
+/// Write one wave's files; returns the number of files touched. Every wave
+/// lands in exactly one subtree, so it is a single genuine cluster.
+fn write_workspace_wave(
+    project: &Path,
+    target: WaveTarget,
+    wave: usize,
+    workload: &mut WorkspaceWorkload,
+) -> usize {
+    match target {
+        WaveTarget::Alpha => write_member_wave(project, "alpha", wave, &mut workload.alpha),
+        WaveTarget::Beta => write_member_wave(project, "beta", wave, &mut workload.beta),
+        WaveTarget::Gamma => write_member_wave(project, "gamma", wave, &mut workload.gamma),
+        WaveTarget::Root => write_root_wave(project, wave, &mut workload.root),
+    }
+}
+
+/// A pair of wave-numbered public functions in the member's lib.rs — mirrors
+/// the regression suite's substantial_member_edit, which reliably clears the
+/// 0.1 patch threshold.
+fn write_member_wave(project: &Path, member: &str, wave: usize, hits: &mut Vec<usize>) -> usize {
+    hits.push(wave);
+    let mut lib = String::new();
+    for h in hits.iter() {
+        lib.push_str(&format!(
+            "/// Soak wave {h}: first synthetic export.\n\
+             pub fn wave_{h}_add(a: i64, b: i64) -> i64 {{ a + b + {h} }}\n\n\
+             /// Soak wave {h}: second synthetic export.\n\
+             pub fn wave_{h}_mul(a: i64, b: i64) -> i64 {{ a * b + {h} }}\n\n"
+        ));
+    }
+    lib.push_str(&format!(
+        "/// {member} identity.\npub fn {member}() -> u64 {{ 1 }}\n"
+    ));
+    std::fs::write(project.join(format!("crates/{member}/src/lib.rs")), lib).expect("member lib");
+    1
+}
+
+/// The root-crate counterpart: wave-numbered public functions in src/util.rs
+/// plus the main.rs wiring (both paths sit outside every member subtree).
+fn write_root_wave(project: &Path, wave: usize, hits: &mut Vec<usize>) -> usize {
+    hits.push(wave);
+    let mut util = String::new();
+    let mut calls = String::new();
+    for h in hits.iter() {
+        util.push_str(&format!(
+            "/// Soak wave {h}: first synthetic export.\n\
+             pub fn util_{h}_add(a: i64, b: i64) -> i64 {{ a + b + {h} }}\n\n\
+             /// Soak wave {h}: second synthetic export.\n\
+             pub fn util_{h}_mul(a: i64, b: i64) -> i64 {{ a * b + {h} }}\n\n"
+        ));
+        calls.push_str(&format!("    let _ = util::util_{h}_add(1, 2);\n"));
+    }
+    std::fs::write(project.join("src/util.rs"), util).expect("util module");
+    std::fs::write(
+        project.join("src/main.rs"),
+        format!("mod util;\n\nfn main() {{\n{calls}}}\n"),
+    )
+    .expect("main.rs");
+    2
+}
+
+// ---------------------------------------------------------------------------
+// Workspace verification helpers
+// ---------------------------------------------------------------------------
+
+/// Bumping commits (body `kaptaind: <Bump> -> v...`) plus chore captures —
+/// the same pairing the chaos soak counts.
+fn count_workspace_commits(fixture: &WorkspaceFixture) -> usize {
+    let chores = fixture
+        .git(&["log", "--format=%s"])
+        .lines()
+        .filter(|subject| subject.starts_with("chore:"))
+        .count();
+    fixture.kaptaind_commits() + chores
+}
+
+/// `[workspace.package] version` from a root Cargo.toml rendered as text.
+/// gamma's inherited version lives here, never in its own manifest.
+fn workspace_package_version(toml: &str) -> Option<String> {
+    let mut in_section = false;
+    for line in toml.lines() {
+        let line = line.trim();
+        if line.starts_with('[') {
+            in_section = line == "[workspace.package]";
+            continue;
+        }
+        if in_section {
+            if let Some(v) = line
+                .strip_prefix("version")
+                .and_then(|rest| rest.trim().strip_prefix('='))
+                .map(|rest| rest.trim().trim_matches('"'))
+            {
+                return Some(v.to_string());
+            }
+        }
+    }
+    None
+}
+
+// ---------------------------------------------------------------------------
+// Workspace report
+// ---------------------------------------------------------------------------
+
+#[allow(clippy::too_many_arguments)]
+fn write_workspace_report(
+    path: &Path,
+    seed: u64,
+    budget_secs: u64,
+    elapsed: Duration,
+    waves: usize,
+    commits: usize,
+    member_waves: usize,
+    root_waves: usize,
+    errors: usize,
+    one_commit_per_wave: bool,
+    n_tuple_ok: bool,
+    lockfile_ok: bool,
+    clean_tree: bool,
+    all_targets: bool,
+    pass: bool,
+    notes: &[String],
+    waves_detail: &[WaveRecord],
+) {
+    let notes_json = notes
+        .iter()
+        .map(|n| format!("\"{}\"", json_escape(n)))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let waves_json = waves_detail
+        .iter()
+        .map(|w| {
+            format!(
+                "{{\"wave\":{},\"target\":\"{}\",\"files\":{},\"commits\":{}}}",
+                w.index, w.kind, w.files, w.commits
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let json = format!(
+        "{{\n  \"schema\": \"kaptaind.soak.workspace.v1\",\n  \"run_id\": \"{}\",\n  \
+         \"generated_at\": \"{}\",\n  \"seed\": {seed},\n  \
+         \"budget_secs\": {budget_secs},\n  \"elapsed_secs\": {},\n  \
+         \"health_port\": {WS_HEALTH_PORT},\n  \"waves\": {waves},\n  \
+         \"commits\": {commits},\n  \"member_waves\": {member_waves},\n  \
+         \"root_waves\": {root_waves},\n  \"errors\": {errors},\n  \
+         \"checks\": {{\n    \
+         \"one_commit_per_wave\": {one_commit_per_wave},\n    \
+         \"n_tuple_consistent\": {n_tuple_ok},\n    \
+         \"lockfile_consistent_every_commit\": {lockfile_ok},\n    \
+         \"no_daemon_errors\": {},\n    \
+         \"worktree_clean\": {clean_tree},\n    \
+         \"all_wave_targets_covered\": {all_targets}\n  }},\n  \
+         \"pass\": {pass},\n  \"notes\": [{notes_json}],\n  \
+         \"waves_detail\": [{waves_json}]\n}}\n",
+        path.file_stem().unwrap_or_default().to_string_lossy(),
+        chrono::Utc::now().to_rfc3339(),
+        elapsed.as_secs(),
+        errors == 0,
+    );
+    std::fs::write(path, json).expect("write workspace soak report");
 }

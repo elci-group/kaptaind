@@ -60,6 +60,11 @@ pub struct DecisionRecord {
     pub bump: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
+    /// Packages the bump was written to (W2; only set for workspace
+    /// writebacks). Additive: older readers ignore it per the compatibility
+    /// contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub members_bumped: Option<Vec<String>>,
     /// Human-readable detail (e.g. error text, blocking rule).
     pub reason: String,
     /// Project-relative paths in the cluster.
@@ -110,16 +115,25 @@ pub fn render_decisions(records: &[DecisionRecord]) -> String {
         let ts = record.timestamp.format("%Y-%m-%d %H:%M:%S UTC");
         let score = record.scores.map(|s| s.score);
         let line = match record.outcome.as_str() {
-            outcome::COMMIT => format!(
-                "[{ts}] commit: {} -> v{} (score {}, {} path{})",
-                record.bump.as_deref().unwrap_or("?"),
-                record.version.as_deref().unwrap_or("?"),
-                score
-                    .map(|s| format!("{s:.3}"))
-                    .unwrap_or_else(|| "?".to_string()),
-                record.paths.len(),
-                if record.paths.len() == 1 { "" } else { "s" },
-            ),
+            outcome::COMMIT => {
+                let members = match &record.members_bumped {
+                    Some(members) if !members.is_empty() => {
+                        format!("; members=[{}]", members.join(", "))
+                    }
+                    _ => String::new(),
+                };
+                format!(
+                    "[{ts}] commit: {} -> v{} (score {}, {} path{}{})",
+                    record.bump.as_deref().unwrap_or("?"),
+                    record.version.as_deref().unwrap_or("?"),
+                    score
+                        .map(|s| format!("{s:.3}"))
+                        .unwrap_or_else(|| "?".to_string()),
+                    record.paths.len(),
+                    if record.paths.len() == 1 { "" } else { "s" },
+                    members,
+                )
+            }
             outcome::NO_BUMP => match score {
                 Some(s) => format!(
                     "[{ts}] skip: no_bump — score {s:.3} below patch threshold {:.3}",
@@ -177,6 +191,7 @@ mod tests {
             },
             bump: None,
             version: None,
+            members_bumped: None,
             reason: reason.to_string(),
             paths: vec!["src/main.rs".to_string()],
         }
@@ -238,6 +253,31 @@ mod tests {
             rendered.contains("commit: Patch -> v0.2.1 (score 0.432, 1 path)"),
             "unexpected render: {rendered}"
         );
+    }
+
+    #[test]
+    fn render_commit_line_with_members() {
+        let mut r = record(outcome::COMMIT, "", Some(0.432));
+        r.bump = Some("Minor".to_string());
+        r.version = Some("0.2.0".to_string());
+        r.members_bumped = Some(vec!["kaptaind-diff".to_string()]);
+        let rendered = render_decisions(&[r]);
+        assert!(
+            rendered
+                .contains("commit: Minor -> v0.2.0 (score 0.432, 1 path; members=[kaptaind-diff])"),
+            "unexpected render: {rendered}"
+        );
+    }
+
+    #[test]
+    fn members_bumped_is_additive_and_skipped_when_absent() {
+        let r = record(outcome::COMMIT, "", Some(0.4));
+        let json = serde_json::to_string(&r).expect("serialize");
+        assert!(!json.contains("members_bumped"), "{json}");
+        // Older lines without the field still deserialize.
+        let legacy = r#"{"timestamp":"2026-07-14T00:00:00Z","cluster_id":"c","outcome":"commit","thresholds":{"minor":0.6,"patch":0.1},"reason":"","paths":[]}"#;
+        let parsed: DecisionRecord = serde_json::from_str(legacy).expect("legacy parses");
+        assert_eq!(parsed.members_bumped, None);
     }
 
     #[test]

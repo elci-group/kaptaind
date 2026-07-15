@@ -8,10 +8,16 @@
 //! `Config`, the raw `kaptaind.toml`, and the project's `.kaptainignore` are
 //! inspected for legacy patterns the v10 breaking window retires, and every
 //! finding is reported with a concrete fix.
+//!
+//! On Cargo workspaces it additionally runs the W2 checks from
+//! `docs/planning/WORKSPACE_VERSION_BUMPING_PLAN.md` §3.4: member lockfile
+//! drift, unsatisfiable inter-member requirements, and the `root_only`
+//! deflation signature.
 
 use chrono::Utc;
-use kaptaind::config::loader::Config;
+use kaptaind::config::loader::{Config, WorkspacePolicy};
 use kaptaind::util::style::*;
+use kaptaind::version::workspace::WorkspaceLayout;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -57,6 +63,12 @@ pub struct DoctorReport {
     /// v10.0.0 config-migration findings (safety plan D3). Added in v10.0.0;
     /// older readers ignore unknown fields per the compatibility contract.
     pub migration: Vec<MigrationFinding>,
+    /// W2 workspace findings (plan §3.4): member lockfile drift,
+    /// unsatisfiable inter-member requirements, `root_only` deflation.
+    /// Additive; older readers ignore unknown fields per the compatibility
+    /// contract.
+    #[serde(default)]
+    pub workspace: Vec<MigrationFinding>,
 }
 
 /// Severity of a config-migration finding.
@@ -147,6 +159,7 @@ fn collect(config: &Config) -> DoctorReport {
         git_rev,
         dirty,
         migration: collect_migration_findings(config),
+        workspace: collect_workspace_findings(config),
     }
 }
 
@@ -293,6 +306,389 @@ fn detect_require_bump(toml_text: Option<&str>) -> Vec<MigrationFinding> {
         // Explicit false: already on the v10 behavior.
         Some(false) => Vec::new(),
     }
+}
+
+/// A workspace crate whose declared version is checked against its
+/// `Cargo.lock` `[[package]]` entry.
+struct DeclaredVersion {
+    /// `[package].name`, matching the lockfile entry's `name`.
+    name: String,
+    /// The version the crate currently declares (VERSION-file and
+    /// workspace-inheritance precedence already resolved by the caller).
+    version: String,
+}
+
+/// A workspace member with its resolved current version, used to check
+/// inter-member path-dependency requirements.
+struct MemberVersion {
+    name: String,
+    manifest: PathBuf,
+    version: semver::Version,
+}
+
+/// Read the workspace manifests, lockfile, and recent git history and run
+/// the W2 workspace checks (plan §3.4). Everything is best-effort: a repo
+/// without a Cargo workspace, lockfile, or git history simply yields fewer
+/// findings, and discovery errors surface on the daemon's own writeback
+/// path, so doctor does not re-report them.
+fn collect_workspace_findings(config: &Config) -> Vec<MigrationFinding> {
+    let repo = &config.repo_path;
+    let Ok(layout) = WorkspaceLayout::discover(repo) else {
+        return Vec::new();
+    };
+    if matches!(layout, WorkspaceLayout::Single) {
+        return Vec::new();
+    }
+
+    let root_manifest = repo.join("Cargo.toml");
+    let root_text = std::fs::read_to_string(&root_manifest).ok();
+    let version_text = std::fs::read_to_string(repo.join("VERSION")).ok();
+    let member_texts: Vec<Option<String>> = layout
+        .members()
+        .iter()
+        .map(|m| std::fs::read_to_string(&m.manifest).ok())
+        .collect();
+    let members = member_versions(&layout, root_text.as_deref(), &member_texts);
+
+    let mut findings = Vec::new();
+
+    // workspace_lock_drift: declared versions vs Cargo.lock entries.
+    if let Ok(lock_text) = std::fs::read_to_string(repo.join("Cargo.lock")) {
+        let mut crates: Vec<DeclaredVersion> = Vec::new();
+        if matches!(layout, WorkspaceLayout::RootCrate { .. }) {
+            crates.extend(root_declared_version(
+                root_text.as_deref(),
+                version_text.as_deref(),
+            ));
+        }
+        crates.extend(members.iter().map(|m| DeclaredVersion {
+            name: m.name.clone(),
+            version: m.version.to_string(),
+        }));
+        findings.extend(detect_workspace_lock_drift(&crates, &lock_text));
+    }
+
+    // workspace_requirement_unsatisfiable: inter-member path-dep floors.
+    let mut manifests: Vec<(PathBuf, String)> = Vec::new();
+    if let Some(text) = root_text {
+        manifests.push((root_manifest, text));
+    }
+    for (member, text) in layout.members().iter().zip(member_texts.iter()) {
+        if let Some(text) = text {
+            manifests.push((member.manifest.clone(), text.clone()));
+        }
+    }
+    findings.extend(detect_workspace_requirement_unsatisfiable(
+        &manifests, &members,
+    ));
+
+    // workspace_root_only_deflation: member-only history under root_only.
+    if let Some(commits) = recent_commit_paths(repo) {
+        let member_dirs: Vec<PathBuf> = layout
+            .members()
+            .iter()
+            .filter_map(|m| {
+                let dir = m.manifest.parent()?;
+                Some(normalize_path(dir.strip_prefix(repo).unwrap_or(dir)))
+            })
+            .collect();
+        findings.extend(detect_workspace_root_only_deflation(
+            config.versioning.workspace,
+            &member_dirs,
+            &commits,
+        ));
+    }
+
+    findings
+}
+
+/// Resolve the root crate's declared version: the `VERSION` file wins, else
+/// the root `[package].version`. `None` when neither resolves — never guess.
+fn root_declared_version(
+    root_text: Option<&str>,
+    version_text: Option<&str>,
+) -> Option<DeclaredVersion> {
+    let doc = root_text?.parse::<toml_edit::DocumentMut>().ok()?;
+    let name = doc
+        .get("package")
+        .and_then(|p| p.get("name"))
+        .and_then(|n| n.as_str())?;
+    let version = version_text
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            doc.get("package")
+                .and_then(|p| p.get("version"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })?;
+    Some(DeclaredVersion {
+        name: name.to_string(),
+        version,
+    })
+}
+
+/// Resolve every member's current manifest version: inheriting members read
+/// the root `[workspace.package].version`, plain members their own
+/// `[package].version`. Members whose version is missing or not valid
+/// semver are skipped — never guessed.
+fn member_versions(
+    layout: &WorkspaceLayout,
+    root_text: Option<&str>,
+    member_texts: &[Option<String>],
+) -> Vec<MemberVersion> {
+    let workspace_version = root_text
+        .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok())
+        .and_then(|doc| {
+            doc.get("workspace")
+                .and_then(|w| w.get("package"))
+                .and_then(|p| p.get("version"))
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        });
+    let mut members = Vec::new();
+    for (member, text) in layout.members().iter().zip(member_texts.iter()) {
+        let raw = if member.inherits_version {
+            workspace_version.clone()
+        } else {
+            text.as_deref()
+                .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok())
+                .and_then(|doc| {
+                    doc.get("package")
+                        .and_then(|p| p.get("version"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
+        };
+        let version = raw.and_then(|raw| semver::Version::parse(&raw).ok());
+        if let Some(version) = version {
+            members.push(MemberVersion {
+                name: member.name.clone(),
+                manifest: member.manifest.clone(),
+                version,
+            });
+        }
+    }
+    members
+}
+
+/// W2 check `workspace_lock_drift`: a crate's declared version disagrees
+/// with its `Cargo.lock` entry — the manifest moved without a lock sync (or
+/// vice versa), so the N-tuple invariant the daemon maintains is broken.
+/// Skipped by the caller when there is no lockfile or the layout is
+/// `Single`; crates absent from the lock are skipped here.
+fn detect_workspace_lock_drift(
+    crates: &[DeclaredVersion],
+    lock_text: &str,
+) -> Vec<MigrationFinding> {
+    let Ok(doc) = lock_text.parse::<toml_edit::DocumentMut>() else {
+        return Vec::new();
+    };
+    let mut findings = Vec::new();
+    for krate in crates {
+        let Ok(declared) = semver::Version::parse(&krate.version) else {
+            continue; // unparseable declared version — resolve_baseline reports it
+        };
+        let Some(locked) = lock_entry_version(&doc, &krate.name) else {
+            continue; // not every workspace crate is necessarily locked
+        };
+        if locked == declared {
+            continue;
+        }
+        findings.push(MigrationFinding {
+            check: "workspace_lock_drift".to_string(),
+            severity: MigrationSeverity::Warn,
+            message: format!(
+                "`{}` declares version {declared} but its Cargo.lock entry is {locked} — \
+                 the manifest and lockfile have drifted apart.",
+                krate.name
+            ),
+            fix: "Let the daemon commit a bump (it syncs Cargo.lock in the same commit), \
+                  or sync the lockfile by hand (`cargo update --workspace`)."
+                .to_string(),
+        });
+    }
+    findings
+}
+
+/// The `[[package]]` entry version for `name` in a parsed Cargo.lock, when
+/// the entry exists and is valid semver.
+fn lock_entry_version(doc: &toml_edit::DocumentMut, name: &str) -> Option<semver::Version> {
+    doc.get("package")
+        .and_then(|p| p.as_array_of_tables())
+        .and_then(|entries| {
+            entries.iter().find_map(|pkg| {
+                let pkg_name = pkg.get("name").and_then(|n| n.as_str())?;
+                if pkg_name != name {
+                    return None;
+                }
+                let raw = pkg.get("version").and_then(|v| v.as_str())?;
+                semver::Version::parse(raw).ok()
+            })
+        })
+}
+
+/// W2 check `workspace_requirement_unsatisfiable`: a path dependency on a
+/// workspace member carries a `version` requirement the member's current
+/// version does not satisfy, so `cargo build --locked` fails. Scans
+/// `[dependencies]`, `[dev-dependencies]`, and `[build-dependencies]` of
+/// every workspace manifest; path-only and registry entries are skipped.
+fn detect_workspace_requirement_unsatisfiable(
+    manifests: &[(PathBuf, String)],
+    members: &[MemberVersion],
+) -> Vec<MigrationFinding> {
+    let mut findings = Vec::new();
+    for (manifest, content) in manifests {
+        let Ok(doc) = content.parse::<toml_edit::DocumentMut>() else {
+            continue;
+        };
+        let Some(base) = manifest.parent() else {
+            continue;
+        };
+        for table_name in ["dependencies", "dev-dependencies", "build-dependencies"] {
+            let Some(deps) = doc.get(table_name).and_then(|t| t.as_table_like()) else {
+                continue;
+            };
+            for (dep_name, entry) in deps.iter() {
+                let (Some(rel), Some(req_str)) = (
+                    entry.get("path").and_then(|p| p.as_str()),
+                    entry.get("version").and_then(|v| v.as_str()),
+                ) else {
+                    continue; // path-only or registry-only: nothing to check
+                };
+                let dep_manifest = normalize_path(&base.join(rel).join("Cargo.toml"));
+                let Some(member) = members
+                    .iter()
+                    .find(|m| normalize_path(&m.manifest) == dep_manifest)
+                else {
+                    continue; // path dependency outside the workspace
+                };
+                let Ok(req) = semver::VersionReq::parse(req_str) else {
+                    continue;
+                };
+                if req.matches(&member.version) {
+                    continue;
+                }
+                findings.push(MigrationFinding {
+                    check: "workspace_requirement_unsatisfiable".to_string(),
+                    severity: MigrationSeverity::Warn,
+                    message: format!(
+                        "`{dep_name}` requirement `{req_str}` in {} does not match \
+                         workspace member `{}` at {} — the requirement is unsatisfiable.",
+                        manifest.display(),
+                        member.name,
+                        member.version
+                    ),
+                    fix: format!(
+                        "Raise the requirement floor to `{}` — the daemon does this \
+                         automatically on the next bump.",
+                        member.version
+                    ),
+                });
+            }
+        }
+    }
+    findings
+}
+
+/// W2 check `workspace_root_only_deflation`: under the default `root_only`
+/// policy only the root moves, so a repo whose recent commits all live
+/// inside member subtrees is silently deflating member versions. The
+/// signature needs at least 5 path-touching commits and every one of them
+/// confined to member subtrees; the caller skips the check entirely when
+/// git history is unavailable.
+fn detect_workspace_root_only_deflation(
+    policy: WorkspacePolicy,
+    member_dirs: &[PathBuf],
+    commit_paths: &[Vec<String>],
+) -> Vec<MigrationFinding> {
+    if policy != WorkspacePolicy::RootOnly || member_dirs.is_empty() {
+        return Vec::new();
+    }
+    // Only path-touching commits count; merges and empty commits say nothing.
+    let touching: Vec<&Vec<String>> = commit_paths.iter().filter(|p| !p.is_empty()).collect();
+    if touching.len() < 5 {
+        return Vec::new();
+    }
+    let all_member_only = touching.iter().all(|paths| {
+        paths.iter().all(|p| {
+            let p = Path::new(p);
+            member_dirs.iter().any(|dir| p.starts_with(dir))
+        })
+    });
+    if !all_member_only {
+        return Vec::new();
+    }
+    vec![MigrationFinding {
+        check: "workspace_root_only_deflation".to_string(),
+        severity: MigrationSeverity::Warn,
+        message: format!(
+            "[versioning].workspace is \"root_only\" but all of the last {} \
+             path-touching commits stayed inside workspace member subtrees — \
+             member-only work never moves member versions.",
+            touching.len()
+        ),
+        fix: "Set `[versioning].workspace = \"touched\"` so clusters bump the members \
+              they actually touch."
+            .to_string(),
+    }]
+}
+
+/// Run `git log --format=%n --name-only -n 20` and return one path list per
+/// commit. The format is `%n`, not empty: git (2.43+) collapses an empty
+/// `--format=` header away entirely, so commits would run together with no
+/// separator; `%n` makes git itself print the blank line that separates
+/// commits. `None` on any git error or in a non-git repo — the deflation
+/// check skips silently there.
+fn recent_commit_paths(repo: &Path) -> Option<Vec<Vec<String>>> {
+    let out = Command::new("git")
+        .args(["log", "--format=%n", "--name-only", "-n", "20"])
+        .current_dir(repo)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())?;
+    Some(split_name_only_log(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// Split `git log --format=%n --name-only` output into one path list per
+/// commit. Commits are separated by (possibly several) blank lines; commits
+/// with no paths (merges) leave no block.
+fn split_name_only_log(output: &str) -> Vec<Vec<String>> {
+    let mut commits = Vec::new();
+    let mut current = Vec::new();
+    for line in output.lines() {
+        let line = line.trim_end();
+        if line.is_empty() {
+            if !current.is_empty() {
+                commits.push(std::mem::take(&mut current));
+            }
+        } else {
+            current.push(line.to_string());
+        }
+    }
+    if !current.is_empty() {
+        commits.push(current);
+    }
+    commits
+}
+
+/// Lexically normalize a path (resolving `.` and `..`) without touching the
+/// filesystem, so dependency paths like `../alpha` compare equal to the
+/// discovered member manifest paths.
+fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
 }
 
 pub fn tier_for(files: usize) -> &'static str {
@@ -594,12 +990,20 @@ fn print_human(r: &DoctorReport) {
         );
     } else {
         for f in &r.migration {
-            let badge = match f.severity {
-                MigrationSeverity::Info => "info".cyan().to_string(),
-                MigrationSeverity::Warn => "WARN".yellow().to_string(),
-            };
-            println!("  {} {}", badge, f.message);
-            println!("       {} {}", "fix:".dimmed(), f.fix.as_str().dimmed());
+            print_finding(f);
+        }
+    }
+
+    println!("\n{}", "🗃  Workspace versioning:".bold().cyan());
+    if r.workspace.is_empty() {
+        println!(
+            "  {} {}",
+            "✅".green(),
+            "No workspace versioning issues detected.".green()
+        );
+    } else {
+        for f in &r.workspace {
+            print_finding(f);
         }
     }
 
@@ -608,6 +1012,15 @@ fn print_human(r: &DoctorReport) {
         "Artifact:".dimmed(),
         config_relative(&r.repo_path).dimmed()
     );
+}
+
+fn print_finding(f: &MigrationFinding) {
+    let badge = match f.severity {
+        MigrationSeverity::Info => "info".cyan().to_string(),
+        MigrationSeverity::Warn => "WARN".yellow().to_string(),
+    };
+    println!("  {} {}", badge, f.message);
+    println!("       {} {}", "fix:".dimmed(), f.fix.as_str().dimmed());
 }
 
 fn human_bytes(bytes: Option<u64>) -> String {
@@ -748,5 +1161,266 @@ mod tests {
             3
         );
         assert!(check(&fs, "require_bump_unset").is_some());
+    }
+
+    // --- W2 workspace checks ---------------------------------------------
+
+    use kaptaind::version::workspace::Member;
+
+    const ROOT_MANIFEST: &str = "[package]\nname = \"root-crate\"\nversion = \"0.2.0\"\n\n[workspace]\nmembers = [\"crates/*\"]\n";
+    const ALPHA_MANIFEST: &str = "[package]\nname = \"alpha\"\nversion = \"0.2.0\"\n";
+
+    fn member(name: &str, manifest: &str, inherits_version: bool) -> Member {
+        Member {
+            name: name.to_string(),
+            manifest: PathBuf::from(manifest),
+            inherits_version,
+        }
+    }
+
+    fn lock(packages: &[(&str, &str)]) -> String {
+        let mut text = String::from("version = 4\n");
+        for (name, version) in packages {
+            text.push_str(&format!(
+                "\n[[package]]\nname = \"{name}\"\nversion = \"{version}\"\n"
+            ));
+        }
+        text
+    }
+
+    fn commits(sets: &[&[&str]]) -> Vec<Vec<String>> {
+        sets.iter()
+            .map(|s| s.iter().map(|p| p.to_string()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn lock_drift_member_ahead_of_lock_flags() {
+        // Seeded drift: member manifest at 0.2.0, lock entry still 0.1.0.
+        let crates = vec![
+            DeclaredVersion {
+                name: "root-crate".to_string(),
+                version: "0.2.0".to_string(),
+            },
+            DeclaredVersion {
+                name: "alpha".to_string(),
+                version: "0.2.0".to_string(),
+            },
+        ];
+        let lock = lock(&[("root-crate", "0.2.0"), ("alpha", "0.1.0")]);
+        let fs = detect_workspace_lock_drift(&crates, &lock);
+        assert_eq!(fs.len(), 1);
+        let f = &fs[0];
+        assert_eq!(f.check, "workspace_lock_drift");
+        assert_eq!(f.severity, MigrationSeverity::Warn);
+        assert!(f.message.contains("`alpha`"));
+        assert!(f.message.contains("0.2.0"));
+        assert!(f.message.contains("0.1.0"));
+        assert!(f.fix.contains("bump"));
+    }
+
+    #[test]
+    fn lock_drift_in_sync_no_finding() {
+        let crates = vec![DeclaredVersion {
+            name: "alpha".to_string(),
+            version: "0.2.0".to_string(),
+        }];
+        let fs = detect_workspace_lock_drift(&crates, &lock(&[("alpha", "0.2.0")]));
+        assert!(fs.is_empty());
+    }
+
+    #[test]
+    fn lock_drift_missing_entry_and_unparseable_lock_skip() {
+        let crates = vec![DeclaredVersion {
+            name: "alpha".to_string(),
+            version: "0.2.0".to_string(),
+        }];
+        assert!(detect_workspace_lock_drift(&crates, &lock(&[("beta", "0.1.0")])).is_empty());
+        assert!(detect_workspace_lock_drift(&crates, "[[[broken").is_empty());
+    }
+
+    #[test]
+    fn root_version_file_wins_over_manifest() {
+        let declared =
+            root_declared_version(Some(ROOT_MANIFEST), Some("0.3.0\n")).expect("declared");
+        assert_eq!(declared.name, "root-crate");
+        assert_eq!(declared.version, "0.3.0");
+    }
+
+    #[test]
+    fn root_declared_version_falls_back_to_manifest() {
+        let declared = root_declared_version(Some(ROOT_MANIFEST), None).expect("declared");
+        assert_eq!(declared.version, "0.2.0");
+    }
+
+    #[test]
+    fn member_versions_inherit_workspace_package_version() {
+        let layout = WorkspaceLayout::RootCrate {
+            members: vec![member("alpha", "/ws/crates/alpha/Cargo.toml", true)],
+        };
+        let root = "[package]\nname = \"root-crate\"\nversion = \"0.2.0\"\n\n[workspace]\nmembers = [\"crates/*\"]\n\n[workspace.package]\nversion = \"0.4.0\"\n";
+        let alpha = "[package]\nname = \"alpha\"\nversion.workspace = true\n";
+        let members = member_versions(&layout, Some(root), &[Some(alpha.to_string())]);
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].name, "alpha");
+        assert_eq!(members[0].version, semver::Version::new(0, 4, 0));
+    }
+
+    #[test]
+    fn member_versions_plain_member_reads_own_version() {
+        let layout = WorkspaceLayout::RootCrate {
+            members: vec![member("alpha", "/ws/crates/alpha/Cargo.toml", false)],
+        };
+        let members = member_versions(
+            &layout,
+            Some(ROOT_MANIFEST),
+            &[Some(ALPHA_MANIFEST.to_string())],
+        );
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].version, semver::Version::new(0, 2, 0));
+    }
+
+    #[test]
+    fn requirement_unsatisfiable_flags() {
+        let layout = WorkspaceLayout::RootCrate {
+            members: vec![member("alpha", "/ws/crates/alpha/Cargo.toml", false)],
+        };
+        let members = member_versions(
+            &layout,
+            Some(ROOT_MANIFEST),
+            &[Some(ALPHA_MANIFEST.to_string())],
+        );
+        // Root depends on alpha at an old floor; beta (another member) does
+        // the same from dev-dependencies — both must be flagged.
+        let root = "[package]\nname = \"root-crate\"\nversion = \"0.2.0\"\n\n[workspace]\nmembers = [\"crates/*\"]\n\n[dependencies]\nalpha = { path = \"crates/alpha\", version = \"0.1.0\" }\n";
+        let beta = "[package]\nname = \"beta\"\nversion = \"0.1.0\"\n\n[dev-dependencies]\nalpha = { path = \"../alpha\", version = \"0.1\" }\n";
+        let manifests = vec![
+            (PathBuf::from("/ws/Cargo.toml"), root.to_string()),
+            (
+                PathBuf::from("/ws/crates/beta/Cargo.toml"),
+                beta.to_string(),
+            ),
+        ];
+        let fs = detect_workspace_requirement_unsatisfiable(&manifests, &members);
+        assert_eq!(fs.len(), 2);
+        for f in &fs {
+            assert_eq!(f.check, "workspace_requirement_unsatisfiable");
+            assert_eq!(f.severity, MigrationSeverity::Warn);
+            assert!(f.message.contains("`alpha`"));
+            assert!(f.message.contains("0.2.0"));
+            assert!(f.fix.contains("0.2.0"));
+        }
+        assert!(fs[0].message.contains("0.1.0"));
+        assert!(fs[1].message.contains("0.1"));
+    }
+
+    #[test]
+    fn requirement_satisfied_no_finding() {
+        let layout = WorkspaceLayout::RootCrate {
+            members: vec![member("alpha", "/ws/crates/alpha/Cargo.toml", false)],
+        };
+        let members = member_versions(
+            &layout,
+            Some(ROOT_MANIFEST),
+            &[Some(ALPHA_MANIFEST.to_string())],
+        );
+        // Caret requirement satisfied by alpha's 0.2.0.
+        let root = "[package]\nname = \"root-crate\"\nversion = \"0.2.0\"\n\n[dependencies]\nalpha = { path = \"crates/alpha\", version = \"0.2\" }\n";
+        let manifests = vec![(PathBuf::from("/ws/Cargo.toml"), root.to_string())];
+        assert!(detect_workspace_requirement_unsatisfiable(&manifests, &members).is_empty());
+    }
+
+    #[test]
+    fn requirement_path_only_registry_and_outside_paths_skip() {
+        let layout = WorkspaceLayout::RootCrate {
+            members: vec![member("alpha", "/ws/crates/alpha/Cargo.toml", false)],
+        };
+        let members = member_versions(
+            &layout,
+            Some(ROOT_MANIFEST),
+            &[Some(ALPHA_MANIFEST.to_string())],
+        );
+        let root = "[package]\nname = \"root-crate\"\nversion = \"0.2.0\"\n\n[dependencies]\nalpha = { path = \"crates/alpha\" }\nserde = \"1\"\nother = { path = \"../outside\", version = \"9.9.9\" }\n";
+        let manifests = vec![(PathBuf::from("/ws/Cargo.toml"), root.to_string())];
+        assert!(detect_workspace_requirement_unsatisfiable(&manifests, &members).is_empty());
+    }
+
+    #[test]
+    fn split_name_only_log_groups_commits() {
+        let out = "crates/alpha/src/lib.rs\n\ncrates/beta/src/main.rs\ncrates/alpha/Cargo.toml\n\n\ncrates/alpha/src/lib.rs\n";
+        let commits = split_name_only_log(out);
+        assert_eq!(commits.len(), 3);
+        assert_eq!(commits[0], ["crates/alpha/src/lib.rs"]);
+        assert_eq!(
+            commits[1],
+            ["crates/beta/src/main.rs", "crates/alpha/Cargo.toml"]
+        );
+        assert_eq!(commits[2], ["crates/alpha/src/lib.rs"]);
+        assert!(split_name_only_log("").is_empty());
+    }
+
+    #[test]
+    fn deflation_member_only_history_flags() {
+        let dirs = vec![PathBuf::from("crates/alpha"), PathBuf::from("crates/beta")];
+        let history = commits(&[
+            &["crates/alpha/src/lib.rs"],
+            &["crates/beta/src/main.rs", "crates/alpha/Cargo.toml"],
+            &["crates/alpha/src/lib.rs"],
+            &["crates/beta/README.md"],
+            &["crates/alpha/tests/t.rs"],
+        ]);
+        let fs = detect_workspace_root_only_deflation(WorkspacePolicy::RootOnly, &dirs, &history);
+        let f = check(&fs, "workspace_root_only_deflation").expect("expected finding");
+        assert_eq!(f.severity, MigrationSeverity::Warn);
+        assert!(f.message.contains("root_only"));
+        assert!(f.fix.contains("workspace = \"touched\""));
+    }
+
+    #[test]
+    fn deflation_touched_policy_no_finding() {
+        let dirs = vec![PathBuf::from("crates/alpha")];
+        let history = commits(&[
+            &["crates/alpha/a.rs"],
+            &["crates/alpha/b.rs"],
+            &["crates/alpha/c.rs"],
+            &["crates/alpha/d.rs"],
+            &["crates/alpha/e.rs"],
+        ]);
+        assert!(
+            detect_workspace_root_only_deflation(WorkspacePolicy::Touched, &dirs, &history)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn deflation_root_touching_commit_no_finding() {
+        let dirs = vec![PathBuf::from("crates/alpha")];
+        let history = commits(&[
+            &["crates/alpha/a.rs"],
+            &["crates/alpha/b.rs"],
+            &["src/main.rs"], // one root-touching commit breaks the signature
+            &["crates/alpha/c.rs"],
+            &["crates/alpha/d.rs"],
+            &["crates/alpha/e.rs"],
+        ]);
+        assert!(
+            detect_workspace_root_only_deflation(WorkspacePolicy::RootOnly, &dirs, &history)
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn deflation_too_few_commits_no_finding() {
+        let dirs = vec![PathBuf::from("crates/alpha")];
+        let history = commits(&[
+            &["crates/alpha/a.rs"],
+            &["crates/alpha/b.rs"],
+            &["crates/alpha/c.rs"],
+            &["crates/alpha/d.rs"],
+        ]);
+        assert!(
+            detect_workspace_root_only_deflation(WorkspacePolicy::RootOnly, &dirs, &history)
+                .is_empty()
+        );
     }
 }

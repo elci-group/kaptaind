@@ -220,8 +220,10 @@ fn agent_info(agent_event: &Option<crate::aoc::AgentEvent>) -> String {
 }
 
 /// Conventional-commit subject for a bumping commit: the change class
-/// becomes the type, the dominant directory the scope.
-fn bump_subject(cluster: &Cluster, diff: &DiffAnalysis) -> String {
+/// becomes the type, the dominant directory the scope — or, in a workspace,
+/// the dominant member name when the whole cluster touched one member
+/// (`feat(kaptaind-diff): extend public API (…)`, W2).
+fn bump_subject(cluster: &Cluster, diff: &DiffAnalysis, member_scope: Option<&str>) -> String {
     let paths = cluster_paths(cluster);
     let class = classify(diff, &paths);
     let (ty, description) = match class {
@@ -234,11 +236,13 @@ fn bump_subject(cluster: &Cluster, diff: &DiffAnalysis) -> String {
         ChangeClass::Fix => ("fix", "apply code changes"),
     };
     // Dependency changes keep the conventional `build(deps)` scope; other
-    // classes use the dominant directory, if any.
+    // classes prefer the dominant member, then the dominant directory.
     let scope = if class == ChangeClass::Deps {
         Some("deps".to_string())
     } else {
-        derive_scope(&paths)
+        member_scope
+            .map(str::to_string)
+            .or_else(|| derive_scope(&paths))
     };
     build_subject(ty, scope.as_deref(), description, &path_names(&paths))
 }
@@ -251,8 +255,9 @@ pub fn format_commit(
     bump: Bump,
     version: &Version,
     agent_event: &Option<crate::aoc::AgentEvent>,
+    member_scope: Option<&str>,
 ) -> String {
-    let subject = bump_subject(cluster, diff);
+    let subject = bump_subject(cluster, diff, member_scope);
     let body = format!(
         "kaptaind: {bump:?} -> v{version} [{}; paths={}; api_touches={}; deps={}; runtime={}; score={:.3}; cluster={}{}]",
         api_summary(diff),
@@ -368,10 +373,35 @@ mod tests {
             Bump::Patch,
             &Version::new(0, 1, 1),
             &None,
+            None,
         );
         let subject = message.lines().next().expect("subject line");
         assert_eq!(subject, "fix(src): apply code changes (args.rs, main.rs)");
         assert!(message.contains("kaptaind: Patch -> v0.1.1 [api-stable; paths=2"));
+    }
+
+    /// W2: a cluster dominated by one workspace member scopes the subject
+    /// with the member name; the deps class keeps its `build(deps)` scope.
+    #[test]
+    fn bump_subject_uses_member_scope_when_dominant() {
+        let cluster = cluster_with_paths(&["crates/kaptaind-diff/src/lib.rs"]);
+        let diff = DiffAnalysis {
+            touched_paths: 1,
+            api_touches: 2,
+            api_added: true,
+            ..DiffAnalysis::default()
+        };
+        let message = format_commit(
+            &cluster,
+            &diff,
+            &weight(0.7),
+            Bump::Minor,
+            &Version::new(9, 7, 0),
+            &None,
+            Some("kaptaind-diff"),
+        );
+        let subject = message.lines().next().expect("subject line");
+        assert_eq!(subject, "feat(kaptaind-diff): extend public API (lib.rs)");
     }
 
     /// D2 lint (finding #16): every generated subject, across a matrix of
@@ -488,6 +518,7 @@ mod tests {
                     bump,
                     &Version::new(1, 2, 3),
                     &None,
+                    None,
                 ),
                 format_chore_commit(&cluster, &diff, &weight(0.05), &None),
             ];

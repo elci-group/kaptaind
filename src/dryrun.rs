@@ -71,8 +71,38 @@ pub fn run(config: &Config) -> anyhow::Result<()> {
 
     let previous = crate::version::resolve_baseline(&config.repo_path)?;
     let next = crate::version::apply(previous, bump);
-    let message =
-        crate::commit::message::format_commit(&cluster, &diff, &weight, bump, &next, &None);
+    // Mirror the scheduler's W2 member scope so the previewed message
+    // matches what the daemon would commit.
+    let cluster_paths: Vec<std::path::PathBuf> = cluster
+        .events
+        .iter()
+        .flat_map(|e| e.paths.iter().cloned())
+        .collect();
+    let layout = crate::version::workspace::WorkspaceLayout::discover(&config.repo_path)
+        .unwrap_or(crate::version::workspace::WorkspaceLayout::Single);
+    let member_scope = if !matches!(layout, crate::version::workspace::WorkspaceLayout::Single)
+        && !matches!(
+            config.versioning.workspace,
+            crate::config::loader::WorkspacePolicy::RootOnly
+        ) {
+        crate::version::workspace::WorkspaceLayout::dominant_member(
+            &layout,
+            &cluster_paths,
+            &config.repo_path,
+        )
+        .map(|m| m.name.clone())
+    } else {
+        None
+    };
+    let message = crate::commit::message::format_commit(
+        &cluster,
+        &diff,
+        &weight,
+        bump,
+        &next,
+        &None,
+        member_scope.as_deref(),
+    );
 
     println!("decision: commit");
     println!("bump: {bump:?}");
