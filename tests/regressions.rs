@@ -538,12 +538,13 @@ fn no_phantom_cluster_from_test_hook_target_dir() {
             "hook target tempdir must not produce a chore commit either"
         );
 
-        // Exactly one patch bump: 0.1.0 -> 0.1.1, never a skipped patch.
+        // Exactly one bump: 0.1.0 -> 0.2.0 (three new pub fn APIs → minor),
+        // never a skipped or stacked bump from a phantom cluster.
         let version_string = fixture.git(&["show", "HEAD:proj/VERSION"]);
         let version = version_string.trim();
         assert_eq!(
-            version, "0.1.1",
-            "VERSION must advance by exactly one patch"
+            version, "0.2.0",
+            "VERSION must advance by exactly one minor bump (new APIs)"
         );
 
         // Reap the daemon so its log is final, then scan it.
@@ -556,6 +557,68 @@ fn no_phantom_cluster_from_test_hook_target_dir() {
             "daemon logged ERROR lines:\n{}",
             errors.join("\n")
         );
+    }));
+
+    let _ = daemon.kill();
+    let _ = daemon.wait();
+
+    if let Err(payload) = result {
+        std::panic::resume_unwind(payload);
+    }
+}
+
+/// Startup guard: with `[daemon] startup_guard = true` the daemon refuses to
+/// start on a dirty worktree unless `--force` is passed — accidental manual
+/// starts (e.g. on release trees) must not catch-up-commit in-flight work.
+#[test]
+fn startup_guard_refuses_dirty_worktree() {
+    let fixture = MonorepoFixture::with_config(19117, "[daemon]\nstartup_guard = true\n");
+
+    // Dirty the tree after the fixture's clean initial commit.
+    substantial_edit(&fixture.project());
+
+    // Without --force the daemon must refuse quickly, before any commit.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
+        .current_dir(fixture.project())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("daemon spawns");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().expect("try_wait") {
+            break status;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "daemon did not exit within 10s on a guarded dirty worktree"
+        );
+        std::thread::sleep(Duration::from_millis(100));
+    };
+    let output = child.wait_with_output().expect("collect output");
+    assert!(
+        !status.success(),
+        "daemon must refuse to start on a dirty worktree"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("startup guard"),
+        "refusal must name the guard, got: {stderr}"
+    );
+    assert_eq!(fixture.kaptaind_commits(), 0, "refused daemon committed");
+
+    // With --force the guard is overridden and the daemon works normally.
+    let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
+        .arg("--force")
+        .current_dir(fixture.project())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .expect("daemon spawns with --force");
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        wait_for(Duration::from_secs(30), || fixture.kaptaind_commits() >= 1);
+        assert_eq!(fixture.kaptaind_commits(), 1);
     }));
 
     let _ = daemon.kill();

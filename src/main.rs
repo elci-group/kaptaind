@@ -123,6 +123,13 @@ struct Cli {
     /// KAPTAIND_CONFIG environment variable.
     #[arg(short, long, value_name = "PATH")]
     config: Option<std::path::PathBuf>,
+
+    /// ⚠️ Start even when the worktree has uncommitted changes
+    ///
+    /// Overrides `[daemon] startup_guard = true` in kaptaind.toml, which
+    /// otherwise refuses to start on a dirty tree.
+    #[arg(long)]
+    force: bool,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -244,6 +251,21 @@ fn main() -> anyhow::Result<()> {
 
     if cli.dry_run {
         return kaptaind::dryrun::run(&config);
+    }
+
+    // Startup guard: refuse to run against a dirty tree when the repo opted
+    // in — accidental starts must not catch-up-commit in-flight work. Checked
+    // before daemonizing so the refusal is visible on the operator's terminal.
+    if config.daemon.startup_guard && !cli.force {
+        let dirty = kaptaind::git::repo::dirty_path_count(&config.repo_path)?;
+        if dirty > 0 {
+            return Err(anyhow::anyhow!(
+                "startup guard: {} uncommitted path(s) under {} — refusing to start. \
+                 Commit or stash first, or pass --force to override.",
+                dirty,
+                config.repo_path.display()
+            ));
+        }
     }
 
     if cli.daemon {

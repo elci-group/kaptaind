@@ -220,6 +220,23 @@ fn git_error(command: &str, output: &std::process::Output) -> anyhow::Error {
     )
 }
 
+/// Count of paths reported by `git status --porcelain` — staged, modified,
+/// and untracked. 0 means the worktree is clean. Used by the startup guard,
+/// which must see untracked files (the git2 status defaults skip them).
+pub fn dirty_path_count(repo_path: &Path) -> anyhow::Result<usize> {
+    let output = git(repo_path)
+        .args(["status", "--porcelain"])
+        .output()
+        .context("failed to run git status --porcelain")?;
+    if !output.status.success() {
+        return Err(git_error("status --porcelain", &output));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count())
+}
+
 #[cfg(feature = "git2")]
 mod git2_backend {
     use super::*;

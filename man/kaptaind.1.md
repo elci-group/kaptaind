@@ -33,6 +33,9 @@ The daemon's companion tool is **kaptaind-cli**(1).
 **--dock**
 :   Print the static list of watched projects (Dock view) and exit. Useful for confirming which repository is being monitored.
 
+**--force**
+:   Start even when the worktree has uncommitted changes. Overrides **[daemon] startup_guard = true** in *kaptaind.toml*, which otherwise refuses to start on a dirty tree — a protection for release trees where daemon runs are exceptional and an accidental start must not catch-up-commit in-flight work.
+
 **--radar**
 :   Print active project activity and event rates (Radar view) and exit.
 
