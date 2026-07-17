@@ -7,7 +7,6 @@ use chrono::{DateTime, Utc};
 use kaptaind::config::loader::Config;
 use kaptaind::util::style::*;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -27,6 +26,7 @@ pub enum AuditAction {
     Tail { n: usize },
     Stats,
     Verify,
+    ExportVerify,
 }
 
 pub fn handle_audit(config: &Config, action: &AuditAction, format: &str) -> anyhow::Result<()> {
@@ -51,7 +51,7 @@ pub fn handle_audit(config: &Config, action: &AuditAction, format: &str) -> anyh
             }
         }
         AuditAction::Verify => {
-            let report = verify(&rows);
+            let report = verify(&rows, &config.repo_path);
             if format.eq_ignore_ascii_case("json") {
                 println!("{}", serde_json::to_string_pretty(&report)?);
             } else {
@@ -61,8 +61,48 @@ pub fn handle_audit(config: &Config, action: &AuditAction, format: &str) -> anyh
                 anyhow::bail!("audit integrity check failed (see report)");
             }
         }
+        AuditAction::ExportVerify => {
+            let report = verify_export(config);
+            if format.eq_ignore_ascii_case("json") {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print_export_verify(&report);
+            }
+            if !report.ok {
+                anyhow::bail!("audit export integrity check failed (see report)");
+            }
+        }
     }
     Ok(())
+}
+
+#[derive(Debug, Serialize)]
+struct ExportVerifyReport {
+    configured: bool,
+    ok: bool,
+    issue: Option<String>,
+}
+
+fn verify_export(config: &Config) -> ExportVerifyReport {
+    let Some(export) = config.audit.export.as_ref() else {
+        return ExportVerifyReport {
+            configured: false,
+            ok: false,
+            issue: Some("[audit].export.jsonl_path is not configured".to_string()),
+        };
+    };
+    match kaptaind::audit::verify_export(&config.repo_path, export) {
+        Ok(()) => ExportVerifyReport {
+            configured: true,
+            ok: true,
+            issue: None,
+        },
+        Err(error) => ExportVerifyReport {
+            configured: true,
+            ok: false,
+            issue: Some(error.to_string()),
+        },
+    }
 }
 
 fn read_rows(path: &Path) -> Vec<AuditRow> {
@@ -146,7 +186,7 @@ struct VerifyReport {
     issues: Vec<String>,
 }
 
-fn verify(rows: &[AuditRow]) -> VerifyReport {
+fn verify(rows: &[AuditRow], repo_path: &Path) -> VerifyReport {
     let mut issues = Vec::new();
 
     // 1. Append-only ordering by timestamp.
@@ -169,9 +209,15 @@ fn verify(rows: &[AuditRow]) -> VerifyReport {
         }
     }
 
-    // 2. Optional hash chain. AuditEntry does not (yet) carry prev_hash, so a
-    //    fully-legacy log is reported as "pre-chain" and not treated as failure.
-    let chain = verify_chain(rows, &mut issues);
+    // 2. The production writer emits a companion hash chain. A legacy audit
+    // log without its companion chain is explicitly unverified, not accepted.
+    let chain = match kaptaind::audit::verify_chain(repo_path) {
+        Ok(()) => "ok".to_string(),
+        Err(error) => {
+            issues.push(format!("audit hash chain: {error}"));
+            "broken".to_string()
+        }
+    };
 
     let ok = ordered && chain != "broken";
     VerifyReport {
@@ -180,58 +226,6 @@ fn verify(rows: &[AuditRow]) -> VerifyReport {
         chain,
         ok,
         issues,
-    }
-}
-
-fn verify_chain(rows: &[AuditRow], issues: &mut Vec<String>) -> String {
-    // Detect whether entries carry a prev_hash field.
-    let any_chain = rows.iter().any(|r| {
-        serde_json::from_str::<serde_json::Value>(&r.raw)
-            .ok()
-            .and_then(|v| v.get("prev_hash").cloned())
-            .map(|p| !p.is_null())
-            .unwrap_or(false)
-    });
-
-    if !any_chain {
-        return "pre-chain (legacy)".to_string();
-    }
-
-    // Best-effort chain check: each entry's prev_hash must equal the sha256 of
-    // the previous raw line; the first entry must have a null/absent prev_hash.
-    let mut prev_hash: Option<String> = None;
-    for r in rows {
-        let v: serde_json::Value = serde_json::from_str(&r.raw).unwrap_or(serde_json::Value::Null);
-        let claimed = v
-            .get("prev_hash")
-            .and_then(|p| p.as_str())
-            .map(str::to_string);
-        match (&prev_hash, &claimed) {
-            (None, None) | (None, Some(_)) => {}
-            (Some(expected), Some(got)) if expected == got => {}
-            (Some(expected), Some(got)) => {
-                issues.push(format!(
-                    "line {}: prev_hash mismatch (expected {}, got {})",
-                    r.index, expected, got
-                ));
-                return "broken".to_string();
-            }
-            (Some(_), None) => {
-                issues.push(format!(
-                    "line {}: missing prev_hash in chained log",
-                    r.index
-                ));
-                return "broken".to_string();
-            }
-        }
-        let mut hasher = Sha256::new();
-        hasher.update(r.raw.as_bytes());
-        prev_hash = Some(kaptaind::util::hex::encode(hasher.finalize()));
-    }
-    if issues.is_empty() {
-        "ok".to_string()
-    } else {
-        "broken".to_string()
     }
 }
 
@@ -297,5 +291,67 @@ fn print_verify(r: &VerifyReport) {
     );
     for i in &r.issues {
         println!("  {} {}", "•".yellow(), i);
+    }
+}
+
+fn print_export_verify(report: &ExportVerifyReport) {
+    let verdict = if report.ok {
+        "OK".green().to_string()
+    } else {
+        "FAIL".red().to_string()
+    };
+    println!(
+        "{} configured={}, verdict={}",
+        "🔐".cyan(),
+        report.configured,
+        verdict
+    );
+    if let Some(issue) = &report.issue {
+        println!("  {} {}", "•".yellow(), issue);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn verify_uses_the_production_sidecar_chain() {
+        let dir = tempfile::tempdir().unwrap();
+        kaptaind::audit::append(
+            dir.path(),
+            &kaptaind::audit::AuditEntry::new("release", "ci", "success"),
+        )
+        .unwrap();
+        let rows = read_rows(&dir.path().join(".kaptaind/audit.jsonl"));
+        let report = verify(&rows, dir.path());
+        assert!(report.ok);
+        assert_eq!(report.chain, "ok");
+    }
+
+    #[test]
+    fn verify_rejects_a_log_without_its_required_chain() {
+        let dir = tempfile::tempdir().unwrap();
+        let audit_dir = dir.path().join(".kaptaind");
+        std::fs::create_dir_all(&audit_dir).unwrap();
+        std::fs::write(
+            audit_dir.join("audit.jsonl"),
+            r#"{"timestamp":"2026-01-01T00:00:00Z","event_type":"release","actor":"ci","result":"success","details":null}\n"#,
+        )
+        .unwrap();
+        let rows = read_rows(&audit_dir.join("audit.jsonl"));
+        assert!(!verify(&rows, dir.path()).ok);
+    }
+
+    #[test]
+    fn export_verify_reports_missing_configuration() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config {
+            repo_path: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+        let report = verify_export(&config);
+        assert!(!report.configured);
+        assert!(!report.ok);
     }
 }

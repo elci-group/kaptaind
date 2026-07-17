@@ -498,10 +498,47 @@ async fn process_cluster(
     metrics.clusters_processed.fetch_add(1, Ordering::Relaxed);
 
     // Load policy if configured
-    let policy: Option<Policy> = config
-        .policy_id
-        .as_ref()
-        .and_then(|id| Policy::load_or_default(&config.repo_path, id).ok());
+    let policy: Option<Policy> = match config.policy_id.as_deref() {
+        Some(id) => match Policy::load_with_trust(
+            &config.repo_path,
+            id,
+            &config.policy_trust,
+            config.policy_keyring_path().as_deref(),
+        ) {
+            Ok(policy) => {
+                if config.governance.enforce_enterprise_controls {
+                    let Some(export) = config.audit.export.as_ref() else {
+                        tracing::error!("enterprise governance audit export disappeared after configuration validation; blocking cluster");
+                        status.set_idle();
+                        write_status(&config.repo_path, status);
+                        return;
+                    };
+                    if let Err(error) = crate::audit::verify_export(&config.repo_path, export) {
+                        tracing::error!(%error, "enterprise audit export integrity failed; blocking cluster");
+                        status.set_idle();
+                        write_status(&config.repo_path, status);
+                        return;
+                    }
+                    if let Err(error) = policy.validate_enterprise_release_controls() {
+                        tracing::error!(%error, policy_id = id, "enterprise policy controls failed; blocking cluster");
+                        status.set_idle();
+                        write_status(&config.repo_path, status);
+                        return;
+                    }
+                }
+                Some(policy)
+            }
+            Err(error) => {
+                // A configured policy is an authorization boundary. Never
+                // continue automated commits after its trust check fails.
+                tracing::error!(%error, policy_id = id, "policy verification failed; blocking cluster");
+                status.set_idle();
+                write_status(&config.repo_path, status);
+                return;
+            }
+        },
+        None => None,
+    };
 
     // Collect cluster paths early for policy checks
     let cluster_paths: Vec<PathBuf> = cluster
@@ -700,17 +737,15 @@ async fn process_cluster(
             .map(|p| p.min_test_coverage)
             .unwrap_or(false)
         {
-            let _ = policy::append_audit_log(
+            crate::audit::log_event(
                 &config.repo_path,
-                &policy::AuditEntry {
-                    timestamp: Utc::now(),
-                    action: "commit_blocked".to_string(),
-                    resource: "test_failure".to_string(),
-                    details: serde_json::json!({
+                "daemon",
+                "commit_blocked",
+                false,
+                serde_json::json!({
                         "reason": "min_test_coverage",
                         "cluster_id": cluster.id.to_string(),
-                    }),
-                },
+                }),
             );
         }
 

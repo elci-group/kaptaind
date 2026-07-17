@@ -420,8 +420,15 @@
   }));
 
   const KAPTAIND_TOKEN = (() => {
-    const fromUrl = new URLSearchParams(location.search).get('token');
-    if (fromUrl) { try { sessionStorage.setItem('kaptaind_token', fromUrl); } catch (e) {} return fromUrl; }
+    // The launch token is delivered in the fragment so it is never sent with
+    // the initial HTTP request or retained in server access logs. Store it for
+    // this browser session, then remove it from the visible address bar.
+    const fromFragment = new URLSearchParams(location.hash.slice(1)).get('token');
+    if (fromFragment) {
+      try { sessionStorage.setItem('kaptaind_token', fromFragment); } catch (e) {}
+      try { history.replaceState(null, document.title, location.pathname + location.search); } catch (e) {}
+      return fromFragment;
+    }
     try { return sessionStorage.getItem('kaptaind_token') || ''; } catch (e) { return ''; }
   })();
   function kfetch(url, opts) {

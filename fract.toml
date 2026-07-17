@@ -1,0 +1,24 @@
+# Source-only architectural-health profile for this mixed Rust/Next.js workspace.
+project_root = "."
+mode = "passive"
+entropy_threshold = 0.82
+confidence_threshold = 0.9
+quiet_period_secs = 120
+watch_patterns = ["src/**/*.rs", "tests/**/*.rs", "web/**/*.ts", "web/**/*.tsx"]
+ignore_patterns = [
+    "target", ".git", ".fract", "node_modules", "web/node_modules",
+    "apps/desktop/node_modules", ".next", "web/.next", "dist", "web/dist",
+    "apps/desktop/dist", "docs/dummies",
+]
+
+[output]
+format = "human"
+color = "auto"
+verbosity = "normal"
+log_format = "pretty"
+max_findings = 100
+
+[llm]
+provider = ""
+model = ""
+max_tokens = 0

@@ -26,20 +26,19 @@ fn approx(a: f32, b: f32) -> bool {
 }
 
 /// One representative file extension per active built-in adapter. The active set
-/// is the 12 original adapters plus the 16 T1/T2/T3 promotions wired in the
-/// adapter-200 effort (see docs/planning/ADAPTER_200_ROADMAP.md).
+/// is the 12 original adapters, 16 T1/T2/T3 promotions, and 8 schema/systems
+/// adapters wired in the adapter-200 effort (see docs/planning/ADAPTER_200_ROADMAP.md).
 const ACTIVE_EXTS: &[&str] = &[
     // original 12
     "rs", "ts", "js", "py", "go", "swift", "kt", "vue", "svelte", "astro", "scss", "css",
     // T1/T2/T3 promotions
     "c", "cpp", "cs", "java", "php", "scala", "clj", "hs", "ex", "erl", "lua", "ml", "pl", "fs",
-    "rb", "dart",
+    "rb", "dart", "sql", "tf", "sol", "groovy", "jl", "r", "m", "zig",
 ];
 
 /// README/AGENTS/LANGUAGE_MATRIX document a fixed set of active language adapters.
-/// Lock the active set: every documented adapter resolves, the set has exactly 28
-/// distinct adapters, and languages that are explicitly unsupported (Julia, R) do
-/// NOT resolve to a built-in adapter (they fall back to the line scanner).
+/// Lock the active set: every documented adapter resolves, and README.md's declared
+/// count matches the 36 distinct adapters that resolve from the public registry.
 #[test]
 fn claim_active_adapter_set_matches_docs() {
     let reg = AdapterRegistry::default_registry();
@@ -53,14 +52,16 @@ fn claim_active_adapter_set_matches_docs() {
     }
     assert_eq!(
         names.len(),
-        28,
-        "expected 28 distinct active adapters, got {}: {:?}",
+        36,
+        "expected 36 distinct active adapters, got {}: {:?}",
         names.len(),
         names
     );
-    // T2 promotion: Julia and R were promoted to active built-in adapters.
-    assert!(reg.resolve(Path::new("probe.jl")).is_some());
-    assert!(reg.resolve(Path::new("probe.r")).is_some());
+    let readme = include_str!("../README.md");
+    assert!(
+        readme.contains("dedicated adapters for 36 languages/frameworks"),
+        "README adapter-count claim must match the active built-in registry"
+    );
 }
 
 /// AGENTS.md / README: structural = 0.5*event_density + 0.35*path_spread + 0.15*churn.
@@ -221,21 +222,21 @@ fn claim_confidence_weights() {
     }
 }
 
-/// Floor guard: the active set must never silently shrink below the documented 28.
+/// Floor guard: the active set must never silently shrink below the documented 36.
 #[test]
 fn claim_active_adapter_count_regression() {
     let reg = AdapterRegistry::default_registry();
     let probes = [
         "rs", "ts", "js", "py", "go", "swift", "kt", "vue", "svelte", "astro", "scss", "css", "c",
         "cpp", "cs", "java", "php", "scala", "clj", "hs", "ex", "erl", "lua", "ml", "pl", "fs",
-        "rb", "dart", "jl", "r",
+        "rb", "dart", "sql", "tf", "sol", "groovy", "jl", "r", "m", "zig",
     ];
     let active = probes
         .iter()
         .filter(|ext| reg.resolve(Path::new(&format!("probe.{ext}"))).is_some())
         .count();
     assert!(
-        active >= 28,
-        "fewer than 28 documented adapters resolve: {active}"
+        active >= 36,
+        "fewer than 36 documented adapters resolve: {active}"
     );
 }

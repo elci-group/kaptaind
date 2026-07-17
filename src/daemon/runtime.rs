@@ -21,6 +21,24 @@ fn warn_if_git_lock_exists(repo_path: &Path) {
     }
 }
 
+/// Percent-encode a value placed in the launch URL fragment. Fragments are
+/// never sent in the HTTP request, but configured tokens are not necessarily
+/// restricted to the generated hexadecimal format.
+fn encode_fragment_value(value: &str) -> String {
+    const HEX: &[u8; 16] = b"0123456789ABCDEF";
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(HEX[(byte >> 4) as usize] as char);
+            encoded.push(HEX[(byte & 0x0f) as usize] as char);
+        }
+    }
+    encoded
+}
+
 pub async fn start(config: Config) -> anyhow::Result<()> {
     // Local-user capability gate only — NOT network/HTTP auth. See `crate::rbac`.
     crate::rbac::check_permission(&config.rbac, "daemon.start")?;
@@ -122,7 +140,10 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
     let health_port = config.health_port;
     tokio::spawn(async move {
         if let Err(e) = start_health_server(health_port, health_state).await {
-            tracing::error!(port = health_port, error = %e, "health server failed to start");
+            // Health telemetry is an optional observability surface. The core
+            // watcher/scheduler remains safe to run when a sandbox or another
+            // local process prevents binding the configured loopback port.
+            tracing::warn!(port = health_port, error = %e, "health server unavailable");
         }
     });
 
@@ -137,8 +158,9 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
             }
         };
         eprintln!(
-            "kaptaind WebUI: http://127.0.0.1:{}/?token={}",
-            config.web_port, auth_token
+            "kaptaind WebUI: http://127.0.0.1:{}/#token={}",
+            config.web_port,
+            encode_fragment_value(&auth_token)
         );
         let web_state = WebState {
             repo_path: config.repo_path.clone(),

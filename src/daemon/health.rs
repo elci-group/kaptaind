@@ -17,6 +17,7 @@ use tokio_stream::wrappers::BroadcastStream;
 use tokio_stream::StreamExt;
 
 use crate::daemon::shark::SharkRuntime;
+use crate::daemon::status::{State as DaemonStatus, StatusReport};
 
 #[derive(Default)]
 pub struct Metrics {
@@ -52,6 +53,7 @@ pub async fn start_health_server(port: u16, state: HealthState) -> anyhow::Resul
 
     let app = Router::new()
         .route("/health", get(health_handler))
+        .route("/readyz", get(readiness_handler))
         .route("/metrics", get(metrics_handler))
         .route("/metrics/prometheus", get(prometheus_metrics_handler))
         .route("/events", get(events_handler))
@@ -78,6 +80,51 @@ async fn health_handler(State(state): State<HealthState>) -> Json<serde_json::Va
         "version": state.version,
         "shark": shark_info,
     }))
+}
+
+/// Reports whether the scheduler has written a usable, non-terminal status.
+///
+/// A health server can be listening before the scheduler is initialized, so
+/// `/health` intentionally only describes process liveness. Consumers that
+/// need to know whether this instance can process work should use `/readyz`.
+async fn readiness_handler(State(state): State<HealthState>) -> Response {
+    let (ready, reason) = readiness(&state.repo_path);
+    let status = if ready {
+        axum::http::StatusCode::OK
+    } else {
+        axum::http::StatusCode::SERVICE_UNAVAILABLE
+    };
+
+    (
+        status,
+        Json(json!({
+            "status": if ready { "ready" } else { "not_ready" },
+            "reason": reason,
+        })),
+    )
+        .into_response()
+}
+
+/// Returns a stable readiness decision from the atomically-written scheduler
+/// status file. Missing or malformed state fails closed: accepting traffic
+/// before the scheduler is ready would hide a failed daemon startup.
+fn readiness(repo_path: &std::path::Path) -> (bool, &'static str) {
+    let status_path = repo_path.join(".kaptaind").join("status.json");
+    let Ok(contents) = std::fs::read_to_string(status_path) else {
+        return (false, "status_unavailable");
+    };
+    let Ok(report) = serde_json::from_str::<StatusReport>(&contents) else {
+        return (false, "status_invalid");
+    };
+
+    match report.status {
+        DaemonStatus::Failed => (false, "scheduler_failed"),
+        DaemonStatus::Stopping | DaemonStatus::Stopped => (false, "scheduler_stopping"),
+        DaemonStatus::Idle
+        | DaemonStatus::Clustering
+        | DaemonStatus::Testing
+        | DaemonStatus::Committing => (true, "scheduler_ready"),
+    }
 }
 
 async fn metrics_handler(State(state): State<HealthState>) -> Json<serde_json::Value> {
@@ -169,6 +216,14 @@ fn render_prometheus_metrics(state: &HealthState) -> String {
         state.metrics.storage_cleaned_files.load(Ordering::Relaxed)
     ));
 
+    let (ready, _) = readiness(&state.repo_path);
+    lines.push(help_type(
+        "kaptaind_ready",
+        "Whether the scheduler is initialized and able to process work (1 ready, 0 not ready)",
+        "gauge",
+    ));
+    lines.push(format!("kaptaind_ready {}", u8::from(ready)));
+
     // Dynamic metrics read from on-disk state.
     let stability = crate::stability::engine::load(&state.repo_path).unwrap_or_default();
     lines.push(help_type(
@@ -228,6 +283,20 @@ async fn events_handler(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::daemon::status::write_status;
+    use chrono::Utc;
+    use tempfile::tempdir;
+
+    fn status_report(status: DaemonStatus) -> StatusReport {
+        StatusReport {
+            status,
+            last_version: Some("1.0.0".to_string()),
+            last_action_time: Utc::now(),
+            last_error: None,
+            current_task: None,
+            progress_percent: None,
+        }
+    }
 
     #[tokio::test]
     async fn health_handler_returns_ok() {
@@ -267,13 +336,52 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn readiness_handler_requires_a_running_scheduler() {
+        let repo = tempdir().unwrap();
+        let (tx, _rx) = broadcast::channel(1);
+        let state = HealthState {
+            version: "1.0.0".to_string(),
+            repo_path: repo.path().to_path_buf(),
+            metrics: Arc::new(Metrics::default()),
+            event_tx: tx,
+            shark: None,
+        };
+
+        let response = readiness_handler(State(state.clone())).await;
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+
+        write_status(repo.path(), &status_report(DaemonStatus::Idle));
+        let response = readiness_handler(State(state.clone())).await;
+        assert_eq!(response.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap()["reason"],
+            "scheduler_ready"
+        );
+
+        write_status(repo.path(), &status_report(DaemonStatus::Failed));
+        let response = readiness_handler(State(state)).await;
+        assert_eq!(
+            response.status(),
+            axum::http::StatusCode::SERVICE_UNAVAILABLE
+        );
+    }
+
+    #[tokio::test]
     async fn prometheus_metrics_handler_returns_text() {
+        let repo = tempdir().unwrap();
+        write_status(repo.path(), &status_report(DaemonStatus::Idle));
         let (tx, _rx) = broadcast::channel(1);
         let metrics = Arc::new(Metrics::default());
         metrics.clusters_processed.store(7, Ordering::Relaxed);
         let state = HealthState {
             version: "1.0.0".to_string(),
-            repo_path: std::env::temp_dir(),
+            repo_path: repo.path().to_path_buf(),
             metrics,
             event_tx: tx,
             shark: None,
@@ -287,5 +395,6 @@ mod tests {
         assert!(text.contains("kaptaind_clusters_processed_total 7"));
         assert!(text.contains("kaptaind_stability_score"));
         assert!(text.contains("kaptaind_version_info"));
+        assert!(text.contains("kaptaind_ready 1"));
     }
 }

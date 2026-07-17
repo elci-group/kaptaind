@@ -11,7 +11,7 @@
 //! - KIMI_CODE_API_KEY: For coding endpoint
 //! - KIMI_API_KEY: Fallback for any endpoint
 
-use crate::config::loader::InferenceConfig;
+use crate::config::loader::{EgressChannel, InferenceConfig};
 use std::time::Duration;
 
 use super::CommitContext;
@@ -310,6 +310,10 @@ pub async fn generate(
         tracing::warn!(endpoint = %base_url, "kimi base_url override in use; ensure it is trusted");
     }
     let url = format!("{}/chat/completions", base_url);
+    if let Err(err) = crate::compliance::enforce_egress_url(EgressChannel::Inference, &url) {
+        tracing::warn!(error = %err, endpoint = %base_url, "regional policy blocked kimi inference");
+        return None;
+    }
     if let Err(err) = crate::util::http::validate_inference_url(&url) {
         tracing::warn!(error = %err, endpoint = %base_url, "refusing unsafe kimi endpoint");
         return None;

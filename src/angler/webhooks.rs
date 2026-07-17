@@ -205,6 +205,19 @@ impl WebhookManager {
                 response_body: None,
             };
         }
+        if let Err(err) = crate::compliance::enforce_egress_url(
+            crate::config::loader::EgressChannel::Webhooks,
+            &endpoint.url,
+        ) {
+            return DeliveryResult {
+                success: false,
+                status_code: None,
+                attempts: 0,
+                duration_ms: start.elapsed().as_millis() as u64,
+                error: Some(format!("regional policy blocked webhook URL: {err}")),
+                response_body: None,
+            };
+        }
 
         // Build payload
         let payload = match self.build_payload(event) {
@@ -323,6 +336,11 @@ impl WebhookManager {
             errors.push("URL is required".to_string());
         } else if let Err(err) = crate::util::http::validate_outbound_url(&endpoint.url) {
             errors.push(format!("unsafe webhook URL: {err}"));
+        } else if let Err(err) = crate::compliance::enforce_egress_url(
+            crate::config::loader::EgressChannel::Webhooks,
+            &endpoint.url,
+        ) {
+            errors.push(format!("regional policy blocked webhook URL: {err}"));
         }
 
         // Validate ID
@@ -827,7 +845,11 @@ mod tests {
 
         let valid = WebhookEndpoint {
             id: "test".to_string(),
-            url: "https://example.com/webhook".to_string(),
+            // Use a public IP literal so URL policy validation remains
+            // deterministic and does not depend on DNS being available in
+            // the test environment. Production hostname validation still
+            // resolves DNS and applies the same SSRF checks.
+            url: "https://1.1.1.1/webhook".to_string(),
             events: vec![],
             headers: HashMap::new(),
             retry: None,

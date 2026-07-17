@@ -53,10 +53,10 @@ classified UNVERIFIABLE with the proof that would settle them.
 | **Total registered** | **35** |
 
 Headline: the engineering core is **honestly documented**. Every scoring/version/default/
-endpoint/security claim checked matched the code. The failures cluster almost entirely
-around **language-adapter breadth**: README claims "19 languages/frameworks" and lists
-Julia, R, Java, .NET, PHP, C++ as supported, while the active registry wires exactly
-**12** adapters. AGENTS.md and LANGUAGE_MATRIX.md say "12" — and they are correct.
+endpoint/security claim checked matched the code. The previously identified
+language-adapter breadth drift has been resolved: the active registry wires exactly
+**36** adapters, README documents that count and set, and `tests/claims_audit.rs` locks
+the README count to the registry.
 
 ---
 
@@ -88,23 +88,23 @@ Julia, R, Java, .NET, PHP, C++ as supported, while the active registry wires exa
 | V20 | Flaky-test detection (pass+fail in window) (`README.md:255-256`, `docs/ENTERPRISE_STRATEGY.md:71-74`) | `src/stability/engine.rs:109-129`; tests `:254-279` |
 | V21 | Adaptive clustering linear interpolation base→max at `burst_threshold` (`README.md:45/672`) | `src/cluster/engine.rs:109-131` |
 | V22 | Staging modes `all`/`cluster`/`pattern` (`README.md:489-492`, `AGENTS.md:173-176`) | commit orchestrator (per `AGENTS.md:173-176`) |
-| V23 | **12 active language adapters** (`AGENTS.md:157/200`, `README.md:46/339`, `LANGUAGE_MATRIX.md`) | `src/diff/lang/adapters/mod.rs:35-48`; test `claim_active_adapter_set_is_twelve` |
+| V23 | **36 active language adapters** (`README.md`, `LANGUAGE_MATRIX.md`) | `src/diff/lang/adapters/mod.rs:78-125`; test `claim_active_adapter_set_matches_docs` |
 
 ### FALSE (2)
 
 | ID | Claim (doc:line) | Reality / evidence |
 |----|------------------|--------------------|
-| F1 | "dedicated adapters for **19** languages/frameworks" (`README.md:34`) | Active registry wires **12** (`adapters/mod.rs:35-48`). Test `claim_active_adapter_set_is_twelve` proves `.java/.cs/.jl/.php/.cpp/.rb/.lua/.scala/.clj/.hs` do **not** resolve. |
-| F2 | Core (13) + Extended (7) list incl. **Julia** and **R** (`README.md:35-37`) | Julia and R have **no adapter at all** (not even an orphaned file). The named list is 20 entries while claiming 19 and delivering 12. |
+| F1 | Historical: README claimed **19** adapters while the registry exposed 12 | Resolved. The registry now exposes **36** adapters and README documents the same count; `claim_active_adapter_set_matches_docs` resolves one extension per adapter and asserts the README claim. |
+| F2 | Historical: README listed adapters absent from the active registry | Resolved. Julia and R are registered, alongside the other promoted adapters; the README list is organized by core, extended, and schema/systems coverage. |
 
 ### PARTIAL (5)
 
 | ID | Claim (doc:line) | Issue / evidence |
 |----|------------------|------------------|
 | F3 | Trawler "99% accuracy across **19 languages**" (`README.md:33/155`) | "19 languages" is reused for two different things (discovery types vs. diff adapters). Trawler has a `ProjectType` enum + confidence scoring (`src/trawler/`), but the exact variant count was not pinned here; the adapter reading (F1) is wrong. Count = **unverified**; the reuse is **misleading**. |
-| F4 | README says both "19" (`README.md:34`) and "12" (`README.md:46/339`) adapters | Internal inconsistency within the same file. |
+| F4 | Historical: README said both "19" and "12" adapters | Resolved. README now consistently describes 36 built-in adapters; LV-SCL wording no longer makes a stale adapter-count claim. |
 | F5 | "Edit the rules in `src/version/semver.rs`" / "src/version/semver.rs decides bumps" (`AGENTS.md:116/164`) | Path does **not exist**. Rules live in `crates/kaptaind-diff/src/version/semver.rs`; `src/version/mod.rs` is a thin delegating wrapper. Behavior claim (V3) is true; only the path is stale. |
-| F6 | Implied breadth from 28 files in `src/diff/lang/adapters/` | 28 adapter source files exist, but `adapters/mod.rs:1-16` declares only 15 adapter modules and `register_builtin_adapters` (`:35-48`) wires **12**. 13 files are uncompiled/orphaned (`c,clojure,cpp,csharp,elixir,erlang,haskell,java,lua,ocaml,perl,php,scala`); 3 are declared-but-unregistered (`dart,fsharp,ruby`). This is the root cause of the doc drift: breadth was written but not wired. |
+| F6 | Historical: adapter source files were orphaned from the registry | Resolved. `tests/adapter_registry_lint.rs` now enforces one registered adapter per adapter source file; the registry has 36 active built-ins. |
 | F7 | Project overall grade **S** / every feature **A+** (`docs/ENTERPRISE_STRATEGY.md:21-34`) | The underlying *features* are real (V15–V21 verified), so the implementation is solid; but "S = best-in-class" is a superlative not evidenced by any external benchmark, and the stricter stable-release lens graded the same surface lower. Opinion overstated as fact. |
 
 ### UNVERIFIABLE (5) — no in-repo benchmark; stated proof required
@@ -151,7 +151,7 @@ Tests (all passing):
 
 | Test | Locks |
 |------|-------|
-| `claim_active_adapter_set_is_twelve` | 12 documented adapters resolve; over-claimed languages do not |
+| `claim_active_adapter_set_matches_docs` | 36 documented adapters resolve and the README count matches the registry |
 | `claim_active_adapter_count_regression` | Active-set breadth floor (catches silent unwiring) |
 | `claim_structural_formula` | `0.5/0.35/0.15` structural constants |
 | `claim_weight_formula` | `s·a·d·r·b` weighted sum incl. bundle term |
@@ -193,22 +193,12 @@ Bias: a stable (9.7.16) just shipped, so **prefer doc-fix** where the code is co
 the claim overstates; reserve **code-fix** for cases where the claim reflects intended
 behavior and the change is low-risk.
 
-### F1 + F2 + F4 — README adapter breadth (doc-fix)
-- Problem: `README.md:34-37` claims 19 adapters and lists Julia/R (nonexistent) plus
-  Java/.NET/PHP/C++ as active; reality is 12.
-- Fix: replace `README.md:34-37` with the truthful set and stop double-using "19".
-  Suggested text:
-  > **Multi-language diff analysis** with dedicated adapters for 12 languages/frameworks:
-  > Rust, Go, Swift, Kotlin, TypeScript, JavaScript, Python, Vue, Svelte, Astro,
-  > SCSS/Sass/Less, and HTML/CSS. Framework detection covers React hooks (`useX`),
-  > Next.js/SvelteKit/Astro routes; design tokens cover Tailwind, theme files, and CSS
-  > custom properties. Additional languages are handled by the fallback line scanner
-  > (confidence 0.0) or via the plugin system.
-- Also correct `README.md:46` ("all 12 adapters" is right; keep it) and reconcile the
-  trawler "19 languages" phrasing (see F3) so the two "19"s are not conflated.
-- Regression guard: `claim_active_adapter_set_is_twelve` (already fails loudly if the
-  active set drifts from 12 or if any of `.java/.cs/.jl/...` starts resolving without a
-  doc update).
+### F1 + F2 + F4 — README adapter breadth (resolved)
+- The registry now contains 36 built-in adapters and README lists them in core,
+  extended, and schema/infrastructure/systems groups.
+- LV-SCL wording refers to built-in adapters rather than a stale fixed count.
+- Regression guard: `claim_active_adapter_set_matches_docs` resolves one extension for
+  each adapter and verifies the README's 36-adapter claim.
 
 ### F3 — Trawler "19 languages" (verify-then-align)
 - Problem: "19" is plausible for discovery *types* but is also attached to adapters.
@@ -224,20 +214,11 @@ behavior and the change is low-risk.
   `src/version/mod.rs` is the delegating wrapper. Two-line edit.
 - Regression guard: none needed (pure path fix); optionally a doc-link checker in CI.
 
-### F6 — Orphaned adapters (decision: doc-fix now; code-fix tracked)
-- Problem: 13 adapter files are uncompiled; 3 more are declared but not registered. This
-  is why breadth was over-claimed.
-- Option A (recommended now): doc-fix per F1 so docs describe the 12 active adapters;
-  open a tracked follow-up to either wire the orphan adapters into
-  `register_builtin_adapters` (with confidence entries in `src/diff/lang/mod.rs:9-20`
-  and LANGUAGE_MATRIX rows) or delete the dead files. Wiring is a larger, post-release
-  change and should land behind tests, not in a hotfix.
-- Option B (later, low-risk subset): register the already-declared `dart`, `fsharp`,
-  `ruby` (one-line each in `adapters/mod.rs`) and assign confidence in `lang/mod.rs`,
-  updating LANGUAGE_MATRIX to 15. Defer the 13 undeclared files until they are reviewed.
-- Regression guard: `claim_active_adapter_count_regression` + a test that asserts every
-  `adapters/*.rs` file is either declared+registered or explicitly allow-listed, so dead
-  adapters cannot silently accumulate.
+### F6 — Orphaned adapters (resolved)
+- The source modules are registered in `register_builtin_adapters`.
+- `tests/adapter_registry_lint.rs` enforces that registered adapters and adapter source
+  files remain one-to-one; `claim_active_adapter_count_regression` prevents a silent
+  drop below the documented 36.
 
 ### F7 — "S / A+" self-grade (doc-fix)
 - Problem: superlative grade stated as fact without external evidence.
@@ -262,11 +243,8 @@ behavior and the change is low-risk.
 ## 8. Bottom line
 
 The documentation is **largely faithful to the code**: the scoring, weighting,
-versioning, defaults, endpoints, and security/supply-chain features all check out and
-are now locked by `tests/claims_audit.rs`. The material defects are concentrated and
-fixable by documentation edits: README overstates language-adapter breadth (19/20 named
-vs. 12 active, including Julia/R that do not exist), reuses "19 languages" across two
-concepts, cites a stale `src/version/semver.rs` path, and ENTERPRISE_STRATEGY presents an
-"S" self-grade as fact. Five numeric/marketing claims (U1–U5) lack any in-repo
-benchmark and should be measured or softened before being treated as enterprise-grade
-guarantees.
+versioning, defaults, endpoints, security/supply-chain features, and active adapter
+registry are locked by regression tests. The prior adapter-count drift is resolved;
+remaining work includes the stale version-rule path and tempering unsupported marketing
+claims. Five numeric/marketing claims (U1–U5) still lack an in-repo benchmark and should
+be measured or softened before being treated as enterprise-grade guarantees.

@@ -1,4 +1,4 @@
-use crate::config::loader::InferenceConfig;
+use crate::config::loader::{EgressChannel, InferenceConfig};
 use std::time::Duration;
 
 pub use super::CommitContext;
@@ -103,6 +103,10 @@ pub async fn generate_with_model_and_prompt(
     };
 
     let url = format!("{}/api/chat", config.ollama_base_url);
+    if let Err(err) = crate::compliance::enforce_egress_url(EgressChannel::Inference, &url) {
+        tracing::warn!(error = %err, endpoint = %config.ollama_base_url, "regional policy blocked ollama inference");
+        return None;
+    }
     if let Err(err) = crate::util::http::validate_inference_url(&url) {
         tracing::warn!(error = %err, endpoint = %config.ollama_base_url, "refusing unsafe ollama endpoint");
         return None;

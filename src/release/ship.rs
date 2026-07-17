@@ -144,6 +144,96 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
         });
     }
 
+    // Enterprise release approval gate. A configured policy binds approval
+    // evidence to this exact policy revision and version before any build or
+    // distribution side effects occur. `--force` deliberately does not bypass
+    // this gate: emergency release authority must be recorded as policy-backed
+    // approval evidence, not an opaque CLI switch.
+    if let Some(policy_id) = config.policy_id.as_deref() {
+        let policy = crate::daemon::policy::Policy::load_with_trust(
+            &config.repo_path,
+            policy_id,
+            &config.policy_trust,
+            config.policy_keyring_path().as_deref(),
+        )?;
+        if config.governance.enforce_enterprise_controls {
+            let export = config.audit.export.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "enterprise governance audit export disappeared after configuration validation"
+                )
+            })?;
+            crate::audit::verify_export(&config.repo_path, export)
+                .context("enterprise audit export integrity gate failed")?;
+            policy.validate_enterprise_release_controls()?;
+        }
+        if policy.advisory_only {
+            crate::audit::log_event(
+                &config.repo_path,
+                "ship",
+                "release_advisory_only",
+                false,
+                serde_json::json!({"version": version, "policy_id": policy_id}),
+            );
+            anyhow::bail!(
+                "policy {policy_id:?} is advisory_only; Kaptaind may not ship this repository"
+            );
+        }
+        let required_evidence = policy.required_evidence_for_repo(&config.repo_path);
+        let evidence = crate::evidence::verify_required(
+            &config.repo_path,
+            &version,
+            &required_evidence,
+            policy.require_evidence_hmac,
+        )?;
+        policy.validate_evidence_freshness(&evidence)?;
+        if !evidence.is_empty() {
+            crate::audit::log_event(
+                &config.repo_path,
+                "ship",
+                "release_evidence",
+                true,
+                serde_json::json!({
+                    "version": version,
+                    "policy_id": policy_id,
+                    "evidence": evidence.iter().map(|record| serde_json::json!({"kind": record.kind, "source": record.source, "sha256": record.sha256})).collect::<Vec<_>>(),
+                }),
+            );
+        }
+        match crate::daemon::policy::verify_release_approval(
+            &config.repo_path,
+            policy_id,
+            &version,
+            policy.required_release_approvals,
+            policy.require_requester_approver_separation,
+            policy.require_approval_hmac,
+            policy.require_approval_commit_binding,
+        ) {
+            Ok(Some(approval)) => crate::audit::log_event(
+                &config.repo_path,
+                "ship",
+                "release_approval",
+                true,
+                serde_json::json!({
+                    "version": version,
+                    "policy_id": policy_id,
+                    "approvers": approval.approvers,
+                    "change_ticket": approval.change_ticket,
+                }),
+            ),
+            Ok(None) => {}
+            Err(error) => {
+                crate::audit::log_event(
+                    &config.repo_path,
+                    "ship",
+                    "release_approval",
+                    false,
+                    serde_json::json!({"version": version, "policy_id": policy_id, "reason": error.to_string()}),
+                );
+                return Err(error);
+            }
+        }
+    }
+
     // Qualification gate
     if opts.require_qualification && config.qualification.enabled && !opts.force {
         check_qualification(config)?;

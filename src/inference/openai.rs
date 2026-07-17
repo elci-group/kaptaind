@@ -1,3 +1,4 @@
+use crate::config::loader::EgressChannel;
 use crate::config::loader::InferenceConfig;
 use std::time::Duration;
 
@@ -39,6 +40,13 @@ pub async fn generate(
     ctx: &CommitContext<'_>,
     model: &str,
 ) -> Option<String> {
+    if let Err(error) = crate::compliance::enforce_egress_url(
+        EgressChannel::Inference,
+        "https://api.openai.com/v1/chat/completions",
+    ) {
+        tracing::warn!(%error, "regional policy blocked OpenAI inference");
+        return None;
+    }
     let api_key = match std::env::var("OPENAI_API_KEY") {
         Ok(key) => key,
         Err(_) => {

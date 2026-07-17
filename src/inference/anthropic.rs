@@ -1,3 +1,4 @@
+use crate::config::loader::EgressChannel;
 use crate::config::loader::InferenceConfig;
 use std::time::Duration;
 
@@ -35,6 +36,13 @@ pub async fn generate(
     ctx: &CommitContext<'_>,
     model: &str,
 ) -> Option<String> {
+    if let Err(error) = crate::compliance::enforce_egress_url(
+        EgressChannel::Inference,
+        "https://api.anthropic.com/v1/messages",
+    ) {
+        tracing::warn!(%error, "regional policy blocked Anthropic inference");
+        return None;
+    }
     let api_key = match std::env::var("ANTHROPIC_API_KEY") {
         Ok(key) => key,
         Err(_) => {

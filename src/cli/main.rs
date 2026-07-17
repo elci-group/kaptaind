@@ -766,13 +766,37 @@ Subcommands:
     tail     Show the last N entries
     stats    Counts by event_type/result and failure rate
     verify   Append-only ordering + optional hash-chain check
+    export-verify  Verify integrity linkage for the configured collector mirror
 
 Examples:
     kaptaind-cli audit tail -n 20
     kaptaind-cli audit stats
-    kaptaind-cli audit verify"#
+    kaptaind-cli audit verify
+    kaptaind-cli audit export-verify"#
     )]
     Audit(AuditCommand),
+
+    /// 🧾 Record hashed CI, scanner, ITSM, or domain evidence for a release
+    #[command(subcommand)]
+    Evidence(EvidenceCommand),
+
+    /// 🏛️ Assess enforced enterprise governance controls
+    Governance {
+        /// Output format: text (default) or json.
+        #[arg(short, long, value_name = "FORMAT", default_value = "text")]
+        format: String,
+    },
+
+    /// 🔌 List the governed enterprise connector catalogue and active configuration
+    Integrations {
+        /// Output format: text (default) or json.
+        #[arg(short, long, value_name = "FORMAT", default_value = "text")]
+        format: String,
+    },
+
+    /// 🌍 Observe environment lifecycle evidence; never performs deployments
+    #[command(subcommand)]
+    Environment(EnvironmentCommand),
 
     /// 🛰️  Probe the daemon's health/metrics/events endpoints
     #[command(
@@ -799,6 +823,64 @@ Notes:
     Reads the health port from config (default 9090)."#
     )]
     Probe(ProbeCommand),
+}
+
+#[derive(Subcommand)]
+enum EnvironmentCommand {
+    /// Show the latest known release fact for each environment
+    Status {
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
+    /// Explain risk from recorded rollout, health, rollback, and drift evidence
+    Risk {
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
+    /// Show immutable lifecycle records for one environment
+    History {
+        environment: String,
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
+    /// Compare the latest recorded version and configuration digest
+    Diff {
+        from: String,
+        to: String,
+        #[arg(short, long, default_value = "text")]
+        format: String,
+    },
+    /// Record an externally performed deployment or health observation
+    Record {
+        environment: String,
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        health: Option<String>,
+        #[arg(long)]
+        rollout_percent: Option<u8>,
+        #[arg(long)]
+        config_sha256: Option<String>,
+        #[arg(long)]
+        note: Option<String>,
+    },
+    /// Record a promotion request; deployment remains external
+    Promote {
+        from: String,
+        to: String,
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        adr: Option<String>,
+    },
+    /// Record a rollback decision; deployment remains external
+    Rollback {
+        environment: String,
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        adr: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1100,6 +1182,18 @@ Examples:
         /// Output format: text (default) or json.
         #[arg(long, value_name = "FORMAT", default_value = "text")]
         format: String,
+    },
+    /// Request an approval-gated release for the current VERSION.
+    RequestApproval {
+        /// Optional external change-ticket reference.
+        #[arg(long, value_name = "TICKET")]
+        ticket: Option<String>,
+    },
+    /// Approve a previously requested release.
+    Approve {
+        /// Version to approve (defaults to the current VERSION).
+        #[arg(long, value_name = "VERSION")]
+        version: Option<String>,
     },
     /// 📊 Show the last ship run and scheduled auto-releases
     #[command(long_about = r#"Purpose:
@@ -1694,6 +1788,27 @@ enum AuditCommand {
         #[arg(short, long, value_name = "FORMAT", default_value = "text")]
         format: String,
     },
+    /// 🔗 Verify the configured audit-export mirror against the local chain
+    ExportVerify {
+        /// Output format: text (default) or json.
+        #[arg(short, long, value_name = "FORMAT", default_value = "text")]
+        format: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum EvidenceCommand {
+    /// Record a local exported artifact as release evidence.
+    Record {
+        #[arg(long)]
+        version: String,
+        #[arg(long)]
+        kind: String,
+        #[arg(long)]
+        source: String,
+        #[arg(long)]
+        file: PathBuf,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1735,7 +1850,17 @@ async fn main() -> anyhow::Result<()> {
     // Init and Trawl commands work without a valid config
     match &cli.command {
         Commands::Init => {
-            let rbac_config = loader::load().map(|c| c.rbac).unwrap_or_default();
+            let rbac_config = loader::load()
+                .map(|config| {
+                    kaptaind::audit::configure_export(config.audit.export.clone());
+                    kaptaind::audit::configure_governance_context(
+                        config.governance.organization_id.clone(),
+                        config.governance.tenant_id.clone(),
+                    );
+                    kaptaind::compliance::configure(config.clone());
+                    config.rbac
+                })
+                .unwrap_or_default();
             kaptaind::rbac::check_permission(&rbac_config, "config.edit")?;
 
             let repo_path = cli
@@ -1763,7 +1888,17 @@ async fn main() -> anyhow::Result<()> {
             follow_links,
             expand_workspaces,
         } => {
-            let rbac_config = loader::load().map(|c| c.rbac).unwrap_or_default();
+            let rbac_config = loader::load()
+                .map(|config| {
+                    kaptaind::audit::configure_export(config.audit.export.clone());
+                    kaptaind::audit::configure_governance_context(
+                        config.governance.organization_id.clone(),
+                        config.governance.tenant_id.clone(),
+                    );
+                    kaptaind::compliance::configure(config.clone());
+                    config.rbac
+                })
+                .unwrap_or_default();
             kaptaind::rbac::check_permission(&rbac_config, "config.edit")?;
 
             let options = kaptaind::trawler::TrawlOptions {
@@ -1788,6 +1923,12 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let mut config = loader::load()?;
+    kaptaind::audit::configure_export(config.audit.export.clone());
+    kaptaind::audit::configure_governance_context(
+        config.governance.organization_id.clone(),
+        config.governance.tenant_id.clone(),
+    );
+    kaptaind::compliance::configure(config.clone());
 
     if let Some(repo_override) = cli.repo {
         config.repo_path = repo_override.canonicalize().unwrap_or(repo_override);
@@ -1907,9 +2048,82 @@ async fn main() -> anyhow::Result<()> {
                 }
                 AuditCommand::Stats { format } => (commands::audit::AuditAction::Stats, format),
                 AuditCommand::Verify { format } => (commands::audit::AuditAction::Verify, format),
+                AuditCommand::ExportVerify { format } => {
+                    (commands::audit::AuditAction::ExportVerify, format)
+                }
             };
             handle_audit(&config, &action, format)?;
         }
+        Commands::Evidence(EvidenceCommand::Record {
+            version,
+            kind,
+            source,
+            file,
+        }) => {
+            kaptaind::rbac::check_permission(&config.rbac, "ship.run")?;
+            commands::evidence::record(&config, version, kind, source, file)?;
+        }
+        Commands::Governance { format } => {
+            commands::governance::handle_governance_assess(&config, format)?;
+        }
+        Commands::Integrations { format } => {
+            commands::integrations::handle_integrations(&config, format)?;
+        }
+        Commands::Environment(command) => match command {
+            EnvironmentCommand::Status { format } => {
+                commands::environment::status(&config.repo_path, format)?;
+            }
+            EnvironmentCommand::Risk { format } => {
+                commands::environment::risk(&config.repo_path, format)?;
+            }
+            EnvironmentCommand::History {
+                environment,
+                format,
+            } => {
+                commands::environment::history(&config.repo_path, environment, format)?;
+            }
+            EnvironmentCommand::Diff { from, to, format } => {
+                commands::environment::diff(&config.repo_path, from, to, format)?;
+            }
+            EnvironmentCommand::Record {
+                environment,
+                version,
+                health,
+                rollout_percent,
+                config_sha256,
+                note,
+            } => {
+                commands::environment::record(
+                    &config.repo_path,
+                    environment,
+                    version,
+                    health.clone(),
+                    *rollout_percent,
+                    config_sha256.clone(),
+                    note.clone(),
+                )?;
+            }
+            EnvironmentCommand::Promote {
+                from,
+                to,
+                version,
+                adr,
+            } => {
+                commands::environment::promote(&config.repo_path, from, to, version, adr.clone())?;
+            }
+            EnvironmentCommand::Rollback {
+                environment,
+                version,
+                adr,
+            } => {
+                commands::environment::rollback(
+                    &config.repo_path,
+                    environment,
+                    version,
+                    adr.clone(),
+                )?;
+            }
+        },
         Commands::Probe(probe_cmd) => {
             let (action, format) = match probe_cmd {
                 ProbeCommand::Health { format } => (commands::probe::ProbeAction::Health, format),
@@ -1945,8 +2159,14 @@ async fn main() -> anyhow::Result<()> {
             handle_shark(&config, shark_cmd).await?;
         }
         Commands::Ship(ship_cmd) => {
-            if !matches!(ship_cmd, ShipCommand::Status { .. }) {
-                kaptaind::rbac::check_permission(&config.rbac, "ship.run")?;
+            match ship_cmd {
+                ShipCommand::Approve { .. } => {
+                    kaptaind::rbac::check_permission(&config.rbac, "ship.approve")?;
+                }
+                ShipCommand::Status { .. } => {}
+                _ => {
+                    kaptaind::rbac::check_permission(&config.rbac, "ship.run")?;
+                }
             }
             handle_ship(&config, ship_cmd).await?;
         }

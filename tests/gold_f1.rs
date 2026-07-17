@@ -46,6 +46,10 @@ struct Counts {
     fn_: usize,
 }
 
+const MIN_GOLD_LANGUAGES: usize = 36;
+const MIN_GOLD_SYMBOLS: usize = 161;
+const MIN_SEED_F1: f64 = 0.99;
+
 impl Counts {
     fn zero() -> Self {
         Self {
@@ -130,6 +134,48 @@ fn gold_seed_resolves_and_rust_baseline() {
         rust.tp,
         rust.fp,
         rust.fn_
+    );
+}
+
+/// CI regression gate for the hand-labelled seed.  The threshold deliberately
+/// applies to every labelled language, rather than extrapolating this small
+/// corpus into a claim about unlabelled adapters.  A label or fixture change
+/// that changes the seed's coverage must therefore be reviewed explicitly.
+#[test]
+fn gold_seed_quality_regression_guard() {
+    let per_lang = evaluate("labels.json");
+    assert!(
+        per_lang.len() >= MIN_GOLD_LANGUAGES,
+        "gold seed coverage regressed: expected at least {MIN_GOLD_LANGUAGES} labelled languages, got {}",
+        per_lang.len()
+    );
+
+    let mut total = Counts::zero();
+    for (lang, counts) in &per_lang {
+        let labelled = counts.tp + counts.fn_;
+        assert!(labelled > 0, "{lang}: gold seed has no labelled symbols");
+        assert!(
+            counts.f1() >= MIN_SEED_F1,
+            "{lang}: seed F1 regressed below {MIN_SEED_F1:.2}: {:.3} (tp={} fp={} fn={})",
+            counts.f1(),
+            counts.tp,
+            counts.fp,
+            counts.fn_
+        );
+        total.add(counts.tp, counts.fp, counts.fn_);
+    }
+    assert!(
+        total.tp + total.fn_ >= MIN_GOLD_SYMBOLS,
+        "gold seed coverage regressed: expected at least {MIN_GOLD_SYMBOLS} labelled symbols, got {}",
+        total.tp + total.fn_
+    );
+    assert!(
+        total.f1() >= MIN_SEED_F1,
+        "gold seed aggregate F1 regressed below {MIN_SEED_F1:.2}: {:.3} (tp={} fp={} fn={})",
+        total.f1(),
+        total.tp,
+        total.fp,
+        total.fn_
     );
 }
 

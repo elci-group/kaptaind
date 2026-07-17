@@ -1,5 +1,6 @@
 pub mod anthropic;
 pub mod consensus;
+pub mod cosine;
 pub mod kimi;
 pub mod ollama;
 pub mod openai;
@@ -25,6 +26,9 @@ pub struct CommitContext<'a> {
 
 /// Selects the active provider based on config + env vars.
 pub fn resolve_provider(config: &InferenceConfig) -> &str {
+    if config.uk_compliance_mode {
+        return "cosine";
+    }
     if config.provider != "auto" {
         return &config.provider;
     }
@@ -47,6 +51,7 @@ pub fn resolve_model<'a>(config: &'a InferenceConfig, provider: &str) -> &'a str
         return &config.model;
     }
     match provider {
+        "cosine" => config.cosine_model.as_str(),
         "anthropic" => "claude-haiku-4-5-20251001",
         "openai" => "gpt-4o-mini",
         _ => "llama3.2",
@@ -74,9 +79,26 @@ pub async fn generate_commit_message(
                 "anthropic" => anthropic::generate(config, ctx, model).await,
                 "openai" => openai::generate(config, ctx, model).await,
                 "kimi" => kimi::generate(config, ctx, model).await,
+                "cosine" => cosine::generate(config, ctx, model).await,
                 _ => ollama::generate(config, ctx, model).await,
             }
         }
         ValidationMode::Consensus => consensus::generate(config, ctx).await,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn uk_compliance_mode_always_routes_to_cosine() {
+        let config = InferenceConfig {
+            provider: "openai".to_string(),
+            uk_compliance_mode: true,
+            ..InferenceConfig::default()
+        };
+        assert_eq!(resolve_provider(&config), "cosine");
+        assert_eq!(resolve_model(&config, "cosine"), "lumen-outpost");
     }
 }

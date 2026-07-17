@@ -31,9 +31,10 @@ It eliminates manual version bumping and subjective commit messages by replacing
 - **Filesystem watcher:** Native, OS-level filesystem event watching using `notify`.
 - **Change clustering:** Automatically batches grouped sequences of fast file changes (default window: 5 seconds).
 - **Intelligent Project Discovery (Trawler):** Bulk-discover codebases across directory trees with 99% accuracy. Supports 19 languages with confidence-scored detection, monorepo awareness, and smart directory filtering.
-- **Multi-language diff analysis** with dedicated adapters for 19 languages/frameworks:
-  - **Core:** Rust, Go, Swift, Kotlin, Java, TypeScript, JavaScript, Python, Ruby, Elixir, PHP, .NET, C++
-  - **Extended:** Lua, Scala, Clojure, Haskell, Julia, R, Perl
+- **Multi-language diff analysis** with dedicated adapters for 36 languages/frameworks:
+  - **Core:** Rust, Go, Swift, Kotlin, TypeScript, JavaScript, Python, Vue, Svelte, Astro, SCSS/Sass/Less, HTML/CSS
+  - **Extended:** C, C++, C#, Java, PHP, Scala, Clojure, Haskell, Elixir, Erlang, Lua, OCaml, Perl, F#, Ruby, Dart
+  - **Schema, infrastructure, and systems:** SQL, Terraform/HCL, Solidity, Groovy, Julia, R, Objective-C, Zig
   - Framework detection: React hooks (`useX`), Next.js routes, SvelteKit routes, Astro, Vue, Svelte
   - Design tokens: Tailwind, theme files, CSS custom properties
 - **Intelligent Diff Scoring** across five dimensions:
@@ -43,7 +44,7 @@ It eliminates manual version bumping and subjective commit messages by replacing
   - *Runtime Impact:* Triggers high severity when deployment configs (`docker`, `k8s`, `.service`), web configs (`next.config.*`, `vite.config.*`, `vercel.json`, `tsconfig.*`), or mobile configs (`Info.plist`, `AndroidManifest.xml`, `*.xcconfig`) are modified.
   - *Bundle Size (opt-in):* Runs a configurable build command, measures output directory size, and scores based on delta from previous build.
 - **Adaptive Clustering:** Optionally expands the clustering window during bursts. When `adaptive = true`, the window interpolates linearly from `base_window` toward `max_window` as the event count approaches `burst_threshold`, giving burst protection without sacrificing normal responsiveness.
-- **Language Version Syntax Contextualization (LV-SCL):** Version-aware parsing for all 12 adapters with **confidence-based reliability scoring**. Language versions are detected from project manifests (`Cargo.toml` edition, `go.mod`, `.python-version`, `tsconfig.json` target, `package.json` engines, etc.) and cached with a 1-hour TTL. Version source is tracked (Runtime > Manifest > Inferred > Unknown) for adaptive confidence scoring. Version-specific syntax (Python 3.10+ `match`/`case`, Go 1.18+ generics, TypeScript 3.8+ `export type`, Svelte 5 runes) is recognized automatically. Per-file parse metadata (language, detected version, parser used, **confidence 0–1, version source**) is emitted into every analysis artifact.
+- **Language Version Syntax Contextualization (LV-SCL):** Version-aware parsing for built-in adapters with **confidence-based reliability scoring**. Language versions are detected from project manifests (`Cargo.toml` edition, `go.mod`, `.python-version`, `tsconfig.json` target, `package.json` engines, etc.) and cached with a 1-hour TTL. Version source is tracked (Runtime > Manifest > Inferred > Unknown) for adaptive confidence scoring. Version-specific syntax (Python 3.10+ `match`/`case`, Go 1.18+ generics, TypeScript 3.8+ `export type`, Svelte 5 runes) is recognized automatically where an adapter implements it. Per-file parse metadata (language, detected version, parser used, **confidence 0–1, version source**) is emitted into every analysis artifact.
 - **Plugin Architecture:** Extend kaptaind to any language with an external script or binary. Plugins use a simple JSON stdio protocol (`stdin: {"file":"<path>"}` → `stdout: {"symbols":[...]}`). Configure one or more plugin adapters under `[plugins]`. Plugins are loaded into the adapter registry alongside built-in adapters and receive the same cache, version detection, and scoring pipeline.
 - **Semantic Auto-versioning:**
   - **Major:** Automatically bumped on breaking API removals.
@@ -336,7 +337,7 @@ Kaptaind operates entirely in the background, minimizing developer friction whil
 4. **Analysis Pipeline (`src/diff/`)**: 
    Once a cluster window closes, the diff is scored across five engines:
    - *Structural (`text.rs`):* Counts raw path touches, path spread, and churn.
-   - *AST/API (`ast.rs` + `lang/`):* Language-aware adapters extract exported symbols for Rust, Go, Swift, Kotlin, TypeScript, JavaScript, Vue, Svelte, Astro, SCSS, HTML/CSS, and Python. A fallback line scanner handles unrecognized files.
+   - *AST/API (`ast.rs` + `lang/`):* Language-aware adapters extract exported symbols across the 36 built-in languages/frameworks listed above. A fallback line scanner handles unrecognized files.
    - *Dependencies (`api.rs`):* Parses `Cargo.toml`, `package.json`, `requirements.txt`; recognizes lock files for npm, Yarn, pnpm, Bun, Cargo, Poetry, CocoaPods, and Gradle.
    - *Runtime (`api.rs`):* Detects changes to deployment orchestration files (Docker, k8s, Helm), web framework configs (Next.js, Vite, Nuxt, Svelte, Astro, Tailwind, PostCSS, webpack), and mobile platform configs (Xcode, Gradle, Android).
    - *Bundle Size (`bundle.rs`, opt-in):* Runs a build command, measures output size, and scores the delta against the previous build.
@@ -470,6 +471,13 @@ rate_limit_seconds = 5
 
 # [audit]
 # enabled = true
+#
+# Optional local hand-off to an enterprise collector. The exported record is a
+# versioned envelope containing the event plus its primary audit-chain sequence
+# and SHA-256 linkage; it contains no collector credentials and performs no
+# network I/O.
+# [audit.export]
+# jsonl_path = "/var/log/kaptaind/audit-export.jsonl"
 ```
 
 #### Notification logo
@@ -517,6 +525,14 @@ timeout_secs = 15
 ollama_base_url = "http://localhost:11434"
 min_score_for_inference = 0.0  # Skip LLM when score is below this threshold
 
+# UK compliance mode: force all inference through your approved Cosine Lumen
+# Outpost deployment. Lumen is exposed by a controlled OpenAI-compatible
+# vLLM/SGLang endpoint; Kaptaind assumes no public Cosine API or data residency.
+# uk_compliance_mode = true
+# cosine_base_url = "https://lumen.example.uk/v1"
+# cosine_model = "lumen-outpost"
+# COSINE_API_KEY may be supplied through the environment when required.
+
 # Kimi-specific overrides
 # kimi_endpoint = "global"      # "global", "china", "coding", or omit for auto
 # kimi_model = "kimi-k2.5"
@@ -559,6 +575,166 @@ cron_timezone = "local"
 
 ### Security
 
+Regional egress controls and the operational compliance checklist are in
+[docs/COMPLIANCE.md](docs/COMPLIANCE.md). They fail closed for enabled
+inference and webhooks when a regional profile is selected.
+
+The enterprise connector catalogue—covering AWS, Google Cloud/Drive,
+Microsoft 365, Slack, WhatsApp Business, Docker, Kubernetes, Hetzner,
+monday.com and adjacent ITSM/GitOps products—is documented in
+[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md). Connectors are disabled by
+default, use external secret references, inherit regional egress controls, and
+require signed-policy grants for any mutating capability.
+
+For protected releases, a repository policy can require independent approval
+evidence before `ship` performs any build or distribution work:
+
+```json
+{
+  "required_release_approvals": 2,
+  "require_requester_approver_separation": true,
+  "require_approval_hmac": true,
+  "require_approval_commit_binding": true,
+  "approval_validity_hours": 24,
+  "require_evidence_expiry": true,
+  "evidence_validity_hours": 24,
+  "require_evidence_hmac": true,
+  "advisory_only": false
+}
+```
+
+Save that as `.kaptaind/policies/production.json`, set `policy_id = "production"`,
+then provide `.kaptaind/approvals/<version>.json` with a matching policy SHA-256
+and two distinct approvers. When separation is enabled, the approval record
+must also name the requester and that requester cannot be an approver. An
+`advisory_only` policy blocks Kaptaind shipment entirely. This is fail-closed
+and is intended for CI or an approved external workflow to generate; it does
+not replace enterprise identity or change-management integration.
+
+`require_approval_hmac` authenticates the complete approval record with the
+`KAPTAIND_APPROVAL_HMAC_KEY` secret and fails closed if the secret or signature
+is unavailable. `require_approval_commit_binding` records the Git commit at
+request time and rejects the approval when `HEAD` has changed. Request and
+approve records through `kaptaind-cli ship request-approval --ticket CHG-123`
+and `kaptaind-cli ship approve`; grant `ship.approve` only to independent
+release approvers. Store the HMAC key in a secret manager or CI secret—not in
+`kaptaind.toml` or the repository.
+`approval_validity_hours` adds an HMAC-protected expiry to every new request;
+the enforced enterprise posture accepts values from 1 to 168 hours.
+`require_evidence_expiry` with `evidence_validity_hours` applies the same
+bounded-validity model to CI, scanner, ITSM, and domain evidence; releases
+reject missing, expired, future-dated, or stale records.
+`require_evidence_hmac` additionally authenticates the stored evidence
+metadata with `KAPTAIND_EVIDENCE_HMAC_KEY`; this prevents a filesystem writer
+from substituting a digest, provenance, or validity interval without the
+customer-managed CI/evidence secret. Keep that key separate from the approval
+key and rotate both in the secret manager.
+
+Policies can require provider-neutral evidence categories before shipping, for
+example `"required_evidence": ["ci_attestation", "sarif", "change_ticket"]`.
+Store metadata under `.kaptaind/evidence/<version>/<kind>.json`; Kaptaind logs
+the source and digest, not raw CI, scanner, or ticket payloads.
+Use `kaptaind-cli evidence record --version <version> --kind sarif --source
+ci --file results.sarif` to create the metadata from an externally produced
+artifact. Domain gates can additionally require `terraform_plan`,
+`kubernetes_validation`, `database_migration_review`, `openapi_compatibility`,
+or `protobuf_compatibility` only when the matching repository assets exist.
+
+For audit evidence, `kaptaind-cli audit verify` validates the local
+system-of-record chain. When `[audit.export]` is configured,
+`kaptaind-cli audit export-verify` proves that every collector-facing record
+has the matching event, sequence, predecessor hash, and entry digest. Forward
+that JSONL file with a customer-managed collector to the organisation's SIEM
+or immutable archive; Kaptaind does not claim that a writable local mirror is
+WORM storage. In enforced enterprise mode, a stale, missing, or tampered
+collector mirror blocks daemon clusters and releases; an empty new repository
+is allowed to establish its first paired audit records.
+
+For the enforced enterprise posture, configure a signed policy, independent
+audit hand-off, and scoped governance identity together:
+
+```toml
+[governance]
+organization_id = "acme"
+tenant_id = "payments"
+enforce_enterprise_controls = true
+
+[rbac]
+enabled = true
+
+# Enterprise mode only executes an explicitly reviewed configuration, and
+# never skips the mandatory test gate (including documentation-only clusters).
+[trust]
+execution = "trusted"
+
+[test]
+command = "cargo test --workspace"
+required = true
+command_on = "always"
+
+[commit]
+sign = true
+
+# Required whenever automated pushes are enabled.
+[push]
+enabled = true
+[push.protection]
+require_ci_pass = true
+required_status_checks = ["ci/test", "ci/security"]
+
+# Required whenever Kaptaind ships releases.
+[ship]
+enabled = true
+require_qualification = true
+sign = true
+[ship.sbom]
+enabled = true
+[ship.provenance]
+enabled = true
+
+[policy_trust]
+require_signature = true
+gpgv_keyring = "/etc/kaptaind/policy-keys.gpg"
+
+[identity]
+mode = "gpg_signed_assertion"
+gpgv_keyring = "/etc/kaptaind/identity-keys.gpg"
+assertion_path = "/run/kaptaind/actor.json"
+replay_dir = "/var/lib/kaptaind/identity-replay"
+issuer = "https://id.example.com"
+audience = "kaptaind"
+max_assertion_age_seconds = 900
+
+[audit.export]
+jsonl_path = "/var/log/kaptaind/audit-export.jsonl"
+```
+
+This posture rejects unsigned policy packs and requires the loaded policy to
+enforce at least two distinct approvers, requester/approver separation, HMAC
+protection, candidate-commit binding, and explicit or domain evidence gates.
+It also requires reviewed execution authority, an always-on mandatory test
+gate, signed automated commits, CI-protected pushes, and—when shipping is
+enabled—qualification, signed artifacts, an SBOM, and provenance. These are
+configuration attestations: protect the GPG and CI credentials with the
+customer's key management and build-platform controls.
+It is not a substitute for an IdP, SIEM, or immutable storage service; those
+remain customer-managed systems connected through the authenticated actor and
+collector boundaries.
+
+An identity assertion is JSON signed as a detached `actor.json.asc` file by a
+customer-managed IdP or CI identity broker. It must contain `jti`, `subject`,
+`issuer`, `audience`, `issued_at`, and `expires_at`; Kaptaind verifies the
+signature with `gpgv`, requires the configured issuer/audience, rejects
+expired or future-dated assertions, limits their lifetime, and atomically
+consumes each assertion ID in `replay_dir`. The assertion is an approval
+identity boundary, while local OS RBAC remains a separate execution-access
+control.
+
+Run `kaptaind-cli governance assess --format json` in CI or before a protected
+release to attest the active enterprise posture. It fails closed unless the
+configuration, signed release policy, audit chain, and collector mirror all
+verify; its output is designed to be retained as audit evidence.
+
 Capability flags, commit signing, and role-based access control for locked-down environments.
 
 ```toml
@@ -568,6 +744,12 @@ network_webhooks = true
 network_inference = true
 bundle_scoring = true
 external_plugins = true
+
+# A cloned or otherwise unreviewed repository config is data, not authority
+# to launch local programs. This mode permits inspection but rejects configured
+# hooks, plugins, baits, builds, and bundle commands until explicitly trusted.
+[trust]
+execution = "untrusted" # default: "trusted" for backwards compatibility
 
 [commit]
 # sign = false

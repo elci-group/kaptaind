@@ -1,7 +1,9 @@
 use crate::angler::config::AnglerConfig;
 use crate::notify::audio::TtsConfig;
 use crate::qualification::policy::QualificationConfig;
+use reqwest::Url;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -60,9 +62,15 @@ pub struct Config {
     #[serde(default)]
     pub rbac: RbacConfig,
     #[serde(default)]
+    pub identity: IdentityConfig,
+    #[serde(default)]
     pub repo_path: PathBuf,
     #[serde(default)]
     pub policy_id: Option<String>,
+    #[serde(default)]
+    pub policy_trust: PolicyTrustConfig,
+    #[serde(default)]
+    pub governance: GovernanceConfig,
     #[serde(default = "default_prune_interval_minutes")]
     pub prune_interval_minutes: u64,
     #[serde(default = "default_retention_days")]
@@ -78,6 +86,12 @@ pub struct Config {
     pub web: WebConfig,
     #[serde(default)]
     pub capabilities: CapabilitiesConfig,
+    #[serde(default)]
+    pub trust: TrustConfig,
+    #[serde(default)]
+    pub compliance: ComplianceConfig,
+    #[serde(default)]
+    pub integrations: IntegrationsConfig,
     #[serde(default)]
     pub strict_shell_validation: bool,
     #[serde(default)]
@@ -159,11 +173,17 @@ pub struct AuditConfig {
     /// Whether to write structured audit logs to `.kaptaind/audit.jsonl`.
     #[serde(default = "default_true")]
     pub enabled: bool,
+    /// Optional enterprise-controlled JSONL mirror for audit events.
+    #[serde(default)]
+    pub export: Option<crate::audit::AuditExportConfig>,
 }
 
 impl Default for AuditConfig {
     fn default() -> Self {
-        Self { enabled: true }
+        Self {
+            enabled: true,
+            export: None,
+        }
     }
 }
 
@@ -865,7 +885,7 @@ fn default_min_commit_interval() -> Duration {
 }
 
 /// When to run the test hook for a cluster.
-#[derive(Debug, Clone, Default, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum TestCommandOn {
     /// Run the test hook for every cluster.
@@ -953,7 +973,7 @@ impl Default for NotifyConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct CapabilitiesConfig {
     #[serde(default = "default_true")]
     pub network_push: bool,
@@ -965,6 +985,156 @@ pub struct CapabilitiesConfig {
     pub bundle_scoring: bool,
     #[serde(default = "default_true")]
     pub external_plugins: bool,
+    /// Permit network-connected enterprise integrations. Disable this in
+    /// inspection, air-gapped, or explicitly isolated deployments.
+    #[serde(default = "default_true")]
+    pub network_integrations: bool,
+}
+
+impl Default for CapabilitiesConfig {
+    fn default() -> Self {
+        Self {
+            network_push: true,
+            network_webhooks: true,
+            network_inference: true,
+            bundle_scoring: true,
+            external_plugins: true,
+            network_integrations: true,
+        }
+    }
+}
+
+/// `[integrations]` declares provider connectors without embedding provider
+/// secrets. Each connector identifies an externally managed secret reference.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct IntegrationsConfig {
+    #[serde(default)]
+    pub connectors: Vec<crate::integrations::ConnectorConfig>,
+}
+
+// ---------------------------------------------------------------------------
+// Regional compliance and data-egress policy
+// ---------------------------------------------------------------------------
+
+/// Regional governance profiles. Profiles are additive: when several are
+/// selected, the most restrictive egress rule applies. Selecting no profile is
+/// deliberately backwards compatible and does not change existing behaviour.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
+#[serde(rename_all = "snake_case")]
+pub enum RegionalProfile {
+    EuEea,
+    Uk,
+    UsCalifornia,
+    Canada,
+    Brazil,
+    India,
+    Japan,
+    China,
+    /// Customer-controlled/local deployment with no external data egress.
+    Sovereign,
+}
+
+/// How a category of repository-derived data may leave Kaptaind.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum EgressPolicy {
+    /// Preserve historical behaviour. Use only with no regional profile.
+    #[default]
+    Allow,
+    /// Permit only destinations named in `allowed_hosts`.
+    ApprovedOnly,
+    /// Refuse this category of egress.
+    Deny,
+}
+
+/// Categories of outbound repository-derived data. Kept public so transport
+/// call sites can enforce the same policy after config validation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EgressChannel {
+    Inference,
+    Webhooks,
+    Integrations,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DataEgressConfig {
+    #[serde(default)]
+    pub inference: EgressPolicy,
+    #[serde(default)]
+    pub webhooks: EgressPolicy,
+    #[serde(default)]
+    pub integrations: EgressPolicy,
+    /// Audit export is currently a local JSONL file sink. `local_only` keeps
+    /// it under `repo_path`; `deny` rejects configured mirrors entirely.
+    #[serde(default)]
+    pub audit_export: AuditEgressPolicy,
+    /// Exact DNS host names approved for inference and webhook egress.
+    /// Entries are compared case-insensitively; wildcards are intentionally
+    /// unsupported so a profile cannot accidentally approve a whole domain.
+    #[serde(default)]
+    pub allowed_hosts: BTreeSet<String>,
+}
+
+impl Default for DataEgressConfig {
+    fn default() -> Self {
+        Self {
+            inference: EgressPolicy::Allow,
+            webhooks: EgressPolicy::Allow,
+            integrations: EgressPolicy::Allow,
+            audit_export: AuditEgressPolicy::Allow,
+            allowed_hosts: BTreeSet::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum AuditEgressPolicy {
+    #[default]
+    Allow,
+    LocalOnly,
+    Deny,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct ComplianceConfig {
+    /// Additive regional governance profiles. Empty means no profile selected.
+    #[serde(default)]
+    pub profiles: BTreeSet<RegionalProfile>,
+    #[serde(default)]
+    pub egress: DataEgressConfig,
+}
+
+// ---------------------------------------------------------------------------
+// Configuration trust boundary
+// ---------------------------------------------------------------------------
+
+/// `[trust]` block: whether this configuration is allowed to launch programs.
+///
+/// Kaptaind configuration can name test hooks, notification hooks, bundle
+/// commands, language-adapter plugins, and Angler bait/hook programs. Treat a
+/// configuration obtained from an unreviewed repository as data, not authority
+/// to execute those programs. Existing installations retain the historical
+/// default (`trusted`) so upgrading does not silently disable their automation.
+#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ExecutionTrust {
+    /// Permit configured program execution. This is the compatibility default.
+    #[default]
+    Trusted,
+    /// Refuse configuration entries that can execute a local program.
+    Untrusted,
+}
+
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct TrustConfig {
+    /// Execution authority for commands declared in this configuration.
+    ///
+    /// Set `execution = "untrusted"` before inspecting a configuration from a
+    /// cloned or otherwise unreviewed repository. After review, explicitly set
+    /// `execution = "trusted"` to enable its hooks and plugins.
+    #[serde(default)]
+    pub execution: ExecutionTrust,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -1108,6 +1278,18 @@ pub struct InferenceConfig {
     /// Enable extended context mode for K2.5 (up to 2M tokens)
     #[serde(default)]
     pub kimi_extended_context: bool,
+    /// Route inference only through a configured Cosine Lumen endpoint. This
+    /// is intended for UK-controlled deployments; Kaptaind cannot itself
+    /// attest to the endpoint's residency or contractual compliance.
+    #[serde(default)]
+    pub uk_compliance_mode: bool,
+    /// OpenAI-compatible base URL for a controlled Cosine Lumen Outpost
+    /// deployment (for example vLLM or SGLang). No public default is assumed.
+    #[serde(default)]
+    pub cosine_base_url: Option<String>,
+    /// Model name exposed by the controlled Cosine endpoint.
+    #[serde(default = "default_cosine_model")]
+    pub cosine_model: String,
 }
 
 fn default_inference_provider() -> String {
@@ -1138,6 +1320,10 @@ fn default_consensus_min_agreement() -> usize {
     2
 }
 
+fn default_cosine_model() -> String {
+    "lumen-outpost".to_string()
+}
+
 impl Default for InferenceConfig {
     fn default() -> Self {
         Self {
@@ -1156,6 +1342,9 @@ impl Default for InferenceConfig {
             kimi_model: String::new(),
             kimi_thinking: false,
             kimi_extended_context: false,
+            uk_compliance_mode: false,
+            cosine_base_url: None,
+            cosine_model: default_cosine_model(),
         }
     }
 }
@@ -1441,7 +1630,229 @@ pub struct RbacRoleConfig {
     pub groups: Vec<String>,
 }
 
+/// `[policy_trust]` controls verification of repository policy packs.
+///
+/// Production deployments should require detached GPG signatures from a
+/// dedicated, offline-managed policy signing key. The compatibility default
+/// preserves existing unsigned local policy files until an operator opts in.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct PolicyTrustConfig {
+    #[serde(default)]
+    pub require_signature: bool,
+    /// Keyring accepted by `gpgv`; relative paths resolve under `repo_path`.
+    #[serde(default)]
+    pub gpgv_keyring: Option<PathBuf>,
+}
+
+/// `[identity]` selects the identity evidence used for protected approval
+/// actions. `gpg_signed_assertion` accepts a short-lived, detached-signature
+/// assertion emitted by an IdP or CI identity broker.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum IdentityMode {
+    #[default]
+    OperatingSystem,
+    GpgSignedAssertion,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct IdentityConfig {
+    #[serde(default)]
+    pub mode: IdentityMode,
+    #[serde(default)]
+    pub gpgv_keyring: Option<PathBuf>,
+    #[serde(default)]
+    pub assertion_path: Option<PathBuf>,
+    /// Durable directory used to reject replayed signed assertion IDs.
+    #[serde(default = "default_identity_replay_dir")]
+    pub replay_dir: PathBuf,
+    #[serde(default)]
+    pub issuer: Option<String>,
+    #[serde(default)]
+    pub audience: Option<String>,
+    #[serde(default = "default_identity_assertion_age_seconds")]
+    pub max_assertion_age_seconds: u64,
+}
+
+fn default_identity_assertion_age_seconds() -> u64 {
+    900
+}
+
+fn default_identity_replay_dir() -> PathBuf {
+    PathBuf::from(".kaptaind/identity/replay")
+}
+
+impl Default for IdentityConfig {
+    fn default() -> Self {
+        Self {
+            mode: IdentityMode::OperatingSystem,
+            gpgv_keyring: None,
+            assertion_path: None,
+            replay_dir: default_identity_replay_dir(),
+            issuer: None,
+            audience: None,
+            max_assertion_age_seconds: default_identity_assertion_age_seconds(),
+        }
+    }
+}
+
+/// `[governance]` declares an organization/tenant scope and can enforce the
+/// minimum controls needed for governed enterprise operation.
+#[derive(Debug, Clone, Deserialize, Default)]
+pub struct GovernanceConfig {
+    /// Stable organization identifier used in policy and audit correlation.
+    #[serde(default)]
+    pub organization_id: Option<String>,
+    /// Stable tenant or business-unit identifier within the organization.
+    #[serde(default)]
+    pub tenant_id: Option<String>,
+    /// When true, fail configuration validation unless RBAC and signed policy
+    /// packs are enabled. This turns governance into an explicit posture,
+    /// rather than a collection of optional conventions.
+    #[serde(default)]
+    pub enforce_enterprise_controls: bool,
+}
+
 impl Config {
+    fn validate_governance_identifier(name: &str, value: &str) -> anyhow::Result<()> {
+        let valid = !value.is_empty()
+            && value.len() <= 64
+            && value.chars().all(|character| {
+                character.is_ascii_alphanumeric() || character == '_' || character == '-'
+            });
+        if !valid {
+            anyhow::bail!("governance.{name} must be 1-64 ASCII letters, digits, '_' or '-'");
+        }
+        Ok(())
+    }
+
+    fn validate_governance(&self) -> anyhow::Result<()> {
+        if let Some(id) = &self.governance.organization_id {
+            Self::validate_governance_identifier("organization_id", id)?;
+        }
+        if let Some(id) = &self.governance.tenant_id {
+            Self::validate_governance_identifier("tenant_id", id)?;
+        }
+        if self.governance.enforce_enterprise_controls {
+            if self.governance.organization_id.is_none() || self.governance.tenant_id.is_none() {
+                anyhow::bail!("enterprise governance requires organization_id and tenant_id");
+            }
+            if !self.rbac.enabled {
+                anyhow::bail!("enterprise governance requires [rbac].enabled = true");
+            }
+            if !self.audit.enabled {
+                anyhow::bail!("enterprise governance requires [audit].enabled = true");
+            }
+            if self.trust.execution != ExecutionTrust::Trusted {
+                anyhow::bail!(
+                    "enterprise governance requires [trust].execution = \"trusted\" after configuration review"
+                );
+            }
+            if !self.test.required
+                || self
+                    .test
+                    .command
+                    .as_deref()
+                    .is_none_or(|command| command.trim().is_empty())
+                || self.test.command_on != TestCommandOn::Always
+            {
+                anyhow::bail!(
+                    "enterprise governance requires a non-empty mandatory test.command with test.command_on = \"always\""
+                );
+            }
+            if !self.commit.sign {
+                anyhow::bail!("enterprise governance requires [commit].sign = true");
+            }
+            if self.push.enabled
+                && (!self.push.protection.require_ci_pass
+                    || self.push.protection.required_status_checks.is_empty())
+            {
+                anyhow::bail!(
+                    "enterprise governance requires CI-protected pushes with required status checks"
+                );
+            }
+            if self.ship.enabled
+                && (!self.ship.require_qualification
+                    || !self.ship.sign
+                    || !self.ship.sbom.enabled
+                    || !self.ship.provenance.enabled)
+            {
+                anyhow::bail!(
+                    "enterprise governance requires qualified, signed releases with SBOM and provenance"
+                );
+            }
+            if self.policy_id.is_none() {
+                anyhow::bail!("enterprise governance requires policy_id");
+            }
+            if !self.policy_trust.require_signature || self.policy_keyring_path().is_none() {
+                anyhow::bail!("enterprise governance requires signed policy packs and policy_trust.gpgv_keyring");
+            }
+            if self.identity.mode != IdentityMode::GpgSignedAssertion
+                || self.identity_keyring_path().is_none()
+                || self.identity_assertion_path().is_none()
+                || self.identity.replay_dir.as_os_str().is_empty()
+                || self.identity.issuer.as_deref().is_none_or(str::is_empty)
+                || self.identity.audience.as_deref().is_none_or(str::is_empty)
+                || !(60..=3600).contains(&self.identity.max_assertion_age_seconds)
+            {
+                anyhow::bail!("enterprise governance requires a 60-3600 second gpg_signed_assertion identity configuration with keyring, assertion path, issuer, and audience");
+            }
+            let export_path = self
+                .audit
+                .export
+                .as_ref()
+                .and_then(|export| export.jsonl_path.as_ref())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "enterprise governance requires an independent [audit.export].jsonl_path"
+                    )
+                })?;
+            if export_path == &crate::audit::default_path(&self.repo_path) {
+                anyhow::bail!(
+                    "enterprise governance audit export must not reuse the primary audit path"
+                );
+            }
+            crate::audit::verify_chain(&self.repo_path).map_err(|error| {
+                anyhow::anyhow!("enterprise governance rejected audit integrity state: {error}")
+            })?;
+        }
+        Ok(())
+    }
+
+    pub fn policy_keyring_path(&self) -> Option<PathBuf> {
+        self.policy_trust.gpgv_keyring.as_ref().map(|path| {
+            if path.is_absolute() {
+                path.clone()
+            } else {
+                self.repo_path.join(path)
+            }
+        })
+    }
+    pub fn identity_keyring_path(&self) -> Option<PathBuf> {
+        self.identity.gpgv_keyring.as_ref().map(|path| {
+            if path.is_absolute() {
+                path.clone()
+            } else {
+                self.repo_path.join(path)
+            }
+        })
+    }
+    pub fn identity_assertion_path(&self) -> Option<PathBuf> {
+        self.identity.assertion_path.as_ref().map(|path| {
+            if path.is_absolute() {
+                path.clone()
+            } else {
+                self.repo_path.join(path)
+            }
+        })
+    }
+    pub fn identity_replay_dir(&self) -> PathBuf {
+        if self.identity.replay_dir.is_absolute() {
+            self.identity.replay_dir.clone()
+        } else {
+            self.repo_path.join(&self.identity.replay_dir)
+        }
+    }
     /// Resolve the shark arbiter path relative to the repo root.
     pub fn shark_arbiter_path(&self) -> PathBuf {
         if self.shark.arbiter_path.is_absolute() {
@@ -1457,6 +1868,86 @@ impl Config {
             .instance_id
             .clone()
             .unwrap_or_else(default_instance_id)
+    }
+
+    /// Returns the configuration fields that would launch a local program.
+    ///
+    /// Callers that accept configuration from an unreviewed source can use
+    /// this to present a review prompt before opting into
+    /// `[trust].execution = "trusted"`.
+    pub fn execution_trust_violations(&self) -> Vec<&'static str> {
+        if self.trust.execution == ExecutionTrust::Trusted {
+            return Vec::new();
+        }
+
+        let mut violations = Vec::new();
+        if self.test.command.is_some() {
+            violations.push("test.command");
+        }
+        if self.bundle.command.is_some() {
+            violations.push("bundle.command");
+        }
+        if self.build.command.is_some() {
+            violations.push("build.command");
+        }
+        if self.push.pre_push.enabled && self.push.pre_push.command.is_some() {
+            violations.push("push.pre_push.command");
+        }
+        if !self.plugins.adapters.is_empty() {
+            violations.push("plugins.adapters");
+        }
+
+        let notification_hooks = [
+            self.notify.on_commit.as_ref(),
+            self.notify.on_error.as_ref(),
+            self.notify.on_push.as_ref(),
+            self.notify.on_start.as_ref(),
+            self.notify.on_shutdown.as_ref(),
+            self.notify.on_release.as_ref(),
+            self.notify.on_qualification.as_ref(),
+            self.notify.on_pulse.as_ref(),
+            self.notify.on_flaky_tests.as_ref(),
+        ];
+        if notification_hooks.iter().any(Option::is_some) {
+            violations.push("notify.on_*");
+        }
+
+        let hooks = &self.angler.git_hooks;
+        if hooks.enabled
+            && (hooks.pre_commit.is_some()
+                || hooks.prepare_commit_msg.is_some()
+                || hooks.commit_msg.is_some()
+                || hooks.post_commit.is_some()
+                || hooks.pre_push.is_some()
+                || hooks.post_push.is_some()
+                || hooks.post_checkout.is_some()
+                || hooks.post_merge.is_some()
+                || !hooks.custom.is_empty())
+        {
+            violations.push("angler.git_hooks");
+        }
+        if self.angler.bait.enabled
+            && (self.angler.bait.auto_discover || !self.angler.bait.baits.is_empty())
+        {
+            violations.push("angler.bait");
+        }
+
+        violations
+    }
+
+    /// Fails closed when an untrusted configuration tries to authorize program
+    /// execution. This is intentionally separate from TOML parsing so status
+    /// and review tools can inspect an untrusted configuration without running
+    /// anything; daemon/automation entry points must call `validate()` first.
+    pub fn validate_execution_trust(&self) -> anyhow::Result<()> {
+        let violations = self.execution_trust_violations();
+        if !violations.is_empty() {
+            anyhow::bail!(
+                "untrusted configuration cannot enable program execution ({}) — review the configuration and set [trust].execution = \"trusted\" to opt in",
+                violations.join(", ")
+            );
+        }
+        Ok(())
     }
 }
 
@@ -1477,10 +1968,235 @@ fn gpg_available() -> bool {
 }
 
 impl Config {
+    /// Return whether a configured regional policy permits an outbound URL for
+    /// a particular data channel. Runtime transport code should call this
+    /// immediately before its existing SSRF/TLS validation.
+    pub fn allows_egress_url(&self, channel: EgressChannel, raw_url: &str) -> anyhow::Result<()> {
+        let policy = match channel {
+            EgressChannel::Inference => self.compliance.egress.inference,
+            EgressChannel::Webhooks => self.compliance.egress.webhooks,
+            EgressChannel::Integrations => self.compliance.egress.integrations,
+        };
+        if policy == EgressPolicy::Deny {
+            anyhow::bail!("compliance policy denies {:?} data egress", channel);
+        }
+        if policy == EgressPolicy::ApprovedOnly {
+            let host = Url::parse(raw_url)
+                .map_err(|error| {
+                    anyhow::anyhow!("invalid configured egress URL {raw_url:?}: {error}")
+                })?
+                .host_str()
+                .ok_or_else(|| anyhow::anyhow!("configured egress URL has no host: {raw_url:?}"))?
+                .to_ascii_lowercase();
+            if !self.compliance.egress.allowed_hosts.contains(&host) {
+                anyhow::bail!(
+                    "compliance policy does not approve {channel:?} host {host:?}; add its exact hostname to [compliance.egress].allowed_hosts"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_compliance_profile(&self) -> anyhow::Result<()> {
+        let profiles = &self.compliance.profiles;
+        if profiles.is_empty() {
+            return Ok(());
+        }
+
+        let egress = &self.compliance.egress;
+        let sovereign = profiles.contains(&RegionalProfile::Sovereign);
+        if sovereign
+            && (egress.inference != EgressPolicy::Deny
+                || egress.webhooks != EgressPolicy::Deny
+                || egress.integrations != EgressPolicy::Deny
+                || egress.audit_export != AuditEgressPolicy::LocalOnly)
+        {
+            anyhow::bail!(
+                "sovereign compliance profile requires inference = \"deny\", webhooks = \"deny\", integrations = \"deny\", and audit_export = \"local_only\""
+            );
+        }
+
+        // A profile is an explicit governance opt-in, so external traffic may
+        // not retain the permissive compatibility default. Operators must
+        // either deny a channel or name its approved destinations.
+        for (name, policy, active) in [
+            (
+                "inference",
+                egress.inference,
+                self.inference.enabled && self.capabilities.network_inference,
+            ),
+            (
+                "webhooks",
+                egress.webhooks,
+                self.has_configured_webhooks() && self.capabilities.network_webhooks,
+            ),
+            (
+                "integrations",
+                egress.integrations,
+                self.has_enabled_integrations() && self.capabilities.network_integrations,
+            ),
+        ] {
+            if active && policy == EgressPolicy::Deny {
+                anyhow::bail!(
+                    "compliance policy denies {name} data egress, but {name} remains enabled; disable the feature/capability before startup"
+                );
+            }
+            if active && policy == EgressPolicy::Allow {
+                anyhow::bail!(
+                    "regional compliance profiles require [compliance.egress].{name} = \"approved_only\" or \"deny\" when {name} is enabled"
+                );
+            }
+            if active && policy == EgressPolicy::ApprovedOnly && egress.allowed_hosts.is_empty() {
+                anyhow::bail!(
+                    "[compliance.egress].allowed_hosts must name at least one exact hostname when {name} uses approved_only"
+                );
+            }
+        }
+
+        if egress.audit_export == AuditEgressPolicy::Deny && self.audit.export.is_some() {
+            anyhow::bail!(
+                "compliance policy denies audit export, but [audit].export is configured"
+            );
+        }
+        if egress.audit_export == AuditEgressPolicy::LocalOnly {
+            if let Some(path) = self
+                .audit
+                .export
+                .as_ref()
+                .and_then(|export| export.jsonl_path.as_ref())
+            {
+                if !path.starts_with(&self.repo_path) {
+                    anyhow::bail!(
+                        "local_only audit export must remain under repo_path; configured path is {path:?}"
+                    );
+                }
+            }
+        }
+
+        if profiles.contains(&RegionalProfile::Uk)
+            && self.inference.enabled
+            && (!(self.inference.provider == "cosine"
+                || (self.inference.provider == "auto" && self.inference.uk_compliance_mode))
+                || self.inference.cosine_base_url.is_none())
+        {
+            anyhow::bail!(
+                "UK compliance profile requires inference.provider = \"cosine\" or uk_compliance_mode with provider = \"auto\", plus inference.cosine_base_url"
+            );
+        }
+
+        if self.inference.enabled && egress.inference != EgressPolicy::Deny {
+            for url in self.configured_inference_urls()? {
+                self.allows_egress_url(EgressChannel::Inference, url)?;
+            }
+        }
+        if self.has_configured_webhooks() && egress.webhooks != EgressPolicy::Deny {
+            for url in self.configured_webhook_urls() {
+                self.allows_egress_url(EgressChannel::Webhooks, url)?;
+            }
+        }
+        if self.has_enabled_integrations() && egress.integrations != EgressPolicy::Deny {
+            for connector in &self.integrations.connectors {
+                if connector.mode == crate::integrations::Mode::Disabled {
+                    continue;
+                }
+                self.allows_egress_url(
+                    EgressChannel::Integrations,
+                    crate::integrations::endpoint(connector)?,
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn has_enabled_integrations(&self) -> bool {
+        self.integrations
+            .connectors
+            .iter()
+            .any(|connector| connector.mode != crate::integrations::Mode::Disabled)
+    }
+
+    fn validate_integrations(&self) -> anyhow::Result<()> {
+        let mut configured = BTreeSet::new();
+        for connector in &self.integrations.connectors {
+            connector.validate()?;
+            let key = (connector.provider, connector.tenant_id.as_str());
+            if !configured.insert(key) {
+                anyhow::bail!(
+                    "integration {} is configured more than once for tenant {:?}",
+                    connector.provider,
+                    connector.tenant_id
+                );
+            }
+            if connector.mode != crate::integrations::Mode::Disabled
+                && !self.capabilities.network_integrations
+            {
+                anyhow::bail!(
+                    "integration {} is enabled but capabilities.network_integrations is false",
+                    connector.provider
+                );
+            }
+        }
+        Ok(())
+    }
+
+    fn has_configured_webhooks(&self) -> bool {
+        self.notify.webhook_url.is_some()
+            || (self.angler.webhooks.enabled && !self.angler.webhooks.endpoints.is_empty())
+    }
+
+    fn configured_webhook_urls(&self) -> Vec<&str> {
+        self.notify
+            .webhook_url
+            .iter()
+            .map(String::as_str)
+            .chain(
+                self.angler
+                    .webhooks
+                    .endpoints
+                    .iter()
+                    .map(|endpoint| endpoint.url.as_str()),
+            )
+            .collect()
+    }
+
+    fn configured_inference_urls(&self) -> anyhow::Result<Vec<&str>> {
+        match self.inference.provider.as_str() {
+            "cosine" => self.inference.cosine_base_url.as_deref().map(|url| vec![url]).ok_or_else(|| anyhow::anyhow!("inference.provider = \"cosine\" requires inference.cosine_base_url")),
+            "ollama" => Ok(vec![self.inference.ollama_base_url.as_str()]),
+            // UK mode resolves `auto` to Cosine in the inference module.
+            "auto" if self.inference.uk_compliance_mode => self.inference.cosine_base_url.as_deref().map(|url| vec![url]).ok_or_else(|| anyhow::anyhow!("UK compliance inference requires inference.cosine_base_url")),
+            // Other providers use fixed provider URLs or environment-specific
+            // endpoints; they cannot be attested by a config-only policy.
+            other => anyhow::bail!(
+                "regional compliance inference requires provider \"cosine\" or \"ollama\" with an explicit configured endpoint; provider {other:?} cannot be host-attested"
+            ),
+        }
+    }
+
     /// Validate cross-field constraints and invariants.
     pub fn validate(&self) -> anyhow::Result<()> {
+        if let Some(policy_id) = &self.policy_id {
+            crate::daemon::policy::validate_policy_id(policy_id)?;
+        }
+        self.validate_execution_trust()?;
+        self.validate_integrations()?;
+        self.validate_compliance_profile()?;
+        self.validate_governance()?;
+
         if self.inference.timeout_secs == 0 {
             anyhow::bail!("inference.timeout_secs must be greater than 0");
+        }
+        if self.inference.uk_compliance_mode {
+            if !matches!(self.inference.provider.as_str(), "auto" | "cosine") {
+                anyhow::bail!(
+                    "UK compliance mode requires inference.provider = \"auto\" or \"cosine\""
+                );
+            }
+            if self.inference.enabled && self.inference.cosine_base_url.is_none() {
+                anyhow::bail!(
+                    "UK compliance mode requires inference.cosine_base_url for the approved Cosine Lumen deployment"
+                );
+            }
         }
         if self.build.timeout_secs == 0 {
             anyhow::bail!("build.timeout_secs must be greater than 0");
@@ -1571,6 +2287,7 @@ impl Config {
                 "daemon.start",
                 "daemon.stop",
                 "ship.run",
+                "ship.approve",
                 "ship.auto",
                 "push.force",
                 "shark.release",
@@ -1627,8 +2344,11 @@ impl Default for Config {
             deckhand: DeckhandConfig::default(),
             shark: SharkConfig::default(),
             rbac: RbacConfig::default(),
+            identity: IdentityConfig::default(),
             repo_path: cwd,
             policy_id: None,
+            policy_trust: PolicyTrustConfig::default(),
+            governance: GovernanceConfig::default(),
             prune_interval_minutes: default_prune_interval_minutes(),
             retention_days: default_retention_days(),
             air_gapped: false,
@@ -1636,6 +2356,9 @@ impl Default for Config {
             web_port: 0,
             web: WebConfig::default(),
             capabilities: CapabilitiesConfig::default(),
+            trust: TrustConfig::default(),
+            compliance: ComplianceConfig::default(),
+            integrations: IntegrationsConfig::default(),
             strict_shell_validation: false,
             daemon: DaemonConfig::default(),
         }
@@ -1693,12 +2416,28 @@ fn finalize_config(base_dir: PathBuf, mut config: Config) -> Config {
     config.repo_path = absolutize(&base_dir, &config.repo_path);
     config.watch.path = absolutize(&config.repo_path, &config.watch.path);
     config.watch.ignore_file = absolutize(&config.repo_path, &config.watch.ignore_file);
+    if let Some(path) = config.identity.gpgv_keyring.as_mut() {
+        *path = absolutize(&config.repo_path, path);
+    }
+    if let Some(path) = config.identity.assertion_path.as_mut() {
+        *path = absolutize(&config.repo_path, path);
+    }
+    config.identity.replay_dir = absolutize(&config.repo_path, &config.identity.replay_dir);
+    if let Some(path) = config
+        .audit
+        .export
+        .as_mut()
+        .and_then(|export| export.jsonl_path.as_mut())
+    {
+        *path = absolutize(&config.repo_path, path);
+    }
 
     // Backward compatibility: air_gapped=true disables all network capabilities
     if config.air_gapped {
         config.capabilities.network_push = false;
         config.capabilities.network_webhooks = false;
         config.capabilities.network_inference = false;
+        config.capabilities.network_integrations = false;
     }
 
     config
@@ -1923,6 +2662,28 @@ mod tests {
         assert_eq!(
             finalized.watch.ignore_file,
             PathBuf::from("/tmp/kaptaind-config/repo/config/.kaptainignore")
+        );
+    }
+
+    #[test]
+    fn finalizes_relative_audit_export_path_against_repo_root() {
+        let config = Config {
+            repo_path: PathBuf::from("repo"),
+            audit: super::AuditConfig {
+                enabled: true,
+                export: Some(crate::audit::AuditExportConfig {
+                    jsonl_path: Some(PathBuf::from("managed/audit.jsonl")),
+                }),
+            },
+            ..Config::default()
+        };
+
+        let finalized = finalize_config(PathBuf::from("/tmp/kaptaind-config"), config);
+        assert_eq!(
+            finalized.audit.export.and_then(|export| export.jsonl_path),
+            Some(PathBuf::from(
+                "/tmp/kaptaind-config/repo/managed/audit.jsonl"
+            ))
         );
     }
 
@@ -2455,9 +3216,296 @@ mod tests {
     }
 
     #[test]
+    fn regional_profiles_are_opt_in_and_preserve_default_behavior() {
+        let config: Config = toml::from_str("").unwrap();
+        assert!(config.compliance.profiles.is_empty());
+        assert_eq!(
+            config.compliance.egress.inference,
+            super::EgressPolicy::Allow
+        );
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn regional_profile_rejects_permissive_active_inference() {
+        let mut config = Config::default();
+        config
+            .compliance
+            .profiles
+            .insert(super::RegionalProfile::EuEea);
+        config.inference.enabled = true;
+        config.inference.provider = "ollama".to_string();
+        config.capabilities.network_inference = true;
+        let error = config.validate().expect_err("profile must fail closed");
+        assert!(error.to_string().contains("approved_only"));
+    }
+
+    #[test]
+    fn regional_profile_allows_only_exact_attested_inference_host() {
+        let mut config = Config::default();
+        config
+            .compliance
+            .profiles
+            .insert(super::RegionalProfile::EuEea);
+        config.compliance.egress.inference = super::EgressPolicy::ApprovedOnly;
+        config
+            .compliance
+            .egress
+            .allowed_hosts
+            .insert("models.example.test".to_string());
+        config.inference.enabled = true;
+        config.inference.provider = "cosine".to_string();
+        config.capabilities.network_inference = true;
+        config.inference.cosine_base_url = Some("https://models.example.test/v1".to_string());
+        assert!(config.validate().is_ok());
+
+        config.inference.cosine_base_url = Some("https://unapproved.example.test/v1".to_string());
+        let error = config
+            .validate()
+            .expect_err("unapproved host must be rejected");
+        assert!(error.to_string().contains("does not approve"));
+    }
+
+    #[test]
+    fn uk_profile_requires_cosine_routing_and_approved_host() {
+        let mut config = Config::default();
+        config
+            .compliance
+            .profiles
+            .insert(super::RegionalProfile::Uk);
+        config.compliance.egress.inference = super::EgressPolicy::ApprovedOnly;
+        config
+            .compliance
+            .egress
+            .allowed_hosts
+            .insert("lumen.uk.example.test".to_string());
+        config.inference.enabled = true;
+        config.inference.provider = "cosine".to_string();
+        config.capabilities.network_inference = true;
+        config.inference.cosine_base_url = Some("https://lumen.uk.example.test/v1".to_string());
+        assert!(config.validate().is_ok());
+
+        config.inference.provider = "openai".to_string();
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn sovereign_profile_requires_local_only_and_disabled_egress() {
+        let mut config = Config::default();
+        config
+            .compliance
+            .profiles
+            .insert(super::RegionalProfile::Sovereign);
+        assert!(config.validate().is_err());
+
+        config.compliance.egress.inference = super::EgressPolicy::Deny;
+        config.compliance.egress.webhooks = super::EgressPolicy::Deny;
+        config.compliance.egress.integrations = super::EgressPolicy::Deny;
+        config.compliance.egress.audit_export = super::AuditEgressPolicy::LocalOnly;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn regional_profiles_gate_enabled_integration_endpoints_and_capability() {
+        let mut config = Config::default();
+        config
+            .compliance
+            .profiles
+            .insert(super::RegionalProfile::EuEea);
+        config.compliance.egress.integrations = super::EgressPolicy::ApprovedOnly;
+        config
+            .compliance
+            .egress
+            .allowed_hosts
+            .insert("93.184.216.34".to_string());
+        config
+            .integrations
+            .connectors
+            .push(crate::integrations::ConnectorConfig {
+                provider: crate::integrations::Provider::Kubernetes,
+                mode: crate::integrations::Mode::ReadOnly,
+                tenant_id: "acme".to_string(),
+                endpoint: Some("https://93.184.216.34/api".to_string()),
+                credential_ref: Some("vault:kubernetes-readonly".to_string()),
+                capabilities: [crate::integrations::Capability::ReadState]
+                    .into_iter()
+                    .collect(),
+            });
+        assert!(config.validate().is_ok());
+        config.capabilities.network_integrations = false;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn local_only_audit_export_cannot_escape_repo_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config {
+            repo_path: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+        config
+            .compliance
+            .profiles
+            .insert(super::RegionalProfile::Canada);
+        config.compliance.egress.audit_export = super::AuditEgressPolicy::LocalOnly;
+        config.audit.export = Some(crate::audit::AuditExportConfig {
+            jsonl_path: Some(PathBuf::from("/tmp/outside-audit.jsonl")),
+        });
+        let error = config
+            .validate()
+            .expect_err("export outside repository must fail");
+        assert!(error.to_string().contains("remain under repo_path"));
+    }
+
+    #[test]
+    fn execution_trust_defaults_to_trusted_for_existing_installations() {
+        let config: Config = toml::from_str("").unwrap();
+        assert_eq!(config.trust.execution, super::ExecutionTrust::Trusted);
+        assert!(config.execution_trust_violations().is_empty());
+    }
+
+    #[test]
+    fn untrusted_config_rejects_configured_program_execution() {
+        let mut config = Config::default();
+        config.trust.execution = super::ExecutionTrust::Untrusted;
+        config.bundle.command = Some("npm run build".to_string());
+        config.plugins.adapters.push(super::PluginAdapterConfig {
+            name: "example".to_string(),
+            command: "example-adapter".to_string(),
+            extensions: vec!["example".to_string()],
+            language_confidence: 0.8,
+        });
+        config.angler.bait.enabled = true;
+
+        let error = config
+            .validate()
+            .expect_err("untrusted execution must fail");
+        let message = error.to_string();
+        assert!(message.contains("test.command"));
+        assert!(message.contains("bundle.command"));
+        assert!(message.contains("plugins.adapters"));
+        assert!(message.contains("angler.bait"));
+        assert!(message.contains("[trust].execution = \"trusted\""));
+    }
+
+    #[test]
+    fn untrusted_passive_config_is_valid_and_inspectable() {
+        let mut config = Config::default();
+        config.trust.execution = super::ExecutionTrust::Untrusted;
+        config.test.command = None;
+
+        assert!(config.execution_trust_violations().is_empty());
+        assert!(config.validate_execution_trust().is_ok());
+    }
+
+    #[test]
     fn validate_rejects_zero_inference_timeout() {
         let mut config = Config::default();
         config.inference.timeout_secs = 0;
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn enterprise_governance_requires_identity_rbac_and_signed_policy_controls() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut config = Config {
+            governance: super::GovernanceConfig {
+                organization_id: Some("acme".to_string()),
+                tenant_id: Some("payments".to_string()),
+                enforce_enterprise_controls: true,
+            },
+            repo_path: dir.path().to_path_buf(),
+            ..Config::default()
+        };
+        assert!(config.validate().is_err());
+        config.rbac.enabled = true;
+        config.policy_id = Some("production".to_string());
+        config.policy_trust.require_signature = true;
+        config.policy_trust.gpgv_keyring = Some(PathBuf::from("policy-keys.gpg"));
+        config.identity = super::IdentityConfig {
+            mode: super::IdentityMode::GpgSignedAssertion,
+            gpgv_keyring: Some(PathBuf::from("identity-keys.gpg")),
+            assertion_path: Some(PathBuf::from("identity.json")),
+            replay_dir: PathBuf::from(".kaptaind/identity/replay"),
+            issuer: Some("https://id.example".to_string()),
+            audience: Some("kaptaind".to_string()),
+            max_assertion_age_seconds: 900,
+        };
+        config.audit.export = Some(crate::audit::AuditExportConfig {
+            jsonl_path: Some(dir.path().join("collector/audit.jsonl")),
+        });
+        config.commit.sign = true;
+        assert!(config.validate().is_ok());
+
+        config.test.command_on = super::TestCommandOn::CodeOnly;
+        assert!(config
+            .validate()
+            .expect_err("enterprise test gate must run for every cluster")
+            .to_string()
+            .contains("mandatory test.command"));
+        config.test.command_on = super::TestCommandOn::Always;
+
+        config.commit.sign = false;
+        assert!(config
+            .validate()
+            .expect_err("enterprise commits must be signed")
+            .to_string()
+            .contains("commit].sign"));
+        config.commit.sign = true;
+
+        config.push.enabled = true;
+        assert!(config
+            .validate()
+            .expect_err("enterprise pushes must be CI-protected")
+            .to_string()
+            .contains("CI-protected pushes"));
+        config.push.protection.require_ci_pass = true;
+        config.push.protection.required_status_checks = vec!["ci/test".to_string()];
+        assert!(config.validate().is_ok());
+
+        config.ship.enabled = true;
+        assert!(config
+            .validate()
+            .expect_err("enterprise releases require supply-chain evidence")
+            .to_string()
+            .contains("SBOM and provenance"));
+        config.ship.sign = true;
+        config.ship.sbom.enabled = true;
+        config.ship.provenance.enabled = true;
+        assert!(config.validate().is_ok());
+    }
+
+    #[test]
+    fn governance_identifiers_reject_path_like_values() {
+        let mut config = Config::default();
+        config.governance.organization_id = Some("../acme".to_string());
+        assert!(config.validate().is_err());
+    }
+
+    #[test]
+    fn enterprise_governance_rejects_an_unverifiable_existing_audit_log() {
+        let dir = tempfile::tempdir().unwrap();
+        let audit_dir = dir.path().join(".kaptaind");
+        std::fs::create_dir_all(&audit_dir).unwrap();
+        std::fs::write(audit_dir.join("audit.jsonl"), "{}\n").unwrap();
+        let config = Config {
+            repo_path: dir.path().to_path_buf(),
+            governance: super::GovernanceConfig {
+                organization_id: Some("acme".to_string()),
+                tenant_id: Some("payments".to_string()),
+                enforce_enterprise_controls: true,
+            },
+            rbac: super::RbacConfig {
+                enabled: true,
+                ..super::RbacConfig::default()
+            },
+            policy_id: Some("production".to_string()),
+            policy_trust: super::PolicyTrustConfig {
+                require_signature: true,
+                gpgv_keyring: Some(PathBuf::from("policy-keys.gpg")),
+            },
+            ..Config::default()
+        };
         assert!(config.validate().is_err());
     }
 

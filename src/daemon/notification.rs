@@ -159,6 +159,13 @@ pub fn notify(config: &NotifyConfig, event: NotificationEvent<'_>, webhook_enabl
                     tracing::warn!(error = %err, "refusing unsafe webhook URL");
                     return;
                 }
+                if let Err(err) = crate::compliance::enforce_egress_url(
+                    crate::config::loader::EgressChannel::Webhooks,
+                    &webhook_url,
+                ) {
+                    tracing::warn!(error = %err, "regional policy blocked webhook notification");
+                    return;
+                }
                 let is_discord = reqwest::Url::parse(&webhook_url)
                     .ok()
                     .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))

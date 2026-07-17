@@ -141,6 +141,12 @@ fn main() -> anyhow::Result<()> {
         std::env::set_var("KAPTAIND_CONFIG", path);
     }
     let mut config = kaptaind::config::loader::load()?;
+    kaptaind::audit::configure_export(config.audit.export.clone());
+    kaptaind::audit::configure_governance_context(
+        config.governance.organization_id.clone(),
+        config.governance.tenant_id.clone(),
+    );
+    kaptaind::compliance::configure(config.clone());
 
     // Track this project as active in the monitor registry.
     let _ = kaptaind::monitor::touch_last_active(&config.repo_path);
@@ -245,6 +251,12 @@ fn main() -> anyhow::Result<()> {
         );
         return Ok(());
     }
+
+    // Validate after CLI overrides but before any operation that can invoke
+    // configured commands (including dry-run bundle scoring and the daemon).
+    // Read-only status views above intentionally remain usable for reviewing
+    // an untrusted repository configuration.
+    config.validate()?;
 
     kaptaind::git::repo::ensure_git_available()
         .map_err(|err| anyhow::anyhow!("kaptaind requires git in PATH: {err}"))?;

@@ -650,6 +650,13 @@ mod tests {
         assert!(response.0.contains("Kaptaind WebUI"));
     }
 
+    #[test]
+    fn web_ui_consumes_launch_token_from_fragment() {
+        assert!(WEB_UI_HTML.contains("location.hash.slice(1)"));
+        assert!(WEB_UI_HTML.contains("history.replaceState"));
+        assert!(!WEB_UI_HTML.contains("location.search).get('token')"));
+    }
+
     #[tokio::test]
     async fn api_handler_lists_endpoints() {
         let Json(body) = api_handler().await;

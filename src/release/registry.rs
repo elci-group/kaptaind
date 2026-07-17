@@ -242,16 +242,22 @@ impl ExternalRegistryDistributor {
         // Login if credentials provided
         if let (Some(user), Some(pass)) = (&username, &password) {
             let reg = registry.as_deref().unwrap_or("docker.io");
-            let output = Command::new("skopeo")
-                .arg("login")
-                .arg("-u")
-                .arg(user)
-                .arg("-p")
-                .arg(pass)
-                .arg(reg)
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .output()
+            let mut child = Self::skopeo_login_command(reg, user)
+                .spawn()
+                .context("failed to spawn skopeo login")?;
+            if let Some(mut stdin) = child.stdin.take() {
+                use tokio::io::AsyncWriteExt;
+                stdin
+                    .write_all(pass.as_bytes())
+                    .await
+                    .context("failed to send password to skopeo login")?;
+                stdin
+                    .shutdown()
+                    .await
+                    .context("failed to close skopeo login stdin")?;
+            }
+            let output = child
+                .wait_with_output()
                 .await
                 .context("failed to execute skopeo login")?;
 
@@ -386,5 +392,49 @@ impl ExternalRegistryDistributor {
         );
 
         Ok(())
+    }
+
+    /// Construct a skopeo login command that reads its password from stdin.
+    /// Keeping credentials out of argv prevents exposure through process listings.
+    fn skopeo_login_command(registry: &str, username: &str) -> Command {
+        let mut command = Command::new("skopeo");
+        command
+            .arg("login")
+            .arg("-u")
+            .arg(username)
+            .arg("--password-stdin")
+            .arg(registry)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        command
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ExternalRegistryDistributor;
+
+    #[test]
+    fn skopeo_login_reads_password_from_stdin() {
+        let command =
+            ExternalRegistryDistributor::skopeo_login_command("registry.example", "alice");
+        let args: Vec<_> = command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect();
+
+        assert_eq!(
+            args,
+            [
+                "login",
+                "-u",
+                "alice",
+                "--password-stdin",
+                "registry.example"
+            ]
+        );
+        assert!(!args.iter().any(|arg| arg == "-p"));
     }
 }

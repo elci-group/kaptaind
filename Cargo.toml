@@ -96,3 +96,8 @@ harness = false
 name = "bench_weight_version"
 path = "tests/benches/bench_weight_version.rs"
 harness = false
+
+[[bench]]
+name = "bench_compliance"
+path = "tests/benches/bench_compliance.rs"
+harness = false
