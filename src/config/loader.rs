@@ -93,8 +93,6 @@ pub struct Config {
     #[serde(default)]
     pub integrations: IntegrationsConfig,
     #[serde(default)]
-    pub strict_shell_validation: bool,
-    #[serde(default)]
     pub daemon: DaemonConfig,
 }
 
@@ -1114,15 +1112,14 @@ pub struct ComplianceConfig {
 /// Kaptaind configuration can name test hooks, notification hooks, bundle
 /// commands, language-adapter plugins, and Angler bait/hook programs. Treat a
 /// configuration obtained from an unreviewed repository as data, not authority
-/// to execute those programs. Existing installations retain the historical
-/// default (`trusted`) so upgrading does not silently disable their automation.
+/// to execute those programs. Repository configuration must opt in explicitly.
 #[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ExecutionTrust {
-    /// Permit configured program execution. This is the compatibility default.
-    #[default]
+    /// Permit configured program execution after operator review.
     Trusted,
     /// Refuse configuration entries that can execute a local program.
+    #[default]
     Untrusted,
 }
 
@@ -2356,10 +2353,13 @@ impl Default for Config {
             web_port: 0,
             web: WebConfig::default(),
             capabilities: CapabilitiesConfig::default(),
-            trust: TrustConfig::default(),
+            // With no repository config these are Kaptaind's built-in
+            // commands, not repository-supplied execution authority.
+            trust: TrustConfig {
+                execution: ExecutionTrust::Trusted,
+            },
             compliance: ComplianceConfig::default(),
             integrations: IntegrationsConfig::default(),
-            strict_shell_validation: false,
             daemon: DaemonConfig::default(),
         }
     }
@@ -2781,6 +2781,8 @@ mod tests {
     fn staging_deserializes_from_toml() {
         let toml_str = r#"
             repo_path = "."
+            [trust]
+            execution = "trusted"
             [watch]
             path = "."
             recursive = true
@@ -2816,6 +2818,8 @@ mod tests {
     #[test]
     fn minimal_toml_parses_with_documented_defaults() {
         let toml_str = r#"
+            [trust]
+            execution = "trusted"
             [watch]
             path = "."
         "#;
@@ -2843,16 +2847,17 @@ mod tests {
         // The defaults themselves must satisfy validation.
         config.validate().unwrap();
 
-        // Even an empty config parses and yields the same defaults.
+        // Empty repository configuration is inspectable but cannot execute
+        // the default hook until trust is explicit.
         let empty: Config = toml::from_str("").unwrap();
         assert_eq!(empty.push.branch, "main");
         assert!(!empty.commit.require_bump);
-        empty.validate().unwrap();
+        assert!(empty.validate().is_err());
     }
 
     #[test]
     fn explicitly_invalid_health_port_still_fails_validation() {
-        let toml_str = "health_port = 0";
+        let toml_str = "health_port = 0\n[trust]\nexecution = \"trusted\"";
         let config: Config = toml::from_str(toml_str).unwrap();
         let err = config.validate().unwrap_err();
         assert!(
@@ -3217,7 +3222,7 @@ mod tests {
 
     #[test]
     fn regional_profiles_are_opt_in_and_preserve_default_behavior() {
-        let config: Config = toml::from_str("").unwrap();
+        let config = Config::default();
         assert!(config.compliance.profiles.is_empty());
         assert_eq!(
             config.compliance.egress.inference,
@@ -3358,8 +3363,15 @@ mod tests {
     }
 
     #[test]
-    fn execution_trust_defaults_to_trusted_for_existing_installations() {
+    fn repository_config_defaults_to_untrusted() {
         let config: Config = toml::from_str("").unwrap();
+        assert_eq!(config.trust.execution, super::ExecutionTrust::Untrusted);
+        assert!(!config.execution_trust_violations().is_empty());
+    }
+
+    #[test]
+    fn built_in_config_remains_trusted() {
+        let config = Config::default();
         assert_eq!(config.trust.execution, super::ExecutionTrust::Trusted);
         assert!(config.execution_trust_violations().is_empty());
     }
@@ -3535,6 +3547,8 @@ mod tests {
     fn ship_auto_deserializes_from_toml() {
         let toml_str = r#"
             repo_path = "."
+            [trust]
+            execution = "trusted"
             [watch]
             path = "."
             recursive = true

@@ -17,8 +17,30 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, ToSocketAddrs};
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Result};
+use reqwest::dns::{Addrs, Name, Resolve, Resolving};
 use reqwest::redirect::Policy;
 use reqwest::Url;
+
+#[derive(Clone, Copy)]
+struct HardenedResolver {
+    allow_localhost: bool,
+}
+
+impl Resolve for HardenedResolver {
+    fn resolve(&self, name: Name) -> Resolving {
+        let host = name.as_str().to_string();
+        let allow_localhost = self.allow_localhost;
+        Box::pin(async move {
+            let resolved = tokio::net::lookup_host((host.as_str(), 0))
+                .await
+                .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> { Box::new(error) })?
+                .collect::<Vec<_>>();
+            validate_resolved_addrs(&host, &resolved, allow_localhost)
+                .map_err(|error| -> Box<dyn std::error::Error + Send + Sync> { error.into() })?;
+            Ok(Box::new(resolved.into_iter()) as Addrs)
+        })
+    }
+}
 
 /// Build a `reqwest::Client` with kaptaind's hardened defaults.
 ///
@@ -26,13 +48,66 @@ use reqwest::Url;
 /// redirects, validates TLS certificates (rustls default), and ignores proxy
 /// environment variables.
 pub fn hardened_client(timeout: Duration) -> reqwest::Client {
-    reqwest::Client::builder()
+    let allow_localhost = matches!(
+        std::env::var("KAPTAIND_ALLOW_INSECURE_HTTP").as_deref(),
+        Ok("1")
+    );
+    build_hardened_client(timeout, allow_localhost)
+}
+
+/// Hardened client for inference endpoints. Explicit localhost is permitted
+/// for local model servers, while DNS names that rebind to local addresses
+/// remain rejected at connection time.
+pub fn hardened_inference_client(timeout: Duration) -> reqwest::Client {
+    build_hardened_client(timeout, true)
+}
+
+fn build_hardened_client(timeout: Duration, allow_localhost: bool) -> reqwest::Client {
+    let result = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(timeout)
         .redirect(Policy::none())
         .no_proxy()
-        .build()
-        .expect("hardened reqwest client builder is always valid")
+        .dns_resolver(HardenedResolver { allow_localhost })
+        .build();
+    match result {
+        Ok(client) => client,
+        Err(error) => {
+            tracing::error!(
+                %error,
+                component = "outbound_http",
+                "failed to construct hardened HTTP client"
+            );
+            panic!("failed to construct hardened HTTP client: {error}");
+        }
+    }
+}
+
+fn validate_resolved_addrs(
+    host: &str,
+    addrs: &[std::net::SocketAddr],
+    allow_localhost: bool,
+) -> Result<()> {
+    if addrs.is_empty() {
+        bail!("DNS resolved no addresses for {host:?}");
+    }
+    let explicit_localhost = host.eq_ignore_ascii_case("localhost");
+    for addr in addrs {
+        if allow_localhost && explicit_localhost {
+            if !addr.ip().is_loopback() {
+                bail!(
+                    "refusing connection to localhost: DNS resolved non-loopback address {}",
+                    addr.ip()
+                );
+            }
+        } else if is_disallowed_ip(&addr.ip()) {
+            bail!(
+                "refusing connection to {host:?}: DNS resolved disallowed address {}",
+                addr.ip()
+            );
+        }
+    }
+    Ok(())
 }
 
 /// Validate that `raw` is a safe destination for an outbound request.
@@ -48,10 +123,10 @@ pub fn validate_outbound_url(raw: &str) -> Result<()> {
         .ok_or_else(|| anyhow!("URL has no host: {raw:?}"))?;
 
     let scheme = url.scheme();
-    let loopback_dev = std::env::var("KAPTAIND_ALLOW_INSECURE_HTTP")
-        .ok()
-        .as_deref()
-        == Some("1");
+    let loopback_dev = matches!(
+        std::env::var("KAPTAIND_ALLOW_INSECURE_HTTP").as_deref(),
+        Ok("1")
+    );
     match scheme {
         "https" => {}
         "http" if loopback_dev && is_loopback_host(host) => {
@@ -214,5 +289,16 @@ mod tests {
         std::env::set_var("KAPTAIND_ALLOW_INSECURE_HTTP", "1");
         assert!(validate_outbound_url("http://127.0.0.1:8080/health").is_ok());
         std::env::remove_var("KAPTAIND_ALLOW_INSECURE_HTTP");
+    }
+
+    #[test]
+    fn connection_time_dns_policy_rejects_rebinding() {
+        let public = ["93.184.216.34:0".parse().unwrap()];
+        let private = ["127.0.0.1:0".parse().unwrap()];
+        assert!(validate_resolved_addrs("example.com", &public, false).is_ok());
+        assert!(validate_resolved_addrs("attacker.example", &private, true).is_err());
+        assert!(validate_resolved_addrs("localhost", &private, false).is_err());
+        assert!(validate_resolved_addrs("localhost", &private, true).is_ok());
+        assert!(validate_resolved_addrs("localhost", &public, true).is_err());
     }
 }

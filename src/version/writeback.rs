@@ -24,7 +24,17 @@ use kaptaind_diff::version::{apply, Bump};
 /// baseline (VERSION file or manifest). A missing/unresolvable baseline
 /// skips the guard — the first save is what creates VERSION.
 pub fn save_version(path: &Path, version: &Version, lock_sync: LockSyncMode) -> anyhow::Result<()> {
-    if let Some(repo_path) = path.parent() {
+    let Some(repo_path) = path.parent() else {
+        std::fs::write(path, version.to_string())?;
+        return Ok(());
+    };
+    let snapshots = snapshot_files(&[
+        path.to_path_buf(),
+        repo_path.join("Cargo.toml"),
+        repo_path.join("src-tauri/Cargo.toml"),
+        repo_path.join("Cargo.lock"),
+    ])?;
+    let result = (|| {
         if let Ok(baseline) = super::resolve_baseline(repo_path) {
             anyhow::ensure!(
                 version >= &baseline,
@@ -37,9 +47,20 @@ pub fn save_version(path: &Path, version: &Version, lock_sync: LockSyncMode) -> 
             .map(|name| (name, version.clone()))
             .into_iter()
             .collect();
-        sync_lock(repo_path, &packages, lock_sync);
-    } else {
-        std::fs::write(path, version.to_string())?;
+        sync_lock(repo_path, &packages, lock_sync)?;
+        Ok(())
+    })();
+    if let Err(error) = result {
+        if let Err(rollback_error) = restore_files(&snapshots) {
+            tracing::error!(
+                error = %error,
+                rollback_error = %rollback_error,
+                "version writeback and rollback both failed"
+            );
+            return Err(error.context(format!("rollback also failed: {rollback_error:#}")));
+        }
+        tracing::error!(error = %error, "version writeback failed; restored original files");
+        return Err(error);
     }
     Ok(())
 }
@@ -81,6 +102,47 @@ impl WorkspaceBump {
 /// longer match a bumped member are raised to the new version (never
 /// widened), keeping `cargo build --locked` green.
 pub fn save_workspace_version(
+    layout: &WorkspaceLayout,
+    policy: WorkspacePolicy,
+    bump: Bump,
+    cluster_paths: &[PathBuf],
+    repo_root: &Path,
+    lock_sync: LockSyncMode,
+) -> anyhow::Result<WorkspaceBump> {
+    let mut paths = vec![
+        repo_root.join("VERSION"),
+        repo_root.join("Cargo.toml"),
+        repo_root.join("src-tauri/Cargo.toml"),
+        repo_root.join("Cargo.lock"),
+    ];
+    paths.extend(
+        layout
+            .members()
+            .iter()
+            .map(|member| member.manifest.clone()),
+    );
+    let snapshots = snapshot_files(&paths)?;
+    match save_workspace_version_inner(layout, policy, bump, cluster_paths, repo_root, lock_sync) {
+        Ok(outcome) => Ok(outcome),
+        Err(error) => {
+            if let Err(rollback_error) = restore_files(&snapshots) {
+                tracing::error!(
+                    error = %error,
+                    rollback_error = %rollback_error,
+                    "workspace version writeback and rollback both failed"
+                );
+                return Err(error.context(format!("rollback also failed: {rollback_error:#}")));
+            }
+            tracing::error!(
+                error = %error,
+                "workspace version writeback failed; restored original files"
+            );
+            Err(error)
+        }
+    }
+}
+
+fn save_workspace_version_inner(
     layout: &WorkspaceLayout,
     policy: WorkspacePolicy,
     bump: Bump,
@@ -148,7 +210,7 @@ pub fn save_workspace_version(
     )?);
 
     if !outcome.bumped.is_empty() {
-        sync_lock(repo_root, &outcome.bumped, lock_sync);
+        sync_lock(repo_root, &outcome.bumped, lock_sync)?;
         let lock = repo_root.join("Cargo.lock");
         if !matches!(lock_sync, LockSyncMode::Off) && lock.exists() {
             outcome.written_paths.push(lock);
@@ -158,6 +220,36 @@ pub fn save_workspace_version(
     outcome.written_paths.sort();
     outcome.written_paths.dedup();
     Ok(outcome)
+}
+
+type FileSnapshot = (PathBuf, Option<Vec<u8>>);
+
+fn snapshot_files(paths: &[PathBuf]) -> anyhow::Result<Vec<FileSnapshot>> {
+    let mut unique = paths.to_vec();
+    unique.sort();
+    unique.dedup();
+    unique
+        .into_iter()
+        .map(|path| {
+            let contents = if path.exists() {
+                Some(std::fs::read(&path)?)
+            } else {
+                None
+            };
+            Ok((path, contents))
+        })
+        .collect()
+}
+
+fn restore_files(snapshots: &[FileSnapshot]) -> anyhow::Result<()> {
+    for (path, contents) in snapshots {
+        match contents {
+            Some(contents) => std::fs::write(path, contents)?,
+            None if path.exists() => std::fs::remove_file(path)?,
+            None => {}
+        }
+    }
+    Ok(())
 }
 
 /// Which packages a decided bump applies to.
@@ -229,20 +321,18 @@ fn write_root_manifests(repo_path: &Path, version: &Version) -> anyhow::Result<O
     for cargo_rel in ["Cargo.toml", "src-tauri/Cargo.toml"] {
         let cargo_toml_path = repo_path.join(cargo_rel);
         if cargo_toml_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&cargo_toml_path) {
-                if let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() {
-                    if let Some(package) = doc.get_mut("package") {
-                        if package.get("version").is_some() {
-                            if package_name.is_none() {
-                                package_name = package
-                                    .get("name")
-                                    .and_then(|n| n.as_str())
-                                    .map(str::to_string);
-                            }
-                            package["version"] = toml_edit::value(version.to_string());
-                            let _ = std::fs::write(&cargo_toml_path, doc.to_string());
-                        }
+            let content = std::fs::read_to_string(&cargo_toml_path)?;
+            let mut doc = content.parse::<toml_edit::DocumentMut>()?;
+            if let Some(package) = doc.get_mut("package") {
+                if package.get("version").is_some() {
+                    if package_name.is_none() {
+                        package_name = package
+                            .get("name")
+                            .and_then(|n| n.as_str())
+                            .map(str::to_string);
                     }
+                    package["version"] = toml_edit::value(version.to_string());
+                    std::fs::write(&cargo_toml_path, doc.to_string())?;
                 }
             }
         }
@@ -433,11 +523,15 @@ fn normalize_path(path: &Path) -> PathBuf {
 }
 
 /// Apply the `[versioning].lock_sync` policy after manifest writeback.
-fn sync_lock(repo_root: &Path, packages: &[(String, Version)], lock_sync: LockSyncMode) {
+fn sync_lock(
+    repo_root: &Path,
+    packages: &[(String, Version)],
+    lock_sync: LockSyncMode,
+) -> anyhow::Result<()> {
     match lock_sync {
         LockSyncMode::Off => {}
         LockSyncMode::Patch => {
-            sync_cargo_lock(&repo_root.join("Cargo.lock"), packages);
+            sync_cargo_lock(&repo_root.join("Cargo.lock"), packages)?;
         }
         // Let Cargo regenerate the lockfile itself rather than editing it
         // by hand. Offline: the bump introduces no new dependencies, and the
@@ -445,7 +539,7 @@ fn sync_lock(repo_root: &Path, packages: &[(String, Version)], lock_sync: LockSy
         // the version N-tuple stays consistent even when Cargo fails.
         LockSyncMode::Cargo => {
             if !repo_root.join("Cargo.toml").exists() {
-                return; // nothing for Cargo to resolve
+                return Ok(()); // nothing for Cargo to resolve
             }
             let ok = std::process::Command::new("cargo")
                 .args(["metadata", "--format-version", "1", "--offline"])
@@ -459,46 +553,81 @@ fn sync_lock(repo_root: &Path, packages: &[(String, Version)], lock_sync: LockSy
                 tracing::warn!(
                     "cargo metadata --offline failed; falling back to patching Cargo.lock"
                 );
-                sync_cargo_lock(&repo_root.join("Cargo.lock"), packages);
+                sync_cargo_lock(&repo_root.join("Cargo.lock"), packages)?;
             }
+            verify_lock_versions(&repo_root.join("Cargo.lock"), packages)?;
         }
     }
+    Ok(())
 }
 
 /// Update `[[package]]` entries in a Cargo.lock for every `(name, version)`
-/// pair in one pass. Best-effort: a missing/unparseable lock or a package
-/// absent from it is not an error (e.g. workspace locks that don't list the
-/// crate).
-fn sync_cargo_lock(lock_path: &Path, packages: &[(String, Version)]) {
+/// pair in one pass. Existing lockfiles are treated as an invariant: parse,
+/// package lookup, and write failures abort writeback instead of committing a
+/// manifest/lock mismatch.
+fn sync_cargo_lock(lock_path: &Path, packages: &[(String, Version)]) -> anyhow::Result<()> {
     if packages.is_empty() || !lock_path.exists() {
-        return;
+        return Ok(());
     }
-    let Ok(content) = std::fs::read_to_string(lock_path) else {
-        return;
-    };
-    let Ok(mut doc) = content.parse::<toml_edit::DocumentMut>() else {
-        return;
-    };
+    let content = std::fs::read_to_string(lock_path)?;
+    let mut doc = content.parse::<toml_edit::DocumentMut>()?;
     let mut changed = false;
+    let mut found = std::collections::BTreeSet::new();
     if let Some(entries) = doc
         .get_mut("package")
         .and_then(|p| p.as_array_of_tables_mut())
     {
         for pkg in entries.iter_mut() {
-            let name = pkg.get("name").and_then(|n| n.as_str());
+            let name = pkg.get("name").and_then(|n| n.as_str()).map(str::to_string);
             let Some(new_version) = name
+                .as_deref()
                 .and_then(|name| packages.iter().find(|(n, _)| n == name))
                 .map(|(_, version)| version)
             else {
                 continue;
             };
             pkg["version"] = toml_edit::value(new_version.to_string());
+            if let Some(name) = name {
+                found.insert(name);
+            }
             changed = true;
         }
     }
-    if changed {
-        let _ = std::fs::write(lock_path, doc.to_string());
+    for (name, _) in packages {
+        anyhow::ensure!(
+            found.contains(name),
+            "Cargo.lock has no package entry for {name}"
+        );
     }
+    if changed {
+        std::fs::write(lock_path, doc.to_string())?;
+    }
+    verify_lock_versions(lock_path, packages)
+}
+
+fn verify_lock_versions(lock_path: &Path, packages: &[(String, Version)]) -> anyhow::Result<()> {
+    if packages.is_empty() || !lock_path.exists() {
+        return Ok(());
+    }
+    let content = std::fs::read_to_string(lock_path)?;
+    let doc = content.parse::<toml_edit::DocumentMut>()?;
+    let entries = doc
+        .get("package")
+        .and_then(|p| p.as_array_of_tables())
+        .ok_or_else(|| anyhow::anyhow!("{} has no [[package]] entries", lock_path.display()))?;
+    for (name, version) in packages {
+        let expected = version.to_string();
+        let matches = entries.iter().any(|pkg| {
+            pkg.get("name").and_then(|v| v.as_str()) == Some(name.as_str())
+                && pkg.get("version").and_then(|v| v.as_str()) == Some(expected.as_str())
+        });
+        anyhow::ensure!(
+            matches,
+            "{} is missing {name} v{version}",
+            lock_path.display()
+        );
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -923,5 +1052,33 @@ mod tests {
             fixture.manifest_version("crates/alpha/Cargo.toml"),
             Version::new(0, 1, 1)
         );
+    }
+
+    #[test]
+    fn existing_unparseable_lock_aborts_writeback() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("VERSION"), "0.1.0").unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("Cargo.lock"), "not valid = [").unwrap();
+
+        let error = save_version(
+            &dir.path().join("VERSION"),
+            &Version::new(0, 1, 1),
+            LockSyncMode::Patch,
+        )
+        .expect_err("invalid existing lock must abort");
+
+        assert!(error.to_string().contains("TOML"));
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("VERSION")).unwrap(),
+            "0.1.0"
+        );
+        assert!(std::fs::read_to_string(dir.path().join("Cargo.toml"))
+            .unwrap()
+            .contains("version = \"0.1.0\""));
     }
 }

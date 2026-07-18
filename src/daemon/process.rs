@@ -104,29 +104,37 @@ fn daemonize_inner(
     match ops.fork() {
         Fork::Parent => return Ok(DaemonizeOutcome::ParentExit),
         Fork::Child => {}
-        Fork::Failed => return Err(anyhow!("fork failed")),
+        Fork::Failed => {
+            tracing::error!(operation = "fork_initial", "initial daemon fork failed");
+            return Err(anyhow!("fork failed"));
+        }
     }
 
     if !ops.setsid() {
+        tracing::error!(operation = "setsid", "failed to create daemon session");
         return Err(anyhow!("setsid failed"));
     }
 
     match ops.fork() {
         Fork::Parent => return Ok(DaemonizeOutcome::ParentExit),
         Fork::Child => {}
-        Fork::Failed => return Err(anyhow!("second fork failed")),
+        Fork::Failed => {
+            tracing::error!(operation = "fork_second", "second daemon fork failed");
+            return Err(anyhow!("second fork failed"));
+        }
     }
 
     let workdir = CString::new(workdir.to_string_lossy().as_bytes())
         .context("working directory contains null byte")?;
     if !ops.chdir(&workdir) {
+        tracing::error!(path = %workdir.to_string_lossy(), "failed to change daemon working directory");
         return Err(anyhow!("failed to change daemon working directory"));
     }
 
     redirect_fd(ops, stdout.as_raw_fd(), libc::STDOUT_FILENO)?;
     redirect_fd(ops, stderr.as_raw_fd(), libc::STDERR_FILENO)?;
 
-    let mut pid_file = File::create(pid_path)?;
+    let mut pid_file = crate::util::permissions::create_private_file(pid_path)?;
     writeln!(pid_file, "{}", ops.pid())?;
 
     Ok(DaemonizeOutcome::ChildContinues)
@@ -135,6 +143,12 @@ fn daemonize_inner(
 #[cfg(unix)]
 fn redirect_fd(ops: &mut dyn ProcessOps, from: i32, to: i32) -> anyhow::Result<()> {
     if !ops.dup2(from, to) {
+        tracing::error!(
+            from,
+            to,
+            operation = "dup2",
+            "failed to redirect daemon file descriptor"
+        );
         return Err(anyhow!("failed to redirect file descriptor"));
     }
     Ok(())

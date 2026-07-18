@@ -187,9 +187,12 @@ pub fn append_with_export(
     let _guard = AUDIT_WRITE_LOCK
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
+    crate::util::permissions::ensure_private_dir(&repo_path.join(".kaptaind"))?;
     let primary_path = default_path(repo_path);
     append_to_path(&primary_path, entry)?;
+    crate::util::permissions::set_private_file(&primary_path)?;
     let integrity = append_chain_entry(&primary_path, entry)?;
+    crate::util::permissions::set_private_file(&chain_path(&primary_path))?;
 
     if let Some(export_path) = export.and_then(|config| config.jsonl_path.as_deref()) {
         // Avoid writing duplicate records when an operator explicitly selects
@@ -335,10 +338,14 @@ fn append_chain_entry(audit_path: &Path, entry: &AuditEntry) -> anyhow::Result<A
             .map(|record| record.entry_sha256.clone()),
         entry_sha256: digest(&serde_json::to_vec(entry)?),
     };
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(chain_path)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(chain_path)?;
     file.write_all(format!("{}\n", serde_json::to_string(&chain)?).as_bytes())?;
     file.sync_data()?;
     Ok(chain)
@@ -353,10 +360,14 @@ pub fn append_to_path(path: &Path, entry: &AuditEntry) -> anyhow::Result<()> {
         std::fs::create_dir_all(parent)?;
     }
     let line = serde_json::to_string(entry)?;
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
     file.write_all(format!("{}\n", line).as_bytes())?;
     file.sync_data()?;
     Ok(())

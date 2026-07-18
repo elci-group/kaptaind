@@ -1,6 +1,5 @@
 use clap::Parser;
 use kaptaind::util::style::*;
-use std::fs::File;
 
 #[derive(Parser)]
 #[command(
@@ -282,10 +281,12 @@ fn main() -> anyhow::Result<()> {
 
     if cli.daemon {
         let kaptaind_dir = config.repo_path.join(".kaptaind");
-        std::fs::create_dir_all(&kaptaind_dir)?;
+        kaptaind::util::permissions::ensure_private_dir(&kaptaind_dir)?;
 
-        let stdout = File::create(kaptaind_dir.join("daemon.out"))?;
-        let stderr = File::create(kaptaind_dir.join("daemon.err"))?;
+        let stdout_path = kaptaind_dir.join("daemon.out");
+        let stderr_path = kaptaind_dir.join("daemon.err");
+        let stdout = kaptaind::util::permissions::create_private_file(&stdout_path)?;
+        let stderr = kaptaind::util::permissions::create_private_file(&stderr_path)?;
 
         kaptaind::daemon::process::daemonize(
             &config.repo_path,

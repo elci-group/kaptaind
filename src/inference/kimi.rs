@@ -268,8 +268,9 @@ pub async fn generate(
     let endpoint = resolve_endpoint(config);
     let api_key = resolve_api_key(endpoint)?;
 
-    let client =
-        crate::util::http::hardened_client(Duration::from_secs(config.timeout_secs.max(30)));
+    let client = crate::util::http::hardened_inference_client(Duration::from_secs(
+        config.timeout_secs.max(30),
+    ));
 
     let model = resolve_model(config, endpoint);
     let system_prompt = build_system_prompt();

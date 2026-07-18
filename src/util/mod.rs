@@ -5,5 +5,6 @@ pub mod dotenv;
 pub mod file_lock;
 pub mod hex;
 pub mod http;
+pub mod permissions;
 pub mod shell_validation;
 pub mod style;

@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 #[cfg(unix)]
 use tokio::signal::unix::{signal, SignalKind};
+use tracing::Instrument;
 
 fn warn_if_git_lock_exists(repo_path: &Path) {
     let lock = repo_path.join(".git/index.lock");
@@ -39,7 +40,17 @@ fn encode_fragment_value(value: &str) -> String {
     encoded
 }
 
+#[tracing::instrument(
+    skip_all,
+    fields(
+        correlation_id = %uuid::Uuid::new_v4(),
+        repo_path = %config.repo_path.display()
+    )
+)]
 pub async fn start(config: Config) -> anyhow::Result<()> {
+    crate::util::permissions::harden_runtime_tree(&config.repo_path)
+        .context("failed to secure .kaptaind runtime state")?;
+
     // Local-user capability gate only — NOT network/HTTP auth. See `crate::rbac`.
     crate::rbac::check_permission(&config.rbac, "daemon.start")?;
 
@@ -116,7 +127,10 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
 
         // Watch for leadership loss and trigger shutdown if we lose the lease.
         let shutdown_handle_clone = shutdown_handle.clone();
-        tokio::spawn(watch_leadership_loss(leader_rx, shutdown_handle_clone));
+        tokio::spawn(
+            watch_leadership_loss(leader_rx, shutdown_handle_clone)
+                .instrument(tracing::Span::current()),
+        );
 
         Some(runtime)
     } else {
@@ -138,14 +152,15 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
         shark: shark_runtime.clone(),
     };
     let health_port = config.health_port;
-    tokio::spawn(async move {
+    let health_task = async move {
         if let Err(e) = start_health_server(health_port, health_state).await {
+            tracing::warn!(port = health_port, error = %e, "health server unavailable");
             // Health telemetry is an optional observability surface. The core
             // watcher/scheduler remains safe to run when a sandbox or another
             // local process prevents binding the configured loopback port.
-            tracing::warn!(port = health_port, error = %e, "health server unavailable");
         }
-    });
+    };
+    tokio::spawn(health_task.instrument(tracing::Span::current()));
 
     // Spawn optional WebUI endpoint
     if config.web_port != 0 {
@@ -171,11 +186,12 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
             allow_config_write: config.web.allow_config_write,
         };
         let web_port = config.web_port;
-        tokio::spawn(async move {
+        let web_task = async move {
             if let Err(e) = start_web_server(web_port, web_state).await {
                 tracing::error!(port = web_port, error = %e, "web server failed to start");
             }
-        });
+        };
+        tokio::spawn(web_task.instrument(tracing::Span::current()));
     }
 
     // Spawn scheduled pruning task
@@ -183,7 +199,7 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
     let prune_interval = Duration::from_secs(config.prune_interval_minutes * 60);
     let retention_days = config.retention_days;
     let prune_metrics = metrics.clone();
-    tokio::spawn(async move {
+    let prune_task = async move {
         let mut interval = tokio::time::interval(prune_interval);
         interval.tick().await; // first tick fires immediately
         loop {
@@ -199,7 +215,8 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
                 .artifacts_pruned
                 .fetch_add(result.deleted, Ordering::Relaxed);
         }
-    });
+    };
+    tokio::spawn(prune_task.instrument(tracing::Span::current()));
 
     let (tx, rx) = tokio::sync::mpsc::channel(1000);
     let atomic_shutdown = Arc::new(AtomicBool::new(false));
@@ -213,20 +230,26 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
             interval_minutes = config.deckhand.interval_minutes,
             "deckhand storage management enabled"
         );
-        tokio::spawn(crate::daemon::deckhand::start_storage_task(
-            config.clone(),
-            shutdown_token.clone_token(),
-            metrics.clone(),
-        ));
+        tokio::spawn(
+            crate::daemon::deckhand::start_storage_task(
+                config.clone(),
+                shutdown_token.clone_token(),
+                metrics.clone(),
+            )
+            .instrument(tracing::Span::current()),
+        );
     }
 
-    let scheduler = tokio::spawn(crate::daemon::scheduler::run(
-        rx,
-        config.clone(),
-        shutdown_token,
-        metrics.clone(),
-        event_tx,
-    ));
+    let scheduler = tokio::spawn(
+        crate::daemon::scheduler::run(
+            rx,
+            config.clone(),
+            shutdown_token,
+            metrics.clone(),
+            event_tx,
+        )
+        .instrument(tracing::Span::current()),
+    );
     tokio::pin!(scheduler);
 
     // Setup signal handlers: SIGINT on all platforms, SIGTERM on Unix. On

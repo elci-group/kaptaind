@@ -63,6 +63,9 @@ impl MonorepoFixture {
                 r#"
 health_port = {health_port}
 
+[trust]
+execution = "trusted"
+
 [watch]
 path = "."
 recursive = true
@@ -251,6 +254,9 @@ impl WorkspaceFixture {
             format!(
                 r#"
 health_port = {health_port}
+
+[trust]
+execution = "trusted"
 
 [watch]
 path = "."

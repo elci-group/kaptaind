@@ -131,6 +131,10 @@ branch = "main"
 [ratelimit]
 min_commit_interval = 10
 
+# This file and its detected test command were generated locally by `init`.
+[trust]
+execution = "trusted"
+
 [test]
 command = "{test_cmd}"
 required = true

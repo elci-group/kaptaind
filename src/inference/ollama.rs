@@ -83,7 +83,8 @@ pub async fn generate_with_model_and_prompt(
     user_prompt: &str,
     model: &str,
 ) -> Option<String> {
-    let client = crate::util::http::hardened_client(Duration::from_secs(config.timeout_secs));
+    let client =
+        crate::util::http::hardened_inference_client(Duration::from_secs(config.timeout_secs));
 
     let system_prompt = "You are a precise software commit message author. Write a single subject line (max 72 characters) describing what changed. Use conventional commit format (feat:, fix:, refactor:, chore:) when it fits. Output ONLY the subject line — no body, no explanation.";
 

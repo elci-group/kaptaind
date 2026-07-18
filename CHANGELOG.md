@@ -13,6 +13,27 @@ All notable changes to kaptaind are documented here. The format follows
 > here. Per-commit detail for the `v0.1.44 → v9.x` range lives in `git log`;
 > the consolidated capability set is summarized under `[9.7.16]` below.
 
+## [10.1.4] — 2026-07-18
+
+Patch release hardening automated commit and release boundaries identified by
+the code, security, dependency, architecture, and enterprise-readiness audit.
+
+### Security
+- Repository-supplied configuration now defaults to untrusted execution and
+  must explicitly opt into local hooks, plugins, builds, and bundle commands.
+- Outbound HTTP clients enforce the SSRF address policy during connection-time
+  DNS resolution, closing the validation-to-connect rebinding window.
+- `.kaptaind` runtime directories and files are created and maintained with
+  owner-only permissions, including daemon logs, PID files, and audit chains.
+
+### Fixed
+- Stale filesystem clusters can no longer borrow unrelated dirty worktree state
+  to create version-only commits.
+- Version, manifest, and lockfile writeback is transactional, verified, and
+  rolled back on failure so a commit cannot persist a divergent version tuple.
+- Release build commands rejected by shell validation now fail closed without
+  execution.
+
 ## [10.1.0] — 2026-07-15
 
 Minor release: workspace-aware version bumping, opt-in through v10.x

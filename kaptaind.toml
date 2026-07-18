@@ -256,3 +256,5 @@ retain_count = 7
 kind = "github-releases"
 draft = false
 prerelease = false
+[trust]
+execution = "trusted"

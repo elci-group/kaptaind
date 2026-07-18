@@ -749,7 +749,7 @@ external_plugins = true
 # to launch local programs. This mode permits inspection but rejects configured
 # hooks, plugins, baits, builds, and bundle commands until explicitly trusted.
 [trust]
-execution = "untrusted" # default: "trusted" for backwards compatibility
+execution = "untrusted" # default for repository-supplied configuration
 
 [commit]
 # sign = false

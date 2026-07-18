@@ -59,7 +59,8 @@ pub async fn generate(
             Message { role: "user", content: &user_prompt },
         ],
     };
-    let client = crate::util::http::hardened_client(Duration::from_secs(config.timeout_secs));
+    let client =
+        crate::util::http::hardened_inference_client(Duration::from_secs(config.timeout_secs));
     let mut call = client
         .post(url)
         .header("content-type", "application/json")
