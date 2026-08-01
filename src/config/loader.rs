@@ -10,6 +10,8 @@ use std::time::Duration;
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
     #[serde(default)]
+    pub operation: OperationConfig,
+    #[serde(default)]
     pub watch: WatchConfig,
     #[serde(default)]
     pub cluster: ClusterConfig,
@@ -94,6 +96,37 @@ pub struct Config {
     pub integrations: IntegrationsConfig,
     #[serde(default)]
     pub daemon: DaemonConfig,
+}
+
+/// Controls whether the daemon may perform repository mutations.
+///
+/// Observation is deliberately the default. Actuation requires an explicit
+/// `[operation] mode = "actuate"` declaration in the repository profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationMode {
+    Observe,
+    Actuate,
+}
+
+impl Default for OperationMode {
+    fn default() -> Self {
+        Self::Observe
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct OperationConfig {
+    #[serde(default)]
+    pub mode: OperationMode,
+}
+
+impl Default for OperationConfig {
+    fn default() -> Self {
+        Self {
+            mode: OperationMode::default(),
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -2230,6 +2263,7 @@ impl Config {
                 || self.ship.stable.sign == Some(true);
             if signing_requested && !gpg_available() {
                 tracing::warn!(
+                    component = module_path!(),
                     "ship signing is enabled but gpg is not available; signing will fail at runtime"
                 );
             }
@@ -2266,6 +2300,7 @@ impl Config {
 
         if self.commit.sign && !gpg_available() {
             tracing::warn!(
+                component = module_path!(),
                 "commit.sign is enabled but gpg is not available; signed commits will fail at runtime"
             );
         }
@@ -2315,6 +2350,7 @@ impl Default for Config {
     fn default() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         Self {
+            operation: OperationConfig::default(),
             watch: WatchConfig::default(),
             cluster: ClusterConfig::default(),
             weights: crate::weight::WeightConfig::default(),
@@ -2635,6 +2671,16 @@ mod tests {
     use super::{finalize_config, CapabilitiesConfig, Config};
     use std::path::PathBuf;
     use std::time::Duration;
+
+    #[test]
+    fn operation_defaults_to_observe() {
+        assert_eq!(
+            Config::default().operation.mode,
+            super::OperationMode::Observe
+        );
+        let parsed: Config = toml::from_str("[operation]\nmode = \"actuate\"\n").unwrap();
+        assert_eq!(parsed.operation.mode, super::OperationMode::Actuate);
+    }
 
     #[test]
     fn finalizes_relative_paths_against_repo_root() {

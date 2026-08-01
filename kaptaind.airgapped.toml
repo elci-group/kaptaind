@@ -1,4 +1,7 @@
 # KAPTAIND AIR-GAPPED PROFILE
+[operation]
+mode = "observe"
+
 air_gapped = true
 
 [push]

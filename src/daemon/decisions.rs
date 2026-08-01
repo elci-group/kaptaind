@@ -27,6 +27,7 @@ pub mod outcome {
     pub const ERROR: &str = "error";
     pub const PRE_COMMIT_HOOK_FAILED: &str = "pre_commit_hook_failed";
     pub const COMMIT_FAILED: &str = "commit_failed";
+    pub const OBSERVED: &str = "observed";
 }
 
 /// Score breakdown at decision time. Absent for exits that happen before diff
@@ -96,6 +97,7 @@ pub fn tail_decisions(repo_path: &Path, n: usize) -> std::io::Result<Vec<Decisio
     };
     let records: Vec<DecisionRecord> = content
         .lines()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .filter_map(|line| serde_json::from_str(line).ok())
         .collect();
     Ok(records.into_iter().rev().take(n).rev().collect())

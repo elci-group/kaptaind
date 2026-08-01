@@ -1,5 +1,8 @@
 # KAPTAIND SAFE DEFAULT PROFILE
 # Observation and analysis only. Actuation is intentionally disabled.
+[operation]
+mode = "observe"
+
 [push]
 enabled = false
 

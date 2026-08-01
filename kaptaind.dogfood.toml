@@ -1,5 +1,8 @@
 # KAPTAIND DOGFOOD PROFILE
 # Deliberately separate from product-safe defaults. Review every mutation.
+[operation]
+mode = "observe"
+
 [push]
 enabled = false
 
