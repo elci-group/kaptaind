@@ -1,0 +1,19 @@
+# KAPTAIND DOGFOOD PROFILE
+# Deliberately separate from product-safe defaults. Review every mutation.
+[push]
+enabled = false
+
+[capabilities]
+network_push = false
+
+[staging]
+mode = "cluster"
+
+[test]
+required = true
+
+[ship]
+enabled = false
+
+[inference]
+enabled = false
