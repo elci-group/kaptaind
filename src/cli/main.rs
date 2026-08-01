@@ -400,8 +400,8 @@ Examples:
     kaptaind-cli ci-hint --format github
 
 Notes:
-    The github format emits workflow annotations and set-output commands for
-    GitHub Actions."#)]
+    The github format emits workflow annotations and writes outputs through
+    the GITHUB_OUTPUT environment file."#)]
     CiHint {
         /// Output format: text (default), json, or github.
         #[arg(short, long, value_name = "FORMAT", default_value = "text")]
@@ -1843,7 +1843,14 @@ enum ProbeCommand {
 async fn main() -> anyhow::Result<()> {
     // Load optional `.env` file so provider API keys and other secrets can live
     // outside of `kaptaind.toml`.
-    let _ = kaptaind::util::dotenv::load();
+    if let Err(error) = kaptaind::util::dotenv::load() {
+        tracing::warn!(
+            ?error,
+            operation = "main",
+            source_line = line!(),
+            "best-effort operation failed"
+        );
+    }
 
     let cli = Cli::parse();
 

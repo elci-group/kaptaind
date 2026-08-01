@@ -1,17 +1,35 @@
 use kaptaind::config::loader::Config;
 use kaptaind::util::style::*;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+
+fn emit_github_output(qualified: bool, version: &str) -> anyhow::Result<()> {
+    let values = format!("qualified={qualified}\nversion={version}\n");
+    if let Ok(path) = std::env::var("GITHUB_OUTPUT") {
+        let mut output = OpenOptions::new().create(true).append(true).open(path)?;
+        output.write_all(values.as_bytes())?;
+    } else {
+        // Keep the command useful outside Actions without using deprecated
+        // stdout workflow commands.
+        print!("{values}");
+    }
+    Ok(())
+}
 
 pub fn handle_ci_hint(config: &Config, format: &str) -> anyhow::Result<()> {
     let kd = config.repo_path.join(".kaptaind");
 
     let stability = fs::read_to_string(kd.join("stability.json"))
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .and_then(|s| serde_json::from_str::<kaptaind::stability::model::StabilityRecord>(&s).ok());
 
     let release_index = fs::read_to_string(kd.join("releases").join("index.json"))
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
         .and_then(|s| {
+            // traci: allow -- optional failure is represented by None and handled by the caller.
             serde_json::from_str::<kaptaind::release::orchestrator::ReleaseIndex>(&s).ok()
         });
 
@@ -51,12 +69,10 @@ pub fn handle_ci_hint(config: &Config, format: &str) -> anyhow::Result<()> {
             // GitHub Actions workflow command format
             if qualified {
                 println!("::notice title=kaptaind::Release qualified — v{current_version} (stability={current_score:.3}, streak={pass_streak})");
-                println!("::set-output name=qualified::true");
-                println!("::set-output name=version::{current_version}");
+                emit_github_output(true, &current_version)?;
             } else {
                 println!("::warning title=kaptaind::Hold — stability={current_score:.3} (need {threshold:.3}), streak={pass_streak} (need {min_streak})");
-                println!("::set-output name=qualified::false");
-                println!("::set-output name=version::{current_version}");
+                emit_github_output(false, &current_version)?;
             }
         }
         _ => {
