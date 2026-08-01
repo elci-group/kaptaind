@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "kaptaind"
-version = "10.1.31"
+version = "10.1.32"
 edition = "2021"
 license = "MIT"
 default-run = "kaptaind"
