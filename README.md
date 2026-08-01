@@ -55,7 +55,7 @@ It eliminates manual version bumping and subjective commit messages by replacing
 - **Incremental LLM Gate:** Inference is skipped automatically when `weight.score < config.inference.min_score_for_inference`, saving API quota on trivial changes.
 - **Automated Commit Formatting:** Git commits are generated for each bump, summarizing what changed semantically (e.g., `kaptaind: Minor -> v0.2.0 [api-added; paths=4; api_touches=2; deps=0; runtime=0; score=0.62]`).
 - **Test Hook Gating:** Automatically runs a configurable test hook (like `cargo test`) before committing; fails block the commit entirely.
-- **Configurable staging:** Choose between staging all files (default), only cluster-touched files, or pattern-matched files. Exclude patterns prevent sensitive files from being committed.
+- **Configurable staging:** Choose between staging cluster-touched files (safe default), all files, or pattern-matched files. Exclude patterns prevent sensitive files from being committed.
 - **Aim of Change (AoC) sessions:** Group related changes into named sessions with full trace history, agent interception, and shipped manifests.
 - **Visual Asset Channel Saturation (VACS):** A capacity-aware background generation system that converts surplus inference capacity into high-value visual/documentation assets (like diagrams and architecture maps) linked directly to code changes. VACS operates opportunistically and surfaces assets in the CLI.
 - **Multi-Provider Inference Routing:** Intelligently routes commit message generation to the best available inference provider. Automatically detects and prioritizes: **Anthropic Claude** → **OpenAI GPT-4o** → **Local Ollama** fallback. No API keys needed; works offline with Ollama.
@@ -187,7 +187,7 @@ kaptaind-cli dashboard
 # CI/CD hint: release or hold recommendation based on stability and qualification
 kaptaind-cli ci-hint                  # plain text
 kaptaind-cli ci-hint --format json    # machine-readable JSON
-kaptaind-cli ci-hint --format github  # GitHub Actions annotations + set-output
+kaptaind-cli ci-hint --format github  # GitHub Actions annotations + GITHUB_OUTPUT
 
 # Ship release binaries, installers, and distribution channels
 kaptaind-cli ship plan                # Preview what would ship
@@ -346,7 +346,7 @@ Kaptaind operates entirely in the background, minimizing developer friction whil
    Before any commit, the daemon updates `.kaptaind/status.json` and runs the pre-configured test hook (`cargo test` by default). If tests fail, the workflow aborts. It also tracks the "token cost" of the diff size and commit message size, writing to `.kaptaind/telemetry.json`.
 
 6. **Version Bump & Git Orchestration (`src/version/`, `src/commit/`, `src/git/`)**: 
-   The weights are aggregated. Breaking APIs trigger `Major` bumps; new APIs trigger `Minor`; standard churn triggers `Patch`. The new version is flushed to the `VERSION` file (and `Cargo.toml` if present), a rich commit message is generated, and a JSON artifact is stored in `.kaptaind/analysis/` before Kaptaind's internal Git command adapter creates the commit via the system `git` executable. Staging is configurable: stage all files (default), only cluster-touched files, or pattern-matched files with optional excludes. Commits can be GPG-signed with `[commit] sign = true`. Pushes can enforce required CI status checks via `[push.protection]`. Notifications are dispatched via shell hooks, Discord/Slack webhooks, or both.
+   The weights are aggregated into a release-impact recommendation. Breaking APIs trigger `Major`; new APIs trigger `Minor`; standard churn triggers `Patch`. The recommendation and JSON analysis artifact are recorded for review; release version files are applied only by an approved release transaction. Staging is configurable: cluster-touched files are the safe default, with all-files and pattern modes requiring explicit configuration. Commits can be GPG-signed with `[commit] sign = true`. Pushes can enforce required CI status checks via `[push.protection]`. Notifications are dispatched via shell hooks, Discord/Slack webhooks, or both.
 
 7. **Access Control (`src/rbac/`)**: 
    On shared machines, `[rbac]` restricts privileged CLI commands and daemon startup to configured OS users and groups.
@@ -739,11 +739,11 @@ Capability flags, commit signing, and role-based access control for locked-down 
 
 ```toml
 [capabilities]
-network_push = true
-network_webhooks = true
-network_inference = true
-bundle_scoring = true
-external_plugins = true
+network_push = false
+network_webhooks = false
+network_inference = false
+bundle_scoring = false
+external_plugins = false
 
 # A cloned or otherwise unreviewed repository config is data, not authority
 # to launch local programs. This mode permits inspection but rejects configured
@@ -886,8 +886,8 @@ If the cache becomes stale or corrupted, safely delete `.kaptaind/ast_cache.json
 
 Three staging modes trade off safety vs. speed:
 
-- **`all` (default)**: Stages everything, then removes `exclude` patterns. Safest; minimal overhead.
-- **`cluster`**: Stages only changed files + `VERSION` + `Cargo.toml`. Fastest for large repos; excludes unrelated changes.
+- **`cluster` (default)**: Stages only observed changed files plus required metadata; excludes unrelated changes.
+- **`all`**: Stages everything, then removes `exclude` patterns. Use only with explicit review.
 - **`pattern`**: Stages files matching `include` globs, removes `exclude` patterns. Useful for monorepos with strict file boundaries.
 
 For monorepos with 1000+ files, `cluster` staging can reduce staging time by 10-20x.
@@ -899,7 +899,7 @@ Required test hooks block commits on failure, which can be expensive:
 ```toml
 [test]
 command = "cargo test"
-required = false  # Set to false to make hook optional; failures don't block
+required = true   # Safe default: failures block commits
 ```
 
 If tests are slow, consider running a fast smoke test in `kaptaind` and a full suite in CI/CD:
@@ -1191,11 +1191,10 @@ kaptaind-cli ci-hint --format json
 #   "recommendation": "release"
 # }
 
-# GitHub Actions (annotations + set-output)
+# GitHub Actions (annotations + GITHUB_OUTPUT)
 kaptaind-cli ci-hint --format github
 # ::notice title=kaptaind::Release qualified — v9.2.587 (stability=0.871, streak=5)
-# ::set-output name=qualified::true
-# ::set-output name=version::9.2.587
+# Writes qualified=true and version=9.2.587 to $GITHUB_OUTPUT
 ```
 
 ### Example GitHub Actions workflow
@@ -1414,7 +1413,7 @@ kaptaind-cli status
 **Fix**:
 ```toml
 [test]
-required = false  # Tests won't block, but will still be logged
+required = true   # Safe default; set false only in an explicitly named profile
 ```
 
 Or fix the failing tests.
