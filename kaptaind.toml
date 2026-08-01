@@ -1,6 +1,10 @@
 # kaptaind configuration — automated semantic versioning, commits, and releases.
 # Copy this file to kaptaind.toml in your repo root and adjust values as needed.
 
+# Safe product profile: analysis is enabled, repository mutation is not.
+[operation]
+mode = "observe"
+
 # Filesystem watcher settings.
 [watch]
 path = "."                    # Directory to watch (relative to repo_path)

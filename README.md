@@ -494,6 +494,9 @@ sudo kaptaind-cli service install-icon --system # /usr/share/icons
 Controls what is included in each automatic commit.
 
 ```toml
+[operation]
+mode = "observe"             # Safe default; use "actuate" only with policy approval
+
 [staging]
 mode = "cluster"             # "cluster" (default; stages only observed
                              # changes), "pattern", or "all" (git add -A;
