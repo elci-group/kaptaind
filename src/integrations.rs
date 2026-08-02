@@ -416,7 +416,15 @@ impl EventEnvelope {
 pub fn verify_hmac_sha256(payload: &[u8], signature: &str, secret: &[u8]) -> bool {
     let mut mac = match Hmac::<Sha256>::new_from_slice(secret) {
         Ok(mac) => mac,
-        Err(_) => return false,
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "verify_hmac_sha256",
+                source_line = line!(),
+                "verify hmac sha256 returned an error"
+            );
+            return false;
+        }
     };
     mac.update(payload);
     let expected = crate::util::hex::encode(mac.finalize().into_bytes());
@@ -445,12 +453,26 @@ pub fn record_delivery(repo_path: &Path, event: &EventEnvelope) -> anyhow::Resul
             Ok(())
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            tracing::error!(
+                ?error,
+                operation = "record_delivery",
+                source_line = line!(),
+                "record delivery returned an error"
+            );
             anyhow::bail!(
                 "duplicate integration delivery for {provider}/{}",
                 event.event_id
             )
         }
-        Err(error) => Err(error.into()),
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "record_delivery",
+                source_line = line!(),
+                "record delivery returned an error"
+            );
+            Err(error.into())
+        }
     }
 }
 

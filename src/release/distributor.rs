@@ -5,6 +5,7 @@ use std::path::Path;
 /// Dispatch the packaged artifacts to configured distribution targets.
 ///
 /// Supports local, S3, and Docker registry distribution.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn distribute(
     pkg: &PackageResult,
     config: &DistributionConfig,
@@ -75,6 +76,11 @@ pub async fn distribute(
     if had_success {
         Ok(())
     } else {
+        tracing::error!(
+            ?errors,
+            component = module_path!(),
+            "all configured distribution methods failed"
+        );
         Err(anyhow::anyhow!(
             "all distribution methods failed: {}",
             errors.join("; ")

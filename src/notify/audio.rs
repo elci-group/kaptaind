@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::env;
 use std::time::Instant;
 use tokio::process::Command;
+use tracing::Instrument;
 
 /// Provider selection for TTS.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -35,6 +36,7 @@ impl std::str::FromStr for TtsProvider {
             "azure" | "microsoft" => Ok(TtsProvider::Azure),
             "google" => Ok(TtsProvider::Google),
             "cartesia" => Ok(TtsProvider::Cartesia),
+            // traci: allow -- invalid provider text is a normal parse result surfaced by the caller.
             other => Err(format!("unknown TTS provider: {other}")),
         }
     }
@@ -86,16 +88,17 @@ pub fn speak(text: String, config: &TtsConfig) {
     let rate_limit = config.rate_limit_seconds;
 
     if rate_limit > 0 && is_rate_limited(rate_limit, &provider) {
-        tracing::debug!("TTS rate-limited");
+        tracing::debug!(component = module_path!(), "TTS rate-limited");
         return;
     }
 
-    tokio::spawn(async move {
+    let speech_task = async move {
         let provider = resolve_provider(&provider).await;
         if let Err(err) = speak_with_provider(&text, provider, voice.as_deref()).await {
             tracing::warn!(error = %err, provider = ?provider, "TTS failed");
         }
-    });
+    };
+    tokio::spawn(speech_task.in_current_span());
 }
 
 fn is_rate_limited(limit_seconds: u64, key: &str) -> bool {
@@ -192,11 +195,11 @@ async fn system_tts_available() -> bool {
 
 async fn system_speak(text: &str) -> anyhow::Result<()> {
     if cfg!(target_os = "macos") {
-        let _ = Command::new("say").arg(text).output().await?;
+        Command::new("say").arg(text).output().await?;
         return Ok(());
     }
     if cfg!(target_os = "linux") {
-        let _ = Command::new("espeak").arg(text).output().await?;
+        Command::new("espeak").arg(text).output().await?;
         return Ok(());
     }
     if cfg!(target_os = "windows") {
@@ -220,6 +223,7 @@ async fn elevenlabs_speak(text: &str, voice: Option<&str>) -> anyhow::Result<()>
     let api_key = env::var("ELEVENLABS_API_KEY")?;
     let voice_id = voice
         .map(|v| v.to_string())
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .or_else(|| env::var("ELEVENLABS_VOICE_ID").ok())
         .unwrap_or_else(|| "21m00Tcm4TlvDq8ikWAM".to_string());
 
@@ -251,6 +255,7 @@ async fn openai_speak(text: &str, voice: Option<&str>) -> anyhow::Result<()> {
     let model = env::var("OPENAI_TTS_MODEL").unwrap_or_else(|_| "tts-1".to_string());
     let voice = voice
         .map(|v| v.to_string())
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .or_else(|| env::var("OPENAI_TTS_VOICE").ok())
         .unwrap_or_else(|| "alloy".to_string());
 
@@ -320,7 +325,9 @@ async fn azure_speak(text: &str, voice: Option<&str>) -> anyhow::Result<()> {
 }
 
 async fn google_speak(text: &str, voice: Option<&str>) -> anyhow::Result<()> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let api_key = env::var("GOOGLE_API_KEY").ok();
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let credentials_json = env::var("GOOGLE_APPLICATION_CREDENTIALS_JSON").ok();
 
     let request_body = serde_json::json!({
@@ -367,6 +374,7 @@ async fn cartesia_speak(text: &str, voice: Option<&str>) -> anyhow::Result<()> {
     let api_key = env::var("CARTESIA_API_KEY")?;
     let voice_id = voice
         .map(|v| v.to_string())
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .or_else(|| env::var("CARTESIA_VOICE_ID").ok())
         .unwrap_or_else(|| "5347fbd2-11b2-4f18-9c48-03a39978ace1".to_string());
 
@@ -408,7 +416,14 @@ async fn play_audio_bytes(audio: &[u8]) -> anyhow::Result<()> {
 
     let result = play_audio_file(&path).await;
 
-    let _ = std::fs::remove_file(&path);
+    if let Err(error) = std::fs::remove_file(&path) {
+        tracing::warn!(
+            ?error,
+            operation = "play_audio_bytes",
+            source_line = line!(),
+            "best-effort operation failed"
+        );
+    }
 
     result
 }
@@ -431,7 +446,7 @@ async fn play_audio_file(path: &std::path::Path) -> anyhow::Result<()> {
     }
 
     if cfg!(target_os = "macos") {
-        let _ = Command::new("afplay").arg(path).output().await?;
+        Command::new("afplay").arg(path).output().await?;
     } else if cfg!(target_os = "linux") {
         for player in ["mpg123", "mpv", "cvlc"] {
             if Command::new("which")
@@ -440,7 +455,7 @@ async fn play_audio_file(path: &std::path::Path) -> anyhow::Result<()> {
                 .await
                 .is_ok_and(|o| o.status.success())
             {
-                let _ = Command::new(player).arg(path_str).output().await?;
+                Command::new(player).arg(path_str).output().await?;
                 return Ok(());
             }
         }

@@ -124,6 +124,7 @@ impl BaitManager {
                 match Self::discover_baits(&plugins_dir) {
                     Ok(discovered) => {
                         info!(
+                            component = module_path!(),
                             "Discovered {} baits from {}",
                             discovered.len(),
                             plugins_dir.display()
@@ -131,7 +132,10 @@ impl BaitManager {
                         baits.extend(discovered);
                     }
                     Err(e) => {
-                        warn!("Failed to discover baits: {}", e);
+                        warn!(
+                            component = module_path!(),
+                            "Failed to discover baits: {}", e
+                        );
                     }
                 }
             }
@@ -145,6 +149,7 @@ impl BaitManager {
     }
 
     /// Execute all baits that match the given event and files.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn trigger_event(
         &self,
         event: BaitEvent,
@@ -188,6 +193,7 @@ impl BaitManager {
     }
 
     /// Execute a specific bait by ID.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn execute_bait_by_id(
         &self,
         bait_id: &str,
@@ -202,8 +208,8 @@ impl BaitManager {
         let start = std::time::Instant::now();
 
         debug!(
-            "Executing bait {} ({}) of type {:?}",
-            bait.id, bait.name, bait.bait_type
+            component = module_path!(),
+            "Executing bait {} ({}) of type {:?}", bait.id, bait.name, bait.bait_type
         );
 
         let result = match bait.bait_type {
@@ -212,7 +218,10 @@ impl BaitManager {
             BaitType::Webhook => self.execute_webhook_bait(bait, context).await,
             BaitType::Native => {
                 // Native baits would require dynamic loading or registration
-                warn!("Native bait type not yet implemented: {}", bait.id);
+                warn!(
+                    component = module_path!(),
+                    "Native bait type not yet implemented: {}", bait.id
+                );
                 BaitResult::failure("Native bait type not implemented")
             }
         };
@@ -221,13 +230,16 @@ impl BaitManager {
 
         if result.success {
             info!(
-                "Bait {} completed successfully in {}ms",
-                bait.id, duration_ms
+                component = module_path!(),
+                "Bait {} completed successfully in {}ms", bait.id, duration_ms
             );
         } else {
             warn!(
+                component = module_path!(),
                 "Bait {} failed: exit_code={:?}, error={}",
-                bait.id, result.exit_code, result.stderr
+                bait.id,
+                result.exit_code,
+                result.stderr
             );
         }
 
@@ -330,7 +342,12 @@ impl BaitManager {
         };
 
         self.add_bait(bait.clone());
-        info!("Installed bait {} from {}", bait_name, source.display());
+        info!(
+            component = module_path!(),
+            "Installed bait {} from {}",
+            bait_name,
+            source.display()
+        );
 
         Ok(bait)
     }
@@ -346,10 +363,24 @@ impl BaitManager {
     ) -> BaitResult {
         let context_json = match serde_json::to_string(context) {
             Ok(json) => json,
-            Err(e) => return BaitResult::failure(format!("Failed to serialize context: {}", e)),
+            Err(e) => {
+                tracing::error!(
+                    ?e,
+                    operation = "execute_external_bait",
+                    source_line = line!(),
+                    "execute external bait returned an error"
+                );
+                return BaitResult::failure(format!("Failed to serialize context: {}", e));
+            }
         };
 
         if let Err(err) = crate::util::shell_validation::validate_shell_command(&bait.command) {
+            tracing::error!(
+                ?err,
+                operation = "execute_external_bait",
+                source_line = line!(),
+                "execute external bait returned an error"
+            );
             return BaitResult::failure(format!("rejected unsafe bait command: {err}"));
         }
 
@@ -371,10 +402,24 @@ impl BaitManager {
     async fn execute_shell_bait(&self, bait: &BaitDefinition, context: &BaitContext) -> BaitResult {
         let context_json = match serde_json::to_string(context) {
             Ok(json) => json,
-            Err(e) => return BaitResult::failure(format!("Failed to serialize context: {}", e)),
+            Err(e) => {
+                tracing::error!(
+                    ?e,
+                    operation = "execute_shell_bait",
+                    source_line = line!(),
+                    "execute shell bait returned an error"
+                );
+                return BaitResult::failure(format!("Failed to serialize context: {}", e));
+            }
         };
 
         if let Err(err) = crate::util::shell_validation::validate_shell_command(&bait.command) {
+            tracing::error!(
+                ?err,
+                operation = "execute_shell_bait",
+                source_line = line!(),
+                "execute shell bait returned an error"
+            );
             return BaitResult::failure(format!("rejected unsafe bait command: {err}"));
         }
 
@@ -404,12 +449,28 @@ impl BaitManager {
             .build()
         {
             Ok(c) => c,
-            Err(e) => return BaitResult::failure(format!("Failed to create HTTP client: {}", e)),
+            Err(e) => {
+                tracing::error!(
+                    ?e,
+                    operation = "execute_webhook_bait",
+                    source_line = line!(),
+                    "execute webhook bait returned an error"
+                );
+                return BaitResult::failure(format!("Failed to create HTTP client: {}", e));
+            }
         };
 
         let payload = match serde_json::to_value(context) {
             Ok(p) => p,
-            Err(e) => return BaitResult::failure(format!("Failed to serialize context: {}", e)),
+            Err(e) => {
+                tracing::error!(
+                    ?e,
+                    operation = "execute_webhook_bait",
+                    source_line = line!(),
+                    "execute webhook bait returned an error"
+                );
+                return BaitResult::failure(format!("Failed to serialize context: {}", e));
+            }
         };
 
         let start = std::time::Instant::now();
@@ -432,10 +493,17 @@ impl BaitManager {
                     stderr: String::new(),
                     duration_ms: start.elapsed().as_millis() as u64,
                     timed_out: false,
+                    // traci: allow -- optional failure is represented by None and handled by the caller.
                     data: serde_json::from_str(&body).ok(),
                 }
             }
             Err(e) => {
+                tracing::error!(
+                    ?e,
+                    operation = "execute_webhook_bait",
+                    source_line = line!(),
+                    "execute webhook bait returned an error"
+                );
                 if e.is_timeout() {
                     BaitResult::timeout()
                 } else {
@@ -453,6 +521,7 @@ impl BaitManager {
                 let stdout = String::from_utf8_lossy(&output.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
+                // traci: allow -- optional failure is represented by None and handled by the caller.
                 let data = serde_json::from_str(&stdout).ok();
 
                 BaitResult {
@@ -466,7 +535,15 @@ impl BaitManager {
                 }
             }
             Ok(Err(e)) => BaitResult::failure(format!("Process error: {}", e)),
-            Err(_) => BaitResult::timeout(),
+            Err(error) => {
+                tracing::error!(
+                    ?error,
+                    operation = "run_command_with_timeout",
+                    source_line = line!(),
+                    "run command with timeout returned an error"
+                );
+                BaitResult::timeout()
+            }
         }
     }
 

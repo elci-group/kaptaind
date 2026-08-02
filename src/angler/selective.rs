@@ -93,6 +93,7 @@ impl FileChange {
     pub fn with_content(mut self, max_size: u64) -> Result<Self> {
         if max_size > 0 && self.size > max_size {
             debug!(
+                component = module_path!(),
                 "Skipping content load for {}: {} bytes exceeds max {}",
                 self.path.display(),
                 self.size,
@@ -140,7 +141,10 @@ impl SelectiveEngine {
                     compiled_rules.push(compiled);
                 }
                 Err(e) => {
-                    warn!("Failed to compile rule {}: {}", rule.id, e);
+                    warn!(
+                        component = module_path!(),
+                        "Failed to compile rule {}: {}", rule.id, e
+                    );
                 }
             }
         }
@@ -149,6 +153,7 @@ impl SelectiveEngine {
         compiled_rules.sort_by_key(|b| std::cmp::Reverse(b.priority));
 
         info!(
+            component = module_path!(),
             "Selective engine initialized with {} rules",
             compiled_rules.len()
         );
@@ -172,6 +177,7 @@ impl SelectiveEngine {
 
             if self.rule_matches(rule, change) {
                 debug!(
+                    component = module_path!(),
                     "Rule {} matched for file {}",
                     rule.id,
                     change.path.display()
@@ -344,7 +350,15 @@ impl SelectiveEngine {
         for pattern in &rule.patterns {
             match glob::Pattern::new(pattern) {
                 Ok(p) => file_patterns.push(p),
-                Err(e) => return Err(anyhow!("Invalid file pattern '{}': {}", pattern, e)),
+                Err(e) => {
+                    tracing::error!(
+                        error = ?e,
+                        %pattern,
+                        operation = "compile_file_pattern",
+                        "capture rule file pattern is invalid"
+                    );
+                    return Err(anyhow!("Invalid file pattern '{}': {}", pattern, e));
+                }
             }
         }
 
@@ -353,7 +367,15 @@ impl SelectiveEngine {
         for pattern in &rule.content_patterns {
             match Regex::new(pattern) {
                 Ok(r) => content_patterns.push(r),
-                Err(e) => return Err(anyhow!("Invalid content pattern '{}': {}", pattern, e)),
+                Err(e) => {
+                    tracing::error!(
+                        error = ?e,
+                        %pattern,
+                        operation = "compile_content_pattern",
+                        "capture rule content pattern is invalid"
+                    );
+                    return Err(anyhow!("Invalid content pattern '{}': {}", pattern, e));
+                }
             }
         }
 
@@ -380,6 +402,7 @@ impl SelectiveEngine {
         // Check file size limit
         if rule.max_file_size > 0 && change.size > rule.max_file_size {
             debug!(
+                component = module_path!(),
                 "Skipping rule {} for {}: file size {} exceeds limit {}",
                 rule.id,
                 change.path.display(),
@@ -414,6 +437,7 @@ impl SelectiveEngine {
             } else {
                 // Can't check content without loading it
                 debug!(
+                    component = module_path!(),
                     "Skipping content check for {} - content not loaded",
                     change.path.display()
                 );

@@ -43,6 +43,7 @@ pub fn validate_schedule(schedule: &str) -> Result<(), String> {
 /// For `"local"`, `base` is converted to the system local timezone, the next
 /// fire time is computed in local time, and then converted back to UTC.
 pub fn next_fire_after(base: DateTime<Utc>, schedule: &str, tz: &str) -> Option<DateTime<Utc>> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let schedule = parse_schedule(schedule).ok()?;
 
     match tz.to_ascii_lowercase().as_str() {

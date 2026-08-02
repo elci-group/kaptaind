@@ -92,6 +92,7 @@ pub(crate) mod duration_string {
             return v
                 .trim()
                 .parse::<u64>()
+                // traci: allow -- optional failure is represented by None and handled by the caller.
                 .ok()
                 .map(|n| Duration::from_secs(n * 3600));
         }
@@ -99,13 +100,16 @@ pub(crate) mod duration_string {
             return v
                 .trim()
                 .parse::<u64>()
+                // traci: allow -- optional failure is represented by None and handled by the caller.
                 .ok()
                 .map(|n| Duration::from_secs(n * 60));
         }
         if let Some(v) = s.strip_suffix('s') {
+            // traci: allow -- optional failure is represented by None and handled by the caller.
             return v.trim().parse::<u64>().ok().map(Duration::from_secs);
         }
         // Plain number → seconds
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         s.trim().parse::<u64>().ok().map(Duration::from_secs)
     }
 }

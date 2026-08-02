@@ -26,7 +26,15 @@ pub fn start(
     {
         Ok(()) => Ok(handle),
         Err(message) => {
-            let _ = handle.join();
+            if let Err(error) = handle.join() {
+                tracing::warn!(
+                    ?error,
+                    operation = "start",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
+            tracing::error!(%message, operation = "watcher_start", "filesystem watcher failed to start");
             Err(anyhow!(message))
         }
     }
@@ -40,7 +48,14 @@ fn watch_loop(
 ) -> notify::Result<()> {
     let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |res| match res {
         Ok(event) => {
-            let _ = tx.blocking_send(FsEvent::from(event));
+            if let Err(error) = tx.blocking_send(FsEvent::from(event)) {
+                tracing::warn!(
+                    ?error,
+                    operation = "watch_loop",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
         }
         Err(err) => {
             tracing::error!(error = %err, "watch event error");
@@ -55,10 +70,24 @@ fn watch_loop(
 
     match watcher.watch(Path::new(&config.path), recursive_mode) {
         Ok(()) => {
-            let _ = ready_tx.send(Ok(()));
+            if let Err(error) = ready_tx.send(Ok(())) {
+                tracing::warn!(
+                    ?error,
+                    operation = "watch_loop",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
         }
         Err(err) => {
-            let _ = ready_tx.send(Err(err.to_string()));
+            if let Err(error) = ready_tx.send(Err(err.to_string())) {
+                tracing::warn!(
+                    ?error,
+                    operation = "watch_loop",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
             return Ok(());
         }
     }
@@ -73,6 +102,6 @@ fn watch_loop(
 pub fn join(handle: thread::JoinHandle<notify::Result<()>>) -> anyhow::Result<()> {
     let result = handle
         .join()
-        .map_err(|_| anyhow!("watcher thread panicked"))?;
+        .map_err(|error| anyhow!("watcher thread panicked: {error:?}"))?;
     result.map_err(Into::into)
 }

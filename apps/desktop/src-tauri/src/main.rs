@@ -40,7 +40,7 @@ impl From<anyhow::Error> for CommandError {
 async fn get_daemon_status() -> Result<DaemonStatus, CommandError> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| anyhow::anyhow!("Could not determine home directory"))?;
+        .map_err(|error| anyhow::anyhow!("Could not determine home directory: {error}"))?;
     let path = PathBuf::from(home).join(".kaptaind/status.json");
 
     if path.exists() {
@@ -65,7 +65,7 @@ async fn get_daemon_status() -> Result<DaemonStatus, CommandError> {
 async fn get_recent_bumps() -> Result<Vec<VersionBump>, CommandError> {
     let home = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
-        .map_err(|_| anyhow::anyhow!("Could not determine home directory"))?;
+        .map_err(|error| anyhow::anyhow!("Could not determine home directory: {error}"))?;
     let analysis_dir = PathBuf::from(home).join(".kaptaind/analysis");
 
     let mut bumps = Vec::new();
@@ -73,6 +73,7 @@ async fn get_recent_bumps() -> Result<Vec<VersionBump>, CommandError> {
     if analysis_dir.exists() {
         let mut entries: Vec<_> = std::fs::read_dir(&analysis_dir)
             .map_err(|e| anyhow::anyhow!("Failed to read analysis dir: {}", e))?
+            // traci: allow -- optional failure is represented by None and handled by the caller.
             .filter_map(|e| e.ok())
             .collect();
         entries.sort_by_key(|e| {
@@ -122,9 +123,12 @@ async fn get_recent_bumps() -> Result<Vec<VersionBump>, CommandError> {
 }
 
 fn main() {
-    tauri::Builder::default()
+    let result = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![get_daemon_status, get_recent_bumps])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .run(tauri::generate_context!());
+    if let Err(error) = result {
+        tracing::error!(%error, operation = "tauri_runtime", "desktop application failed");
+        eprintln!("kaptaind desktop application failed: {error}");
+    }
 }

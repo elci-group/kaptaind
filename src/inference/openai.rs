@@ -35,22 +35,27 @@ struct ChoiceMessage {
 
 /// Calls OpenAI Chat Completions API to generate a commit message subject line.
 /// Returns `None` if API key not set, on any error, or on empty response.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn generate(
     config: &InferenceConfig,
     ctx: &CommitContext<'_>,
     model: &str,
 ) -> Option<String> {
+    // traci: allow -- adjacent structured event records this failure path.
     if let Err(error) = crate::compliance::enforce_egress_url(
         EgressChannel::Inference,
         "https://api.openai.com/v1/chat/completions",
     ) {
-        tracing::warn!(%error, "regional policy blocked OpenAI inference");
+        tracing::warn!(component = module_path!(), %error, "regional policy blocked OpenAI inference");
         return None;
     }
     let api_key = match std::env::var("OPENAI_API_KEY") {
         Ok(key) => key,
         Err(_) => {
-            tracing::warn!("OPENAI_API_KEY not set; skipping OpenAI inference");
+            tracing::warn!(
+                component = module_path!(),
+                "OPENAI_API_KEY not set; skipping OpenAI inference"
+            );
             return None;
         }
     };
@@ -106,13 +111,16 @@ pub async fn generate(
     };
 
     if completion_response.choices.is_empty() {
-        tracing::warn!("openai returned no choices");
+        tracing::warn!(component = module_path!(), "openai returned no choices");
         return None;
     }
 
     let content = completion_response.choices[0].message.content.trim();
     if content.is_empty() {
-        tracing::warn!("openai message content was empty");
+        tracing::warn!(
+            component = module_path!(),
+            "openai message content was empty"
+        );
         return None;
     }
 
@@ -126,7 +134,10 @@ pub async fn generate(
         .collect::<String>();
 
     if subject.is_empty() {
-        tracing::warn!("openai subject line was empty after truncation");
+        tracing::warn!(
+            component = module_path!(),
+            "openai subject line was empty after truncation"
+        );
         return None;
     }
 

@@ -7,6 +7,7 @@ use tokio::time::{sleep, timeout};
 
 use crate::SharkCommand;
 
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn handle_shark(config: &Config, cmd: &SharkCommand) -> anyhow::Result<()> {
     let arbiter_path = config.shark_arbiter_path();
     let arbiter = FileArbiter::new(&arbiter_path)?;
@@ -157,10 +158,24 @@ pub async fn handle_shark(config: &Config, cmd: &SharkCommand) -> anyhow::Result
 
             // Wait for the standby to report healthy before asking the leader to retire.
             let ready_timeout = Duration::from_millis(*ready_timeout_ms);
+            // traci: allow -- this branch emits a structured readiness error before cleanup.
             if let Err(err) =
                 kaptaind::daemon::shark::wait_for_standby_ready(standby_port, ready_timeout).await
             {
-                let _ = child.kill();
+                tracing::error!(
+                    ?err,
+                    operation = "handle_shark",
+                    source_line = line!(),
+                    "handle shark returned an error"
+                );
+                if let Err(error) = child.kill() {
+                    tracing::warn!(
+                        ?error,
+                        operation = "handle_shark",
+                        source_line = line!(),
+                        "best-effort operation failed"
+                    );
+                }
                 anyhow::bail!("standby failed to become ready: {}", err);
             }
             println!("{} standby is healthy", "✅".green());
@@ -214,7 +229,14 @@ pub async fn handle_shark(config: &Config, cmd: &SharkCommand) -> anyhow::Result
                 }
                 _ => {
                     // Attempt to clean up the child and cancel retirement.
-                    let _ = child.kill();
+                    if let Err(error) = child.kill() {
+                        tracing::warn!(
+                            ?error,
+                            operation = "handle_shark",
+                            source_line = line!(),
+                            "best-effort operation failed"
+                        );
+                    }
                     kaptaind::daemon::shark::cancel_upgrade(&arbiter_path, &instance_id);
                     eprintln!(
                         "{} upgrade handoff timed out; old leader retains control",

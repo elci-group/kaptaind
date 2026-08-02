@@ -47,6 +47,7 @@ fn encode_fragment_value(value: &str) -> String {
         repo_path = %config.repo_path.display()
     )
 )]
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn start(config: Config) -> anyhow::Result<()> {
     crate::util::permissions::harden_runtime_tree(&config.repo_path)
         .context("failed to secure .kaptaind runtime state")?;
@@ -60,23 +61,41 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
     warn_if_git_lock_exists(&config.repo_path);
 
     if config.air_gapped {
-        tracing::warn!("air-gapped mode enabled: push, webhooks, and bundle scoring are disabled");
+        tracing::warn!(
+            component = module_path!(),
+            "air-gapped mode enabled: push, webhooks, and bundle scoring are disabled"
+        );
     }
 
     if !config.capabilities.network_push {
-        tracing::info!("capability network_push is disabled");
+        tracing::info!(
+            component = module_path!(),
+            "capability network_push is disabled"
+        );
     }
     if !config.capabilities.network_webhooks {
-        tracing::info!("capability network_webhooks is disabled");
+        tracing::info!(
+            component = module_path!(),
+            "capability network_webhooks is disabled"
+        );
     }
     if !config.capabilities.network_inference {
-        tracing::info!("capability network_inference is disabled");
+        tracing::info!(
+            component = module_path!(),
+            "capability network_inference is disabled"
+        );
     }
     if !config.capabilities.bundle_scoring {
-        tracing::info!("capability bundle_scoring is disabled");
+        tracing::info!(
+            component = module_path!(),
+            "capability bundle_scoring is disabled"
+        );
     }
     if !config.capabilities.external_plugins {
-        tracing::info!("capability external_plugins is disabled");
+        tracing::info!(
+            component = module_path!(),
+            "capability external_plugins is disabled"
+        );
     }
 
     let metrics = Arc::new(Metrics::default());
@@ -88,7 +107,10 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
 
     // Start optional Shark Stating task and wait for leadership before running scheduler.
     let shark_runtime: Option<Arc<crate::daemon::shark::SharkRuntime>> = if config.shark.enabled {
-        tracing::info!("shark stating enabled; waiting for leadership");
+        tracing::info!(
+            component = module_path!(),
+            "shark stating enabled; waiting for leadership"
+        );
         let (runtime, mut leader_rx) = crate::daemon::shark::start_shark_task(
             config.clone(),
             shutdown_token.clone_token(),
@@ -119,9 +141,15 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
         };
 
         if leader_or_shutdown.await {
-            tracing::info!("acquired shark leadership; starting scheduler");
+            tracing::info!(
+                component = module_path!(),
+                "acquired shark leadership; starting scheduler"
+            );
         } else {
-            tracing::info!("shutdown requested while waiting for leadership; exiting");
+            tracing::info!(
+                component = module_path!(),
+                "shutdown requested while waiting for leadership; exiting"
+            );
             return Ok(());
         }
 
@@ -268,11 +296,11 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
             result.context("scheduler task join failed")?;
         }
         _ = tokio::signal::ctrl_c() => {
-            tracing::info!("SIGINT received, initiating graceful shutdown");
+            tracing::info!(component = module_path!(), "SIGINT received, initiating graceful shutdown");
             shutdown_handle.signal();
         }
         _ = sigterm => {
-            tracing::info!("SIGTERM received, initiating graceful shutdown");
+            tracing::info!(component = module_path!(), "SIGTERM received, initiating graceful shutdown");
             shutdown_handle.signal();
         }
     }
@@ -290,6 +318,7 @@ pub async fn start(config: Config) -> anyhow::Result<()> {
             .is_err()
     {
         tracing::error!(
+            component = module_path!(),
             "scheduler shutdown timeout ({:?}), forcing exit",
             shutdown_timeout
         );
@@ -325,7 +354,10 @@ async fn watch_leadership_loss(
             break;
         }
         if !*leader_rx.borrow() {
-            tracing::warn!("leadership lost; initiating graceful shutdown");
+            tracing::warn!(
+                component = module_path!(),
+                "leadership lost; initiating graceful shutdown"
+            );
             shutdown_handle.signal();
             break;
         }

@@ -24,7 +24,9 @@ impl VersionCache {
     pub fn load(repo_path: &Path) -> Self {
         let path = repo_path.join(CACHE_FILE);
         std::fs::read_to_string(&path)
+            // traci: allow -- optional failure is represented by None and handled by the caller.
             .ok()
+            // traci: allow -- optional failure is represented by None and handled by the caller.
             .and_then(|c| serde_json::from_str(&c).ok())
             .unwrap_or_default()
     }
@@ -33,9 +35,11 @@ impl VersionCache {
     pub fn save(&self, repo_path: &Path) {
         let path = repo_path.join(CACHE_FILE);
         if let Some(parent) = path.parent() {
+            // traci: allow -- this dependency-light library treats cache persistence as optional.
             let _ = std::fs::create_dir_all(parent);
         }
         if let Ok(json) = serde_json::to_string_pretty(self) {
+            // traci: allow -- this dependency-light library treats cache persistence as optional.
             let _ = std::fs::write(&path, json);
         }
     }

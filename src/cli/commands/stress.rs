@@ -286,6 +286,7 @@ fn git_rev(repo: &Path) -> Option<String> {
         .args(["rev-parse", "HEAD"])
         .current_dir(repo)
         .output()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -491,6 +492,13 @@ impl TempDir {
 
 impl Drop for TempDir {
     fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.path);
+        if let Err(error) = std::fs::remove_dir_all(&self.path) {
+            tracing::warn!(
+                ?error,
+                operation = "drop",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
     }
 }

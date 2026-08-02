@@ -111,13 +111,22 @@ fn walkdir(path: &Path) -> u64 {
 }
 
 fn load_state(path: &Path) -> Option<BundleState> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let content = std::fs::read_to_string(path).ok()?;
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     serde_json::from_str(&content).ok()
 }
 
 fn save_state(path: &Path, state: &BundleState) {
     if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            tracing::warn!(
+                ?error,
+                operation = "save_state",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
     }
     let _ = std::fs::write(
         path,

@@ -31,22 +31,27 @@ struct ContentBlock {
 
 /// Calls Anthropic Messages API to generate a commit message subject line.
 /// Returns `None` if API key not set, on any error, or on empty response.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn generate(
     config: &InferenceConfig,
     ctx: &CommitContext<'_>,
     model: &str,
 ) -> Option<String> {
+    // traci: allow -- adjacent structured event records this failure path.
     if let Err(error) = crate::compliance::enforce_egress_url(
         EgressChannel::Inference,
         "https://api.anthropic.com/v1/messages",
     ) {
-        tracing::warn!(%error, "regional policy blocked Anthropic inference");
+        tracing::warn!(component = module_path!(), %error, "regional policy blocked Anthropic inference");
         return None;
     }
     let api_key = match std::env::var("ANTHROPIC_API_KEY") {
         Ok(key) => key,
         Err(_) => {
-            tracing::warn!("ANTHROPIC_API_KEY not set; skipping Anthropic inference");
+            tracing::warn!(
+                component = module_path!(),
+                "ANTHROPIC_API_KEY not set; skipping Anthropic inference"
+            );
             return None;
         }
     };
@@ -98,13 +103,16 @@ pub async fn generate(
     };
 
     if msg_response.content.is_empty() {
-        tracing::warn!("anthropic returned empty content");
+        tracing::warn!(
+            component = module_path!(),
+            "anthropic returned empty content"
+        );
         return None;
     }
 
     let content = msg_response.content[0].text.trim();
     if content.is_empty() {
-        tracing::warn!("anthropic text was empty");
+        tracing::warn!(component = module_path!(), "anthropic text was empty");
         return None;
     }
 
@@ -118,7 +126,10 @@ pub async fn generate(
         .collect::<String>();
 
     if subject.is_empty() {
-        tracing::warn!("anthropic subject line was empty after truncation");
+        tracing::warn!(
+            component = module_path!(),
+            "anthropic subject line was empty after truncation"
+        );
         return None;
     }
 

@@ -15,6 +15,7 @@ pub struct PushOptions {
     pub protect_branches: Vec<String>,
 }
 
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn push(
     repo_path: &Path,
     options: &PushOptions,
@@ -86,6 +87,12 @@ async fn push_with_audit(
                 ));
             }
             Err(e) => {
+                tracing::error!(
+                    ?e,
+                    operation = "push_with_audit",
+                    source_line = line!(),
+                    "push with audit returned an error"
+                );
                 last_error = Some(anyhow::anyhow!("Failed to execute git command: {}", e));
             }
         }
@@ -95,6 +102,7 @@ async fn push_with_audit(
                 * retry.backoff_multiplier.powi((attempt - 1) as i32))
             .min(retry.max_delay_ms as f64) as u64;
             tracing::debug!(
+                component = module_path!(),
                 "push attempt {} failed, retrying in {}ms",
                 attempt,
                 delay_ms
@@ -115,6 +123,7 @@ async fn push_with_audit(
         false,
         Some(&err.to_string()),
     );
+    tracing::error!(error = ?err, attempts = retry.max_attempts, "git push exhausted its retry budget");
     Err(err)
 }
 
@@ -125,6 +134,7 @@ async fn push_with_audit(
 /// queried for both legacy commit statuses and GitHub Actions check runs. In
 /// all other cases the function falls back to a local `.kaptaind/ci-status.json`
 /// file, or returns `Ok` if no local override is present.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn check_branch_protection(
     repo_path: &Path,
     options: &PushOptions,
@@ -154,7 +164,10 @@ pub async fn check_branch_protection(
     };
 
     let Some(token_env) = protection.github_token_env.as_deref() else {
-        tracing::warn!("github_token_env not configured; falling back to local CI status check");
+        tracing::warn!(
+            component = module_path!(),
+            "github_token_env not configured; falling back to local CI status check"
+        );
         return local_ci_status_check(repo_path, protection).await;
     };
 

@@ -36,10 +36,16 @@ fn read_version_file(repo_path: &Path) -> Option<anyhow::Result<semver::Version>
     let content = match std::fs::read_to_string(&version_path) {
         Ok(content) => content,
         Err(e) => {
+            tracing::error!(
+                ?e,
+                operation = "read_version_file",
+                source_line = line!(),
+                "read version file returned an error"
+            );
             return Some(Err(anyhow::anyhow!(
                 "failed to read {}: {e}",
                 version_path.display()
-            )))
+            )));
         }
     };
     Some(semver::Version::parse(content.trim()).map_err(|e| {
@@ -62,19 +68,31 @@ fn read_manifest_version(repo_path: &Path) -> Option<anyhow::Result<semver::Vers
     let content = match std::fs::read_to_string(&cargo_path) {
         Ok(content) => content,
         Err(e) => {
+            tracing::error!(
+                ?e,
+                operation = "read_manifest_version",
+                source_line = line!(),
+                "read manifest version returned an error"
+            );
             return Some(Err(anyhow::anyhow!(
                 "failed to read {}: {e}",
                 cargo_path.display()
-            )))
+            )));
         }
     };
     let doc = match content.parse::<toml_edit::DocumentMut>() {
         Ok(doc) => doc,
         Err(e) => {
+            tracing::error!(
+                ?e,
+                operation = "read_manifest_version",
+                source_line = line!(),
+                "read manifest version returned an error"
+            );
             return Some(Err(anyhow::anyhow!(
                 "failed to parse {}: {e}",
                 cargo_path.display()
-            )))
+            )));
         }
     };
     let raw = doc
@@ -142,7 +160,7 @@ pub fn check_consistency(
     match policy {
         VersionConsistency::Strict => anyhow::bail!(detail),
         VersionConsistency::Warn => {
-            tracing::warn!(%version_file, %manifest, "version sources disagree; using VERSION");
+            tracing::warn!(component = module_path!(), %version_file, %manifest, "version sources disagree; using VERSION");
             Ok(())
         }
         VersionConsistency::Off => Ok(()), // unreachable: returned early above

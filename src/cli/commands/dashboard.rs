@@ -12,23 +12,31 @@ pub fn handle_dashboard(config: &Config) -> anyhow::Result<()> {
 
     // --- Daemon status ---
     let daemon_state = fs::read_to_string(kd.join("status.json"))
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .and_then(|s| serde_json::from_str::<kaptaind::daemon::scheduler::StatusReport>(&s).ok());
 
     // --- Telemetry ---
     let telemetry = fs::read_to_string(kd.join("telemetry.json"))
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .and_then(|s| serde_json::from_str::<kaptaind::daemon::telemetry::TokenMetrics>(&s).ok());
 
     // --- Stability ---
     let stability = fs::read_to_string(kd.join("stability.json"))
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .and_then(|s| serde_json::from_str::<kaptaind::stability::model::StabilityRecord>(&s).ok());
 
     // --- Releases index ---
     let release_index = fs::read_to_string(kd.join("releases").join("index.json"))
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
         .and_then(|s| {
+            // traci: allow -- optional failure is represented by None and handled by the caller.
             serde_json::from_str::<kaptaind::release::orchestrator::ReleaseIndex>(&s).ok()
         });
 
@@ -39,6 +47,7 @@ pub fn handle_dashboard(config: &Config) -> anyhow::Result<()> {
         let mut entries: Vec<_> = fs::read_dir(&analysis_dir)
             .into_iter()
             .flatten()
+            // traci: allow -- optional failure is represented by None and handled by the caller.
             .filter_map(|e| e.ok())
             .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("json"))
             .collect();

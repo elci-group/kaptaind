@@ -55,7 +55,9 @@ pub fn load_index(repo_path: &Path) -> ReleaseIndex {
         return ReleaseIndex::default();
     }
     std::fs::read_to_string(&path)
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .and_then(|c| serde_json::from_str(&c).ok())
         .unwrap_or_default()
 }
@@ -78,9 +80,23 @@ pub fn append_index(
         tarball,
     });
     let releases_dir = repo_path.join(".kaptaind").join("releases");
-    let _ = std::fs::create_dir_all(&releases_dir);
+    if let Err(error) = std::fs::create_dir_all(&releases_dir) {
+        tracing::warn!(
+            ?error,
+            operation = "append_index",
+            source_line = line!(),
+            "best-effort operation failed"
+        );
+    }
     if let Ok(content) = serde_json::to_string_pretty(&index) {
-        let _ = write_atomic(&releases_dir.join("index.json"), &content);
+        if let Err(error) = write_atomic(&releases_dir.join("index.json"), &content) {
+            tracing::warn!(
+                ?error,
+                operation = "append_index",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
     }
 }
 
@@ -90,7 +106,9 @@ pub fn load_ship_index(repo_path: &Path) -> ShipIndex {
         return ShipIndex::default();
     }
     std::fs::read_to_string(&path)
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .and_then(|c| serde_json::from_str(&c).ok())
         .unwrap_or_default()
 }
@@ -113,8 +131,22 @@ pub fn append_ship_index(
         artifacts: artifacts.to_vec(),
     });
     let ship_dir = repo_path.join(".kaptaind").join("ship");
-    let _ = std::fs::create_dir_all(&ship_dir);
+    if let Err(error) = std::fs::create_dir_all(&ship_dir) {
+        tracing::warn!(
+            ?error,
+            operation = "append_ship_index",
+            source_line = line!(),
+            "best-effort operation failed"
+        );
+    }
     if let Ok(content) = serde_json::to_string_pretty(&index) {
-        let _ = write_atomic(&ship_dir.join("index.json"), &content);
+        if let Err(error) = write_atomic(&ship_dir.join("index.json"), &content) {
+            tracing::warn!(
+                ?error,
+                operation = "append_ship_index",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
     }
 }

@@ -29,7 +29,9 @@ fn verify_fresh_timestamp(timestamp: &str, now: DateTime<Utc>, provider: &str) -
         .unwrap_or_else(|_| {
             DateTime::parse_from_rfc3339(timestamp)
                 .map(|value| value.with_timezone(&Utc))
-                .map_err(|_| anyhow::anyhow!("{provider} signature timestamp is invalid"))
+                .map_err(|error| {
+                    anyhow::anyhow!("{provider} signature timestamp is invalid: {error}")
+                })
         })?;
     let age = now.signed_duration_since(timestamp).num_seconds();
     if !(-SLACK_MAX_FUTURE_SECONDS..=SLACK_MAX_AGE_SECONDS).contains(&age) {
@@ -98,6 +100,7 @@ fn validate_notification(request: &OutboundNotification<'_>) -> Result<String> {
 /// Send a governed provider notification through Kaptaind's hardened outbound
 /// HTTP client. The caller owns provider-specific payload shaping and secret
 /// resolution; this primitive owns policy, egress, idempotency and audit.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn send_notification(request: OutboundNotification<'_>) -> Result<()> {
     let destination = validate_notification(&request)?;
     let payload_sha256 =
@@ -123,6 +126,7 @@ pub async fn send_notification(request: OutboundNotification<'_>) -> Result<()> 
             "tenant_id": request.connector.tenant_id,
             "idempotency_key": request.idempotency_key,
             "payload_sha256": payload_sha256,
+            // traci: allow -- optional failure is represented by None and handled by the caller.
             "status": response.as_ref().ok().map(|value| value.status().as_u16()),
         }),
     );
@@ -133,7 +137,15 @@ pub async fn send_notification(request: OutboundNotification<'_>) -> Result<()> 
             request.connector.provider,
             response.status()
         ),
-        Err(error) => Err(error.into()),
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "send_notification",
+                source_line = line!(),
+                "send notification returned an error"
+            );
+            Err(error.into())
+        }
     }
 }
 
@@ -151,7 +163,8 @@ fn verify_prefixed_hmac(
 fn base64url_decode(value: &str) -> Result<Vec<u8>> {
     let mut standard = value.replace('-', "+").replace('_', "/");
     standard.extend(std::iter::repeat_n('=', (4 - standard.len() % 4) % 4));
-    crate::util::base64::decode(&standard).map_err(|_| anyhow::anyhow!("invalid base64url value"))
+    crate::util::base64::decode(&standard)
+        .map_err(|error| anyhow::anyhow!("invalid base64url value: {error}"))
 }
 
 fn base64url_encode(value: &[u8]) -> String {
@@ -193,7 +206,7 @@ pub fn verify_monday_jwt_at(token: &str, signing_secret: &[u8], now: DateTime<Ut
     // re-serialized JSON representation (whose whitespace/key order may vary).
     let signed = format!("{header}.{payload}");
     let mut mac = hmac::Hmac::<Sha256>::new_from_slice(signing_secret)
-        .map_err(|_| anyhow::anyhow!("monday signing secret is invalid"))?;
+        .map_err(|error| anyhow::anyhow!("monday signing secret is invalid: {error:?}"))?;
     mac.update(signed.as_bytes());
     let expected = base64url_encode(&mac.finalize().into_bytes());
     if !crate::util::constant_time::constant_time_eq(signature.as_bytes(), expected.as_bytes()) {
@@ -295,7 +308,7 @@ pub fn verify_gitlab_signature_at(
         .strip_prefix("whsec_")
         .unwrap_or(signing_token);
     let key = crate::util::base64::decode(token)
-        .map_err(|_| anyhow::anyhow!("GitLab signing token is not valid base64"))?;
+        .map_err(|error| anyhow::anyhow!("GitLab signing token is not valid base64: {error}"))?;
     if key.is_empty() {
         bail!("GitLab signing token must not be empty");
     }
@@ -303,7 +316,7 @@ pub fn verify_gitlab_signature_at(
     let mut signed_payload = signed_payload;
     signed_payload.extend_from_slice(body);
     let mut mac = hmac::Hmac::<Sha256>::new_from_slice(&key)
-        .map_err(|_| anyhow::anyhow!("GitLab signing key is invalid"))?;
+        .map_err(|error| anyhow::anyhow!("GitLab signing key is invalid: {error:?}"))?;
     mac.update(&signed_payload);
     let expected = format!(
         "v1,{}",

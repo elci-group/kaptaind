@@ -33,6 +33,11 @@ fn space_impl(path: &Path) -> io::Result<Space> {
     unsafe {
         let mut buf: libc::statvfs = std::mem::zeroed();
         if libc::statvfs(c_path.as_ptr(), &mut buf) != 0 {
+            tracing::error!(
+                operation = "space_impl",
+                source_line = line!(),
+                "space impl returned an error"
+            );
             return Err(io::Error::last_os_error());
         }
         Ok(Space {
@@ -68,6 +73,11 @@ fn space_impl(path: &Path) -> io::Result<Space> {
     let rc = unsafe { GetDiskFreeSpaceExW(wide.as_ptr(), &mut available, &mut total, &mut free) };
 
     if rc == 0 {
+        tracing::error!(
+            operation = "GetDiskFreeSpaceExW",
+            source_line = line!(),
+            "GetDiskFreeSpaceExW returned an error"
+        );
         return Err(io::Error::last_os_error());
     }
 
@@ -76,6 +86,7 @@ fn space_impl(path: &Path) -> io::Result<Space> {
 
 #[cfg(not(any(unix, windows)))]
 fn space_impl(_path: &Path) -> io::Result<Space> {
+    // traci: allow -- unsupported platforms return a typed capability error to the caller.
     Err(io::Error::new(
         io::ErrorKind::Unsupported,
         "disk space queries are not supported on this platform",

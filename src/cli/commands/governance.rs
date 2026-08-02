@@ -25,11 +25,14 @@ fn control(id: &'static str, result: anyhow::Result<()>) -> Control {
             status: "pass",
             detail: "verified".to_string(),
         },
-        Err(error) => Control {
-            id,
-            status: "fail",
-            detail: error.to_string(),
-        },
+        Err(error) => {
+            tracing::warn!(?error, control_id = id, "governance control failed");
+            Control {
+                id,
+                status: "fail",
+                detail: error.to_string(),
+            }
+        }
     }
 }
 
@@ -39,6 +42,7 @@ fn assess(config: &Config) -> GovernanceAssessment {
         if config.governance.enforce_enterprise_controls {
             Ok(())
         } else {
+            // traci: allow -- a failed enterprise-posture control is represented as assessment data.
             Err(anyhow::anyhow!(
                 "[governance].enforce_enterprise_controls is false"
             ))
@@ -64,11 +68,18 @@ fn assess(config: &Config) -> GovernanceAssessment {
                 "signed_release_policy",
                 policy.validate_enterprise_release_controls(),
             )),
-            Err(error) => controls.push(Control {
-                id: "signed_release_policy",
-                status: "fail",
-                detail: error.to_string(),
-            }),
+            Err(error) => {
+                tracing::warn!(
+                    ?error,
+                    control_id = "signed_release_policy",
+                    "governance policy control failed"
+                );
+                controls.push(Control {
+                    id: "signed_release_policy",
+                    status: "fail",
+                    detail: error.to_string(),
+                });
+            }
         }
         controls.push(control(
             "audit_chain",

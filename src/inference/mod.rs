@@ -59,6 +59,7 @@ pub fn resolve_model<'a>(config: &'a InferenceConfig, provider: &str) -> &'a str
 }
 
 /// Top-level dispatcher — routes to the selected validation mode and provider.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn generate_commit_message(
     config: &InferenceConfig,
     ctx: &CommitContext<'_>,
@@ -73,7 +74,12 @@ pub async fn generate_commit_message(
         ValidationMode::Fast => {
             let provider = resolve_provider(config);
             let model = resolve_model(config, provider);
-            tracing::info!(provider, model, "fast mode: inference provider selected");
+            tracing::info!(
+                component = module_path!(),
+                provider,
+                model,
+                "fast mode: inference provider selected"
+            );
 
             match provider {
                 "anthropic" => anthropic::generate(config, ctx, model).await,

@@ -57,6 +57,7 @@ impl RepoContext {
         } else {
             git_relative
                 .strip_prefix(&prefix)
+                // traci: allow -- optional failure is represented by None and handled by the caller.
                 .ok()
                 .map(Path::to_path_buf)
         }
@@ -71,6 +72,11 @@ impl Repo {
             .context("failed to run git rev-parse")?;
 
         if !output.status.success() {
+            tracing::error!(
+                operation = "open",
+                source_line = line!(),
+                "open returned an error"
+            );
             return Err(anyhow!(
                 "not a git repository: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
@@ -122,6 +128,11 @@ impl Repo {
                 .context("failed to run git rev-parse HEAD")?;
 
             if !output.status.success() {
+                tracing::error!(
+                    operation = "head_commit_hash",
+                    source_line = line!(),
+                    "head commit hash returned an error"
+                );
                 return Err(git_error("rev-parse HEAD", &output));
             }
 
@@ -137,6 +148,11 @@ pub fn ensure_git_available() -> anyhow::Result<()> {
         .context("failed to run git --version")?;
 
     if !output.status.success() {
+        tracing::error!(
+            operation = "ensure_git_available",
+            source_line = line!(),
+            "ensure git available returned an error"
+        );
         return Err(git_error("--version", &output));
     }
 
@@ -150,6 +166,11 @@ pub fn changed_paths(repo_path: &Path) -> anyhow::Result<Vec<PathBuf>> {
         .context("failed to run git status")?;
 
     if !output.status.success() {
+        tracing::error!(
+            operation = "changed_paths",
+            source_line = line!(),
+            "changed paths returned an error"
+        );
         return Err(git_error("status --porcelain", &output));
     }
 
@@ -163,6 +184,11 @@ pub fn run_git(repo_path: &Path, args: &[&str]) -> anyhow::Result<()> {
         .with_context(|| format!("failed to run git {}", args.join(" ")))?;
 
     if !output.status.success() {
+        tracing::error!(
+            operation = "run_git",
+            source_line = line!(),
+            "run git returned an error"
+        );
         return Err(git_error(&args.join(" "), &output));
     }
 
@@ -186,6 +212,11 @@ pub fn commit_signed(repo_path: &Path, msg: &str, gpg_key_id: Option<&str>) -> a
     };
 
     if !output.status.success() {
+        tracing::error!(
+            operation = "commit_signed",
+            source_line = line!(),
+            "commit signed returned an error"
+        );
         return Err(git_error("commit -S", &output));
     }
 
@@ -229,6 +260,11 @@ pub fn dirty_path_count(repo_path: &Path) -> anyhow::Result<usize> {
         .output()
         .context("failed to run git status --porcelain")?;
     if !output.status.success() {
+        tracing::error!(
+            operation = "dirty_path_count",
+            source_line = line!(),
+            "dirty path count returned an error"
+        );
         return Err(git_error("status --porcelain", &output));
     }
     Ok(String::from_utf8_lossy(&output.stdout)

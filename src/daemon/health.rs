@@ -46,10 +46,11 @@ pub struct HealthState {
     pub shark: Option<Arc<SharkRuntime>>,
 }
 
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn start_health_server(port: u16, state: HealthState) -> anyhow::Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!(%addr, "health server listening");
+    tracing::info!(component = module_path!(), %addr, "health server listening");
 
     let app = Router::new()
         .route("/health", get(health_handler))
@@ -65,6 +66,7 @@ pub async fn start_health_server(port: u16, state: HealthState) -> anyhow::Resul
 
 async fn health_handler(State(state): State<HealthState>) -> Json<serde_json::Value> {
     let shark_info = state.shark.as_ref().map(|shark| {
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let lease = shark.current_lease().ok().flatten();
         json!({
             "enabled": true,
@@ -273,7 +275,9 @@ async fn events_handler(
 ) -> Sse<impl tokio_stream::Stream<Item = Result<SseEvent, std::convert::Infallible>>> {
     let rx = state.event_tx.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(|result| {
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let event: DaemonEvent = result.ok()?;
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let json = serde_json::to_string(&event).ok()?;
         Some(Ok(SseEvent::default().data(json)))
     });

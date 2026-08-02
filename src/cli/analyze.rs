@@ -6,6 +6,12 @@ pub fn handle_analyze(config: &Config) -> anyhow::Result<()> {
     let repo = match kaptaind::git::repo::Repo::open(&config.repo_path) {
         Ok(repo) => repo,
         Err(err) => {
+            tracing::error!(
+                ?err,
+                operation = "handle_analyze",
+                source_line = line!(),
+                "handle analyze returned an error"
+            );
             anyhow::bail!(
                 "Could not open Git repository at {}: {}",
                 config.repo_path.display(),

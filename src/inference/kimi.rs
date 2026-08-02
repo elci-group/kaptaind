@@ -260,6 +260,7 @@ fn build_user_prompt(ctx: &CommitContext<'_>, endpoint: KimiEndpoint) -> String 
 
 /// Calls Kimi API to generate a commit message subject line.
 /// Returns `None` if API key not set, on any error, or on empty response.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn generate(
     config: &InferenceConfig,
     ctx: &CommitContext<'_>,
@@ -369,13 +370,13 @@ pub async fn generate(
     }
 
     if chat_response.choices.is_empty() {
-        tracing::warn!("kimi returned no choices");
+        tracing::warn!(component = module_path!(), "kimi returned no choices");
         return None;
     }
 
     let content = chat_response.choices[0].message.content.trim();
     if content.is_empty() {
-        tracing::warn!("kimi message content was empty");
+        tracing::warn!(component = module_path!(), "kimi message content was empty");
         return None;
     }
 
@@ -394,7 +395,10 @@ pub async fn generate(
         .collect::<String>();
 
     if subject.is_empty() {
-        tracing::warn!("kimi subject line was empty after truncation");
+        tracing::warn!(
+            component = module_path!(),
+            "kimi subject line was empty after truncation"
+        );
         return None;
     }
 

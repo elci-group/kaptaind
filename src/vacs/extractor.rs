@@ -263,7 +263,10 @@ impl ConceptExtractor {
 
         // Track concepts for recurrence detection
         {
-            let mut history = self.history.lock().unwrap();
+            let mut history = self
+                .history
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             for concept in &concepts {
                 history.push((
                     concept.concept_id.clone(),
@@ -344,7 +347,10 @@ impl ConceptExtractor {
     }
 
     fn calculate_recurrence(&self, concept_type: ConceptType, files: &[String]) -> u32 {
-        let history = self.history.lock().unwrap();
+        let history = self
+            .history
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
 
         let type_matches = history.iter().filter(|(_, ct)| *ct == concept_type).count();
 

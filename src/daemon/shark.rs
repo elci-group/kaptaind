@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;
+use tracing::Instrument;
 
 /// A held leadership lease.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -181,7 +182,14 @@ impl FileArbiter {
         })?;
         let result = f();
         // Best-effort unlock; the OS will release the lock when the file is closed anyway.
-        let _ = file.unlock();
+        if let Err(error) = file.unlock() {
+            tracing::warn!(
+                ?error,
+                operation = "with_lock",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
         result
     }
 }
@@ -234,7 +242,14 @@ impl Arbiter for FileArbiter {
         self.with_lock(|| {
             if let Some(lease) = self.read_lease()? {
                 if lease.instance_id == instance_id {
-                    let _ = std::fs::remove_file(&self.lease_path);
+                    if let Err(error) = std::fs::remove_file(&self.lease_path) {
+                        tracing::warn!(
+                            ?error,
+                            operation = "release",
+                            source_line = line!(),
+                            "best-effort operation failed"
+                        );
+                    }
                 }
             }
             Ok(())
@@ -325,7 +340,14 @@ where
             }
         }
     }
-    Err(last_err.unwrap_or_else(|| anyhow::anyhow!("shark operation exhausted retries")))
+    let error = last_err.unwrap_or_else(|| anyhow::anyhow!("shark operation exhausted retries"));
+    tracing::error!(
+        ?error,
+        max_retries,
+        component = module_path!(),
+        "shark operation exhausted its retry budget"
+    );
+    Err(error)
 }
 
 /// Start the Shark Stating task.
@@ -333,6 +355,7 @@ where
 /// Returns a watch receiver that is `true` when this instance holds leadership.
 /// If leadership is lost, the receiver flips to `false` and the caller should
 /// initiate graceful shutdown.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn start_shark_task(
     config: Config,
     mut shutdown: crate::daemon::shutdown::ShutdownToken,
@@ -364,14 +387,21 @@ pub async fn start_shark_task(
     let event_tx_clone = event_tx.clone();
     let metrics_clone = metrics.clone();
 
-    let task = tokio::spawn(async move {
+    let shark_task = async move {
         let mut interval = tokio::time::interval(heartbeat);
         let mut retire_marker: Option<RetireMarker> = None;
         interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         if observer {
             role.store(InstanceRole::Observer);
-            let _ = tx_clone.send(false);
+            if let Err(error) = tx_clone.send(false) {
+                tracing::warn!(
+                    ?error,
+                    operation = "start_shark_task",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
             emit_event(
                 &event_tx_clone,
                 "shark.observer",
@@ -379,7 +409,14 @@ pub async fn start_shark_task(
             );
         } else {
             role.store(InstanceRole::Standby);
-            let _ = tx_clone.send(false);
+            if let Err(error) = tx_clone.send(false) {
+                tracing::warn!(
+                    ?error,
+                    operation = "start_shark_task",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
         }
 
         loop {
@@ -393,10 +430,12 @@ pub async fn start_shark_task(
                     if retire_marker.is_none() {
                         match check_retire_marker(&arbiter, &instance_id).await {
                             Ok(Some(marker)) => {
-                                tracing::info!("retire marker found; entering retiring state");
+                                tracing::info!(component = module_path!(), "retire marker found; entering retiring state");
                                 role.store(InstanceRole::Retiring);
                                 upgrade_in_progress.store(true, Ordering::SeqCst);
-                                *upgrade_started_at.lock().unwrap() = Some(Utc::now());
+                                *upgrade_started_at
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner()) = Some(Utc::now());
                                 emit_event(
                                     &event_tx_clone,
                                     "shark.retire_marked",
@@ -444,7 +483,7 @@ pub async fn start_shark_task(
                             continue;
                         }
 
-                        tracing::info!("standby is healthy; releasing leadership for upgrade");
+                        tracing::info!(component = module_path!(), "standby is healthy; releasing leadership for upgrade");
                         if let Err(err) = with_backoff(
                             || async { arbiter.release(&instance_id) },
                             3,
@@ -467,7 +506,9 @@ pub async fn start_shark_task(
                             .await;
                             continue;
                         }
-                        let _ = tx_clone.send(false);
+                        if let Err(error) = tx_clone.send(false) {
+                            tracing::warn!(?error, operation = "start_shark_task", source_line = line!(), "best-effort operation failed");
+                        }
                         emit_event(
                             &event_tx_clone,
                             "shark.retired",
@@ -480,7 +521,9 @@ pub async fn start_shark_task(
                         match wait_for_lease_change(&arbiter, &instance_id, handoff_timeout).await {
                             Ok(Some(lease)) => {
                                 upgrade_in_progress.store(false, Ordering::SeqCst);
-                                *upgrade_started_at.lock().unwrap() = None;
+                                *upgrade_started_at
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner()) = None;
                                 emit_event(
                                     &event_tx_clone,
                                     "shark.upgrade_complete",
@@ -504,7 +547,12 @@ pub async fn start_shark_task(
                                 );
                                 break;
                             }
-                            Ok(None) | Err(_) => {
+                            result @ (Ok(None) | Err(_)) => {
+                                tracing::error!(
+                                    ?result,
+                                    operation = "leadership_handoff",
+                                    "standby failed to acquire leadership"
+                                );
                                 rollback_upgrade(
                                     arbiter.clone(),
                                     instance_id.clone(),
@@ -534,9 +582,11 @@ pub async fn start_shark_task(
                                 Duration::from_millis(50),
                             ).await {
                                 Ok(true) => {
-                                    tracing::info!("acquired shark leadership");
+                                    tracing::info!(component = module_path!(), "acquired shark leadership");
                                     role.store(InstanceRole::Leader);
-                                    let _ = tx_clone.send(true);
+                                    if let Err(error) = tx_clone.send(true) {
+                                        tracing::warn!(?error, operation = "start_shark_task", source_line = line!(), "best-effort operation failed");
+                                    }
                                     inc_metric(&metrics_clone, |m| &m.shark_leadership_acquired);
                                     emit_event(
                                         &event_tx_clone,
@@ -551,7 +601,7 @@ pub async fn start_shark_task(
                                             tracing::debug!(leader = %lease.instance_id, "leader alive");
                                         }
                                         _ => {
-                                            tracing::warn!("leader lease missing or expired; will retry");
+                                            tracing::warn!(component = module_path!(), "leader lease missing or expired; will retry");
                                             role.store(InstanceRole::Candidate);
                                         }
                                     }
@@ -568,12 +618,14 @@ pub async fn start_shark_task(
                                 Duration::from_millis(50),
                             ).await {
                                 Ok(true) => {
-                                    tracing::trace!("renewed shark leadership");
+                                    tracing::trace!(component = module_path!(), "renewed shark leadership");
                                 }
                                 Ok(false) => {
-                                    tracing::error!("lost shark leadership");
+                                    tracing::error!(component = module_path!(), "lost shark leadership");
                                     role.store(InstanceRole::Standby);
-                                    let _ = tx_clone.send(false);
+                                    if let Err(error) = tx_clone.send(false) {
+                                        tracing::warn!(?error, operation = "start_shark_task", source_line = line!(), "best-effort operation failed");
+                                    }
                                     inc_metric(&metrics_clone, |m| &m.shark_leadership_lost);
                                     emit_event(
                                         &event_tx_clone,
@@ -596,14 +648,16 @@ pub async fn start_shark_task(
                     }
                 }
                 _ = shutdown.wait() => {
-                    tracing::info!("shark task received shutdown signal");
+                    tracing::info!(component = module_path!(), "shark task received shutdown signal");
                     let _ = with_backoff(
                         || async { arbiter.release(&instance_id) },
                         3,
                         Duration::from_millis(50),
                     ).await;
                     role.store(InstanceRole::Standby);
-                    let _ = tx_clone.send(false);
+                    if let Err(error) = tx_clone.send(false) {
+                        tracing::warn!(?error, operation = "start_shark_task", source_line = line!(), "best-effort operation failed");
+                    }
                     emit_event(
                         &event_tx_clone,
                         "shark.shutdown",
@@ -613,7 +667,8 @@ pub async fn start_shark_task(
                 }
             }
         }
-    });
+    };
+    let task = tokio::spawn(shark_task.in_current_span());
 
     // Wait briefly for the task to settle into an initial role before returning.
     let deadline = tokio::time::Instant::now() + timeout;
@@ -626,9 +681,12 @@ pub async fn start_shark_task(
     }
 
     // Keep the task alive by not awaiting it here; the runtime owns the handle.
-    tokio::spawn(async move {
-        let _ = task.await;
-    });
+    let ownership_task = async move {
+        if let Err(error) = task.await {
+            tracing::error!(%error, operation = "shark_runtime", "shark runtime task failed");
+        }
+    };
+    tokio::spawn(ownership_task.in_current_span());
 
     Ok((runtime, rx))
 }
@@ -705,6 +763,7 @@ pub fn cancel_upgrade(arbiter_path: &Path, instance_id: &str) {
 }
 
 /// Wait until `predicate` returns true or timeout elapses.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn wait_for<F>(mut predicate: F, timeout: Duration) -> Result<()>
 where
     F: FnMut() -> Result<bool>,
@@ -721,6 +780,7 @@ where
 }
 
 /// Spawn a standby instance for zero-downtime upgrade.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn spawn_standby(
     repo_path: &Path,
     binary_path: &Path,
@@ -802,9 +862,18 @@ async fn rollback_upgrade(
     } else {
         InstanceRole::Candidate
     });
-    let _ = tx.send(reclaimed);
+    if let Err(error) = tx.send(reclaimed) {
+        tracing::warn!(
+            ?error,
+            operation = "rollback_upgrade",
+            source_line = line!(),
+            "best-effort operation failed"
+        );
+    }
     upgrade_in_progress.store(false, Ordering::SeqCst);
-    *upgrade_started_at.lock().unwrap() = None;
+    *upgrade_started_at
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = None;
     emit_event(
         &event_tx,
         "shark.upgrade_rollback",
@@ -835,6 +904,7 @@ async fn wait_for_lease_change(
 }
 
 /// Poll a kaptaind health endpoint until it returns `"status": "ok"`.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn wait_for_standby_ready(health_port: u16, timeout: Duration) -> Result<()> {
     let url = format!("http://127.0.0.1:{}/health", health_port);
     let start = tokio::time::Instant::now();

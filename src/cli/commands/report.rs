@@ -311,6 +311,7 @@ fn overall_verdict(sections: &BTreeMap<String, Section>) -> Verdict {
 
 /// Read the last non-empty line of `path` and extract `<MARKER>=<int>`.
 fn read_exit_marker(path: &Path, marker: &str) -> Option<i32> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let content = std::fs::read_to_string(path).ok()?;
     let last = content.lines().rev().find(|l| !l.trim().is_empty())?;
     extract_marker(last, marker).or_else(|| extract_marker(last, "EXIT"))
@@ -324,11 +325,14 @@ fn extract_marker(line: &str, marker: &str) -> Option<i32> {
         .chars()
         .take_while(|c| *c == '-' || c.is_ascii_digit())
         .collect();
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     digits.parse().ok()
 }
 
 fn read_json_bool(path: &Path, key: &str) -> Option<bool> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let content = std::fs::read_to_string(path).ok()?;
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let value: serde_json::Value = serde_json::from_str(&content).ok()?;
     value.get(key)?.as_bool()
 }
@@ -336,7 +340,9 @@ fn read_json_bool(path: &Path, key: &str) -> Option<bool> {
 fn host_from_doctor(path: Option<&Path>) -> HostInfo {
     let read = || -> Option<serde_json::Value> {
         let p = path?;
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let content = std::fs::read_to_string(p).ok()?;
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         serde_json::from_str(&content).ok()
     };
     let doc = read();
@@ -365,6 +371,7 @@ fn host_from_doctor(path: Option<&Path>) -> HostInfo {
 /// Latest `*.json` in `dir` by lexicographic name (timestamp-named), skipping
 /// the `latest.json` pointer.
 fn latest_json(dir: &Path) -> Option<PathBuf> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let entries = std::fs::read_dir(dir).ok()?;
     let mut names: Vec<PathBuf> = entries
         .flatten()
@@ -379,6 +386,7 @@ fn latest_json(dir: &Path) -> Option<PathBuf> {
 }
 
 fn read_version(repo: &Path) -> Option<String> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let v = std::fs::read_to_string(repo.join("VERSION")).ok()?;
     let v = v.trim().to_string();
     if v.is_empty() {
@@ -397,6 +405,7 @@ fn git_dirty(repo: &Path) -> Option<bool> {
         .args(["status", "--porcelain"])
         .current_dir(repo)
         .output()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()?;
     if !out.status.success() {
         return None;
@@ -409,6 +418,7 @@ fn run_git(repo: &Path, args: &[&str]) -> Option<String> {
         .args(args)
         .current_dir(repo)
         .output()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()?;
     if !out.status.success() {
         return None;
@@ -422,6 +432,7 @@ fn run_git(repo: &Path, args: &[&str]) -> Option<String> {
 }
 
 fn run_version(bin: &str, args: &[&str]) -> Option<String> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let out = std::process::Command::new(bin).args(args).output().ok()?;
     if !out.status.success() {
         return None;
@@ -434,6 +445,7 @@ fn run_version(bin: &str, args: &[&str]) -> Option<String> {
 }
 
 fn hash_file(path: &Path) -> Option<String> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let bytes = std::fs::read(path).ok()?;
     let mut hasher = Sha256::new();
     hasher.update(&bytes);

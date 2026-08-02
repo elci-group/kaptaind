@@ -96,7 +96,10 @@ impl GitHookManager {
     /// delegate to kaptaind.
     pub fn install_hooks(&self) -> Result<()> {
         if !self.config.enabled {
-            info!("Git hooks management is disabled");
+            info!(
+                component = module_path!(),
+                "Git hooks management is disabled"
+            );
             return Ok(());
         }
 
@@ -148,6 +151,7 @@ impl GitHookManager {
         }
 
         info!(
+            component = module_path!(),
             "Installed {} git hooks",
             hooks.len() + self.config.custom.len()
         );
@@ -174,7 +178,10 @@ impl GitHookManager {
             let hook_path = self.hooks_dir.join(name);
             if hook_path.exists() && self.is_kaptaind_managed(&hook_path)? {
                 std::fs::remove_file(&hook_path)?;
-                debug!("Removed kaptaind-managed hook: {}", name);
+                debug!(
+                    component = module_path!(),
+                    "Removed kaptaind-managed hook: {}", name
+                );
             }
         }
 
@@ -182,15 +189,19 @@ impl GitHookManager {
             let hook_path = self.hooks_dir.join(name);
             if hook_path.exists() && self.is_kaptaind_managed(&hook_path)? {
                 std::fs::remove_file(&hook_path)?;
-                debug!("Removed kaptaind-managed custom hook: {}", name);
+                debug!(
+                    component = module_path!(),
+                    "Removed kaptaind-managed custom hook: {}", name
+                );
             }
         }
 
-        info!("Uninstalled kaptaind git hooks");
+        info!(component = module_path!(), "Uninstalled kaptaind git hooks");
         Ok(())
     }
 
     /// Execute a specific hook.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn execute_hook(
         &self,
         hook_name: &str,
@@ -202,7 +213,10 @@ impl GitHookManager {
         let config = match config {
             Some(c) => c,
             None => {
-                debug!("No configuration found for hook: {}", hook_name);
+                debug!(
+                    component = module_path!(),
+                    "No configuration found for hook: {}", hook_name
+                );
                 return Ok(HookResult::success());
             }
         };
@@ -218,7 +232,10 @@ impl GitHookManager {
             });
 
             if !should_run {
-                debug!("Skipping hook {} - no matching files", hook_name);
+                debug!(
+                    component = module_path!(),
+                    "Skipping hook {} - no matching files", hook_name
+                );
                 return Ok(HookResult::success());
             }
         }
@@ -227,11 +244,13 @@ impl GitHookManager {
     }
 
     /// Run pre-commit hooks.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn run_pre_commit(&self, staged_files: &[PathBuf]) -> Result<HookResult> {
         self.execute_hook("pre-commit", &[], staged_files).await
     }
 
     /// Run prepare-commit-msg hook.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn run_prepare_commit_msg(
         &self,
         commit_msg_file: &Path,
@@ -249,17 +268,20 @@ impl GitHookManager {
     }
 
     /// Run commit-msg hook.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn run_commit_msg(&self, commit_msg_file: &Path) -> Result<HookResult> {
         let args = vec![commit_msg_file.to_string_lossy().to_string()];
         self.execute_hook("commit-msg", &args, &[]).await
     }
 
     /// Run post-commit hook.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn run_post_commit(&self) -> Result<HookResult> {
         self.execute_hook("post-commit", &[], &[]).await
     }
 
     /// Run pre-push hook.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn run_pre_push(
         &self,
         remote_name: &str,
@@ -277,6 +299,7 @@ impl GitHookManager {
     }
 
     /// Run post-checkout hook.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn run_post_checkout(
         &self,
         prev_head: &str,
@@ -292,6 +315,7 @@ impl GitHookManager {
     }
 
     /// Run post-merge hook.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn run_post_merge(&self, is_squash: bool) -> Result<HookResult> {
         let args = vec![if is_squash { "1" } else { "0" }.to_string()];
         self.execute_hook("post-merge", &args, &[]).await
@@ -321,6 +345,7 @@ impl GitHookManager {
         if hook_path.exists() && !self.is_kaptaind_managed(&hook_path)? {
             let backup_path = hook_path.with_extension("local");
             warn!(
+                component = module_path!(),
                 "Existing hook {} found, backing up to {}",
                 name,
                 backup_path.display()
@@ -339,7 +364,10 @@ impl GitHookManager {
             std::fs::set_permissions(&hook_path, perms)?;
         }
 
-        info!("Installed hook script: {}", name);
+        info!(
+            component = module_path!(),
+            "Installed hook script: {}", name
+        );
         Ok(())
     }
 
@@ -396,8 +424,8 @@ exec kaptaind-cli angler exec-hook {} "$@"
         }
 
         debug!(
-            "Executing hook {}: {} (timeout: {}s)",
-            hook_name, config.command, config.timeout_secs
+            component = module_path!(),
+            "Executing hook {}: {} (timeout: {}s)", hook_name, config.command, config.timeout_secs
         );
 
         let timeout_duration = Duration::from_secs(config.timeout_secs);
@@ -406,7 +434,10 @@ exec kaptaind-cli angler exec-hook {} "$@"
         let child = match cmd.spawn() {
             Ok(child) => child,
             Err(e) => {
-                error!("Failed to spawn hook {}: {}", hook_name, e);
+                error!(
+                    component = module_path!(),
+                    "Failed to spawn hook {}: {}", hook_name, e
+                );
                 return Ok(HookResult::failure(format!("Spawn error: {}", e)));
             }
         };
@@ -421,13 +452,16 @@ exec kaptaind-cli angler exec-hook {} "$@"
                 timed_out: false,
             },
             Ok(Err(e)) => {
-                error!("Hook {} process error: {}", hook_name, e);
+                error!(
+                    component = module_path!(),
+                    "Hook {} process error: {}", hook_name, e
+                );
                 HookResult::failure(format!("Process error: {}", e))
             }
             Err(_) => {
                 warn!(
-                    "Hook {} timed out after {}s",
-                    hook_name, config.timeout_secs
+                    component = module_path!(),
+                    "Hook {} timed out after {}s", hook_name, config.timeout_secs
                 );
                 HookResult::timeout()
             }
@@ -435,18 +469,23 @@ exec kaptaind-cli angler exec-hook {} "$@"
 
         if !result.success && config.required {
             error!(
+                component = module_path!(),
                 "Required hook {} failed: exit_code={:?}, stderr={}",
-                hook_name, result.exit_code, result.stderr
+                hook_name,
+                result.exit_code,
+                result.stderr
             );
         } else if !result.success {
             warn!(
+                component = module_path!(),
                 "Optional hook {} failed (non-blocking): exit_code={:?}",
-                hook_name, result.exit_code
+                hook_name,
+                result.exit_code
             );
         } else {
             debug!(
-                "Hook {} completed successfully in {}ms",
-                hook_name, result.duration_ms
+                component = module_path!(),
+                "Hook {} completed successfully in {}ms", hook_name, result.duration_ms
             );
         }
 
@@ -489,6 +528,7 @@ fn git_root(repo_path: &Path) -> Option<PathBuf> {
         .arg(repo_path)
         .args(["rev-parse", "--show-toplevel"])
         .output()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()?;
     if !output.status.success() {
         return None;
@@ -530,7 +570,15 @@ pub fn list_hooks(repo_path: &Path) -> Result<Vec<HookInfo>> {
 
         let is_managed = match std::fs::read_to_string(&path) {
             Ok(content) => content.contains("KAPTAIND MANAGED HOOK"),
-            Err(_) => false,
+            Err(error) => {
+                tracing::error!(
+                    ?error,
+                    operation = "list_hooks",
+                    source_line = line!(),
+                    "list hooks returned an error"
+                );
+                false
+            }
         };
 
         let metadata = std::fs::metadata(&path)?;

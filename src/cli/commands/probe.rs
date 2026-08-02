@@ -73,14 +73,28 @@ fn unreachable(endpoint: &str, port: u16, json: bool) -> anyhow::Result<()> {
 fn oneshot(port: u16, path: &str, accept: &str, json: bool) -> anyhow::Result<()> {
     let (status, body) = match http_get(port, path, accept) {
         Ok(r) => r,
-        Err(_) => return unreachable(path, port, json),
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "oneshot",
+                source_line = line!(),
+                "oneshot returned an error"
+            );
+            return unreachable(path, port, json);
+        }
     };
 
     if json {
         // If the body is JSON, pass it through; otherwise wrap it.
         match serde_json::from_str::<serde_json::Value>(&body) {
             Ok(v) => println!("{}", serde_json::to_string_pretty(&v)?),
-            Err(_) => {
+            Err(error) => {
+                tracing::error!(
+                    ?error,
+                    operation = "oneshot",
+                    source_line = line!(),
+                    "oneshot returned an error"
+                );
                 let wrapped = serde_json::json!({
                     "status": status,
                     "endpoint": path,
@@ -105,7 +119,15 @@ fn oneshot(port: u16, path: &str, accept: &str, json: bool) -> anyhow::Result<()
 fn stream_sse(port: u16, path: &str, json: bool) -> anyhow::Result<()> {
     let stream = match connect(port, path, "text/event-stream") {
         Ok(s) => s,
-        Err(_) => return unreachable(path, port, json),
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "stream_sse",
+                source_line = line!(),
+                "stream sse returned an error"
+            );
+            return unreachable(path, port, json);
+        }
     };
     let mut reader = BufReader::new(stream);
     // Skip response headers.
@@ -137,7 +159,15 @@ fn stream_sse(port: u16, path: &str, json: bool) -> anyhow::Result<()> {
                 }
             }
             Err(err) if err.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
+            Err(error) => {
+                tracing::error!(
+                    ?error,
+                    operation = "stream_sse",
+                    source_line = line!(),
+                    "stream sse returned an error"
+                );
+                break;
+            }
         }
     }
     Ok(())
@@ -169,13 +199,22 @@ fn http_get(port: u16, path: &str, accept: &str) -> std::io::Result<(u16, String
     // Read until EOF (Connection: close). A read timeout bounds a misbehaving server.
     match reader.read_to_string(&mut body) {
         Ok(_) => {}
+        // traci: allow -- read timeouts intentionally return the partial response body as success.
         Err(err)
             if err.kind() == std::io::ErrorKind::TimedOut
                 || err.kind() == std::io::ErrorKind::WouldBlock =>
         {
             // Partial body is acceptable; return what we have.
         }
-        Err(err) => return Err(err),
+        // traci: allow -- this branch emits a structured HTTP read error before propagating it.
+        Err(err) => {
+            tracing::error!(
+                ?err,
+                operation = "http_get",
+                "HTTP response body read failed"
+            );
+            return Err(err);
+        }
     }
     Ok((status, body))
 }
@@ -187,6 +226,7 @@ fn read_status_line(reader: &mut BufReader<TcpStream>) -> std::io::Result<u16> {
     let code = line
         .split_whitespace()
         .nth(1)
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .and_then(|c| c.parse::<u16>().ok())
         .unwrap_or(0);
     Ok(code)

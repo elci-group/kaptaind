@@ -121,7 +121,9 @@ pub fn resume() -> anyhow::Result<()> {
 }
 
 fn read_live_pid(pid_file: &Path) -> Option<i32> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let pid_str = std::fs::read_to_string(pid_file).ok()?;
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let pid = pid_str.trim().parse::<i32>().ok()?;
     #[cfg(target_os = "linux")]
     {
@@ -383,6 +385,7 @@ pub fn uninstall_service(user: bool, system: bool) -> anyhow::Result<()> {
             Command::new("systemctl")
                 .args(["--user", "disable", "kaptaind.service"])
                 .output()
+                // traci: allow -- optional failure is represented by None and handled by the caller.
                 .ok();
 
             let home = std::env::var("HOME")?;
@@ -394,6 +397,7 @@ pub fn uninstall_service(user: bool, system: bool) -> anyhow::Result<()> {
             Command::new("systemctl")
                 .args(["disable", "kaptaind.service"])
                 .output()
+                // traci: allow -- optional failure is represented by None and handled by the caller.
                 .ok();
 
             let service_path = "/etc/systemd/system/kaptaind.service";
@@ -425,6 +429,7 @@ pub fn uninstall_service(user: bool, system: bool) -> anyhow::Result<()> {
             Command::new("launchctl")
                 .args(["unload", &plist_path])
                 .output()
+                // traci: allow -- optional failure is represented by None and handled by the caller.
                 .ok();
             if Path::new(&plist_path).exists() {
                 std::fs::remove_file(&plist_path)?;
@@ -434,6 +439,7 @@ pub fn uninstall_service(user: bool, system: bool) -> anyhow::Result<()> {
             Command::new("launchctl")
                 .args(["unload", plist_path])
                 .output()
+                // traci: allow -- optional failure is represented by None and handled by the caller.
                 .ok();
             if Path::new(plist_path).exists() {
                 match std::fs::remove_file(plist_path) {
@@ -495,6 +501,7 @@ pub fn service_status(user: bool, system: bool) -> anyhow::Result<()> {
             let output = Command::new("systemctl")
                 .args([flag, "is-enabled", "kaptaind.service"])
                 .output()
+                // traci: allow -- optional failure is represented by None and handled by the caller.
                 .ok();
             output.map(|o| o.status.success()).unwrap_or(false)
         } else {

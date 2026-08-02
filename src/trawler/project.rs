@@ -512,7 +512,15 @@ fn has_glob_match(path: &Path, pattern: &str) -> bool {
 
     let pattern = match Pattern::new(pattern) {
         Ok(p) => p,
-        Err(_) => return false,
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "has_glob_match",
+                source_line = line!(),
+                "has glob match returned an error"
+            );
+            return false;
+        }
     };
 
     if let Ok(entries) = std::fs::read_dir(path) {
@@ -600,11 +608,27 @@ pub fn inspect_cargo_manifest(dir: &Path) -> CargoManifestKind {
     let manifest_path = dir.join("Cargo.toml");
     let content = match fs::read_to_string(&manifest_path) {
         Ok(c) => c,
-        Err(_) => return CargoManifestKind::Invalid,
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "inspect_cargo_manifest",
+                source_line = line!(),
+                "inspect cargo manifest returned an error"
+            );
+            return CargoManifestKind::Invalid;
+        }
     };
     let value: toml::Value = match toml::from_str(&content) {
         Ok(v) => v,
-        Err(_) => return CargoManifestKind::Invalid,
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "inspect_cargo_manifest",
+                source_line = line!(),
+                "inspect cargo manifest returned an error"
+            );
+            return CargoManifestKind::Invalid;
+        }
     };
 
     let has_package = value.get("package").and_then(|v| v.as_table()).is_some();
@@ -631,11 +655,27 @@ pub fn workspace_members(root: &Path) -> Vec<PathBuf> {
 
     let content = match fs::read_to_string(root.join("Cargo.toml")) {
         Ok(c) => c,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "workspace_members",
+                source_line = line!(),
+                "workspace members returned an error"
+            );
+            return Vec::new();
+        }
     };
     let value: toml::Value = match toml::from_str(&content) {
         Ok(v) => v,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "workspace_members",
+                source_line = line!(),
+                "workspace members returned an error"
+            );
+            return Vec::new();
+        }
     };
 
     let workspace = match value.get("workspace").and_then(|v| v.as_table()) {
@@ -655,7 +695,15 @@ pub fn workspace_members(root: &Path) -> Vec<PathBuf> {
         };
         let paths = match glob::glob(&full_str) {
             Ok(p) => p,
-            Err(_) => continue,
+            Err(error) => {
+                tracing::error!(
+                    ?error,
+                    operation = "workspace_members",
+                    source_line = line!(),
+                    "workspace members returned an error"
+                );
+                continue;
+            }
         };
         for entry in paths.flatten() {
             if !entry.is_dir() {

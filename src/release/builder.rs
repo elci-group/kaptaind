@@ -33,6 +33,7 @@ impl BuildStatus {
         repo_path = %repo_path.display()
     )
 )]
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn run(config: &BuildConfig, repo_path: &Path) -> BuildStatus {
     let Some(command) = config.command.as_deref() else {
         return BuildStatus::Skipped;

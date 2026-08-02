@@ -66,7 +66,14 @@ pub(crate) fn write_status(repo_path: &Path, report: &StatusReport) {
         // truncated status.json (C2).
         let tmp = status_file.with_extension("tmp");
         if std::fs::write(&tmp, content).is_ok() {
-            let _ = std::fs::rename(&tmp, &status_file);
+            if let Err(error) = std::fs::rename(&tmp, &status_file) {
+                tracing::warn!(
+                    ?error,
+                    operation = "write_status",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
         }
     }
 }

@@ -92,6 +92,11 @@ fn resolve_commit(repo: &std::path::Path, spec: &str) -> anyhow::Result<CommitRe
     let hash = lines.next().unwrap_or("").trim().to_string();
     let subject = lines.next().unwrap_or("").trim().to_string();
     if hash.is_empty() {
+        tracing::error!(
+            operation = "resolve_commit",
+            source_line = line!(),
+            "resolve commit returned an error"
+        );
         return Err(anyhow!("empty resolution for '{}'", spec));
     }
     Ok(CommitRef {

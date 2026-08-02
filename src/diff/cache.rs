@@ -68,10 +68,24 @@ impl AstCache {
         }
         let path = repo_root.join(CACHE_FILE);
         if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if let Err(error) = std::fs::create_dir_all(parent) {
+                tracing::warn!(
+                    ?error,
+                    operation = "save",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
         }
         if let Ok(json) = serde_json::to_string(self) {
-            let _ = std::fs::write(path, json);
+            if let Err(error) = std::fs::write(path, json) {
+                tracing::warn!(
+                    ?error,
+                    operation = "save",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
         }
     }
 
@@ -158,6 +172,7 @@ impl AstCache {
 
 /// Compute SHA256 hash of a file's contents. Returns hex string.
 pub fn hash_file(path: &Path) -> Option<String> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let content = std::fs::read(path).ok()?;
     let mut hasher = Sha256::new();
     hasher.update(&content);

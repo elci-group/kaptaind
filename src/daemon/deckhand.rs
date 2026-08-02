@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use tracing::Instrument;
 
 /// Result of one automated storage-management pass.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -23,6 +24,7 @@ pub struct StorageReport {
 }
 
 /// Start the background deckhand storage-management task.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn start_storage_task(
     config: Config,
     mut shutdown: ShutdownToken,
@@ -43,7 +45,7 @@ pub async fn start_storage_task(
                 let repo_path = repo_path.clone();
                 let cfg = deckhand_cfg.clone();
                 let metrics = metrics.clone();
-                tokio::spawn(async move {
+                let storage_pass = async move {
                     match run_storage_pass(&repo_path, &cfg).await {
                         Ok(report) => {
                             metrics.storage_cleaned_bytes.fetch_add(report.bytes_freed, Ordering::Relaxed);
@@ -57,7 +59,7 @@ pub async fn start_storage_task(
                                     "storage management pass complete"
                                 );
                             } else {
-                                tracing::debug!("storage management pass complete; nothing freed");
+                                tracing::debug!(component = module_path!(), "storage management pass complete; nothing freed");
                             }
                             if let Err(err) = persist_report(&repo_path, &report) {
                                 tracing::warn!(error = %err, "failed to persist storage report");
@@ -67,10 +69,11 @@ pub async fn start_storage_task(
                             tracing::error!(error = %err, "storage management pass failed");
                         }
                     }
-                });
+                };
+                tokio::spawn(storage_pass.in_current_span());
             }
             _ = shutdown.wait() => {
-                tracing::info!("storage management task shutting down");
+                tracing::info!(component = module_path!(), "storage management task shutting down");
                 break;
             }
         }
@@ -78,6 +81,7 @@ pub async fn start_storage_task(
 }
 
 /// Run a single storage-management pass synchronously, wrapped for async use.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn run_storage_pass(repo_path: &Path, cfg: &DeckhandConfig) -> Result<StorageReport> {
     let repo_path = repo_path.to_path_buf();
     let cfg = cfg.clone();
@@ -110,6 +114,7 @@ fn run_storage_pass_sync(repo_path: &Path, cfg: &DeckhandConfig) -> Result<Stora
 
     // Clean each requested profile.
     for profile in &cfg.clean_profiles {
+        // traci: allow -- this branch emits structured profile-clean failure telemetry.
         if let Err(err) = deckhand::clean::run(
             &dh_cfg,
             profile,
@@ -117,6 +122,12 @@ fn run_storage_pass_sync(repo_path: &Path, cfg: &DeckhandConfig) -> Result<Stora
             cfg.clean_older_than_days,
             None,
         ) {
+            tracing::error!(
+                ?err,
+                operation = "run_storage_pass_sync",
+                source_line = line!(),
+                "run storage pass sync returned an error"
+            );
             tracing::warn!(profile = %profile, error = %err, "deckhand clean failed");
             report.errors += 1;
         }
@@ -148,7 +159,10 @@ fn should_skip_due_to_free_space(repo_path: &Path, min_free_percent: u64) -> boo
             free_percent > min_free_percent
         }
         _ => {
-            tracing::debug!("unable to determine disk free space; proceeding with storage pass");
+            tracing::debug!(
+                component = module_path!(),
+                "unable to determine disk free space; proceeding with storage pass"
+            );
             false
         }
     }
@@ -255,7 +269,9 @@ fn persist_report(repo_path: &Path, report: &StorageReport) -> Result<()> {
 pub fn load_report(repo_path: &Path) -> Option<StorageReport> {
     let path = repo_path.join(".kaptaind").join("storage.json");
     std::fs::read_to_string(&path)
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .and_then(|c| serde_json::from_str(&c).ok())
 }
 

@@ -54,6 +54,11 @@ pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
     }
 
     if !bytes.len().is_multiple_of(4) {
+        tracing::error!(
+            operation = "decode",
+            source_line = line!(),
+            "decode returned an error"
+        );
         return Err(DecodeError::InvalidLength);
     }
 
@@ -62,6 +67,11 @@ pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
         padding += 1;
         bytes.pop();
         if padding > 2 {
+            tracing::error!(
+                operation = "decode",
+                source_line = line!(),
+                "decode returned an error"
+            );
             return Err(DecodeError::InvalidPadding);
         }
     }
@@ -73,6 +83,11 @@ pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
     for (pos, &b) in bytes.iter().enumerate() {
         let value = table[b as usize];
         if value == 255 {
+            tracing::error!(
+                operation = "decode",
+                source_line = line!(),
+                "decode returned an error"
+            );
             return Err(DecodeError::InvalidByte(pos, b));
         }
         buf = (buf << 6) | value as u32;
@@ -86,6 +101,11 @@ pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
     // After decoding all complete sextets, any leftover bits must be zero for
     // the padding to be valid.
     if bits > 0 && (buf & ((1 << bits) - 1)) != 0 {
+        tracing::error!(
+            operation = "decode",
+            source_line = line!(),
+            "decode returned an error"
+        );
         return Err(DecodeError::InvalidPadding);
     }
 
@@ -93,6 +113,11 @@ pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
     let expected_len =
         (input.bytes().filter(|b| !b.is_ascii_whitespace()).count() / 4) * 3 - padding;
     if out.len() != expected_len {
+        tracing::error!(
+            operation = "decode",
+            source_line = line!(),
+            "decode returned an error"
+        );
         return Err(DecodeError::InvalidPadding);
     }
 
