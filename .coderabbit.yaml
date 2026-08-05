@@ -1,0 +1,133 @@
+# CodeRabbit configuration for kaptaind
+# AI-powered code review for the semantic versioning daemon
+
+language: en-US
+tone_instructions: "You are reviewing a Rust semantic versioning daemon. Focus on correctness, performance, and adherence to Rust best practices. Be concise and actionable."
+
+reviews:
+  profile: chill
+  high_level_summary: true
+  high_level_summary_instructions: "Create a concise summary of changes focusing on impact to semantic versioning behavior, daemon runtime, or CLI interface."
+  changed_files_summary: true
+  sequence_diagrams: false
+  estimate_code_review_effort: true
+  suggested_labels: true
+  suggested_reviewers: true
+  enable_prompt_for_ai_agents: true
+  
+  # Path-specific instructions for different parts of the codebase
+  path_instructions:
+    - path: "src/**/*.rs"
+      instructions: |
+        Review Rust code for:
+        - Idiomatic Rust patterns and error handling (use anyhow for app-level, preserve git2::Error where appropriate)
+        - Correct async/await usage in daemon modules
+        - Proper tracing instrumentation
+        - Derive macros consistency (Debug, Clone, serde where needed)
+        - Module pattern compliance (mod.rs re-exports)
+        - Test coverage inline under #[cfg(test)]
+    - path: "src/diff/**/*.rs"
+      instructions: |
+        Focus on diff analysis correctness:
+        - Scoring algorithms (structural, API, dependency, runtime, bundle)
+        - Language adapter interface compliance
+        - Proper normalization and confidence weighting
+        - Edge cases in signature detection and route file handling
+    - path: "src/version/**/*.rs"
+      instructions: |
+        Critical: Semantic versioning logic must be correct:
+        - Bump decision rules (Major/Minor/Patch/None)
+        - Version mutation logic
+        - Cargo workspace integration
+        - VERSION file writeback consistency
+    - path: "src/daemon/**/*.rs"
+      instructions: |
+        Runtime and scheduling correctness:
+        - Async runtime safety
+        - Channel usage patterns
+        - Error recovery and telemetry
+        - Health/metrics server endpoints
+        - WebUI integration when applicable
+    - path: "src/config/**/*.rs"
+      instructions: |
+        Configuration loading and validation:
+        - Path normalization (repo_path, watch paths)
+        - Default value correctness
+        - Environment variable integration
+        - Schema compliance with kaptaind.toml
+    - path: "src/commit/**/*.rs"
+      instructions: |
+        Git commit orchestration:
+        - Staging mode correctness (all/cluster/pattern)
+        - Commit message format
+        - GPG signing when enabled
+        - Integration with version writeback
+    - path: "src/cli/**/*.rs"
+      instructions: |
+        CLI interface review:
+        - Argument parsing correctness
+        - Command dispatch logic
+        - Error messages clarity
+        - Help text accuracy
+    - path: "tests/**/*.rs"
+      instructions: |
+        Integration test coverage:
+        - Test isolation and cleanup
+        - tempfile usage
+        - Edge case coverage
+        - Async test correctness where applicable
+
+  # Auto-review configuration
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    ignore_title_keywords:
+      - "wip"
+      - "draft"
+      - "work in progress"
+    labels:
+      - "!wip"
+      - "!draft"
+
+  # Finishing touches
+  finishing_touches:
+    docstrings:
+      enabled: true
+    unit_tests:
+      enabled: true
+    simplify:
+      enabled: false  # Disabled to preserve intentional code structure
+    autofix:
+      enabled: true
+    fix_ci:
+      enabled: true
+    resolve_merge_conflict:
+      enabled: true
+
+  # Path filters - focus on source code, ignore generated artifacts
+  path_filters:
+    - "src/**"
+    - "tests/**"
+    - "!target/**"
+    - "!**/*.rs.bk"
+    - "!.kaptaind/**"
+    - "!web/**"  # Exclude Next.js web frontend unless specifically needed
+    - "!node_modules/**"
+
+  # Anti-slop detection
+  slop_detection:
+    enabled: true
+    label: "slop"
+
+# Chat configuration
+chat:
+  enabled: true
+
+# Knowledge base - reference project documentation
+knowledge_base:
+  enabled: true
+  docs:
+    - "AGENTS.md"
+    - "README.md"
+    - "Cargo.toml"

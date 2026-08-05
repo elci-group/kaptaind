@@ -1689,20 +1689,37 @@ async fn process_cluster(
             }
         }
 
-        let push_options = crate::push::PushOptions {
-            remote: config.push.remote.clone(),
-            branch: config.push.branch.clone(),
-            dry_run: config.push.dry_run,
-            protect_branches: config.push.safety.protect_branches.clone(),
+        // Use multi-remote push if configured, otherwise fall back to single remote
+        let push_result = if !config.push.remotes.is_empty() {
+            let multi_push_options = crate::push::MultiRemotePushOptions {
+                remotes: config.push.remotes.clone(),
+                branch: config.push.branch.clone(),
+                dry_run: config.push.dry_run,
+                protect_branches: config.push.safety.protect_branches.clone(),
+            };
+            crate::push::push_multi_remote(
+                &config.repo_path,
+                &multi_push_options,
+                &config.push.retry,
+                &config.push.protection,
+            )
+            .await
+            .map(|_| ())
+        } else {
+            let push_options = crate::push::PushOptions {
+                remote: config.push.remote.clone(),
+                branch: config.push.branch.clone(),
+                dry_run: config.push.dry_run,
+                protect_branches: config.push.safety.protect_branches.clone(),
+            };
+            crate::push::push(
+                &config.repo_path,
+                &push_options,
+                &config.push.retry,
+                &config.push.protection,
+            )
+            .await
         };
-
-        let push_result = crate::push::push(
-            &config.repo_path,
-            &push_options,
-            &config.push.retry,
-            &config.push.protection,
-        )
-        .await;
         if let Err(err) = push_result {
             tracing::warn!(error = %err, "push failed");
             write_trace_if_active(
@@ -1735,10 +1752,25 @@ async fn process_cluster(
 
         // Send push webhook event
         if let Some(angler) = angler {
+            // Determine remote(s) for notification
+            let remote_names = if !config.push.remotes.is_empty() {
+                let enabled: Vec<_> = config.push.remotes.iter()
+                    .filter(|r| r.enabled)
+                    .map(|r| r.name.as_str())
+                    .collect();
+                if enabled.is_empty() {
+                    vec![config.push.remote.as_str()]
+                } else {
+                    enabled
+                }
+            } else {
+                vec![config.push.remote.as_str()]
+            };
+            
             let webhook_event = WebhookEvent::Push {
                 branch: config.push.branch.clone(),
                 commits: 1,
-                remote: config.push.remote.clone(),
+                remote: remote_names.join(", "),
             };
             let _ = angler
                 .broadcast_webhook_event(&webhook_event, &cluster_paths)
@@ -1766,11 +1798,26 @@ async fn process_cluster(
                 .await;
         }
 
+        // Determine remote(s) for notification
+        let remote_for_notification = if !config.push.remotes.is_empty() {
+            let enabled: Vec<_> = config.push.remotes.iter()
+                .filter(|r| r.enabled)
+                .map(|r| r.name.as_str())
+                .collect();
+            if enabled.is_empty() {
+                config.push.remote.clone()
+            } else {
+                enabled.join(", ")
+            }
+        } else {
+            config.push.remote.clone()
+        };
+        
         crate::daemon::notification::notify_push_success(
             &config.notify,
             &next.to_string(),
             &config.push.branch,
-            &config.push.remote,
+            &remote_for_notification,
             config.capabilities.network_webhooks,
         );
     }
