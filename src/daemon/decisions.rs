@@ -28,6 +28,7 @@ pub mod outcome {
     pub const PRE_COMMIT_HOOK_FAILED: &str = "pre_commit_hook_failed";
     pub const COMMIT_FAILED: &str = "commit_failed";
     pub const OBSERVED: &str = "observed";
+    pub const SUSPENDED: &str = "suspended";
 }
 
 /// Score breakdown at decision time. Absent for exits that happen before diff

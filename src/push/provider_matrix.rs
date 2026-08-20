@@ -1,10 +1,10 @@
 //! Provider matrix for intelligent task distribution across Git providers.
-//! 
+//!
 //! This module implements a robust task-to-provider mapping system that ensures
 //! all development tasks are distributed by best fit across SSH-accessible providers.
 
 use crate::config::loader::RemoteConfig;
-use anyhow::{Context, Result};
+use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
@@ -16,58 +16,58 @@ pub enum TaskType {
     BugFix,
     Refactoring,
     Documentation,
-    
+
     // Security tasks
     SecurityAudit,
     VulnerabilityFix,
     ComplianceCheck,
     SecretScanning,
-    
+
     // CI/CD tasks
     ContinuousIntegration,
     ContinuousDeployment,
     MutationTesting,
     PerformanceTesting,
     SecurityScanning,
-    
+
     // Release tasks
     ReleasePreparation,
     ReleasePublishing,
     ReleaseNotes,
     VersionBumping,
-    
+
     // Collaboration tasks
     CodeReview,
     PullRequest,
     IssueTracking,
     Discussion,
-    
+
     // Infrastructure tasks
     InfrastructureAsCode,
     ConfigurationManagement,
     Monitoring,
     Logging,
-    
+
     // Archive tasks
     LongTermArchival,
     Backup,
     DisasterRecovery,
-    
+
     // Community tasks
     CommunityManagement,
     ContributorOnboarding,
     Outreach,
-    
+
     // Enterprise tasks
     EnterpriseIntegration,
     CustomerDeployment,
     SLAMonitoring,
-    
+
     // Experimental tasks
     Experimentation,
     Prototyping,
     Research,
-    
+
     // Specialized tasks
     AutonomousAgentWork,
     CodeReviewAuthority,
@@ -125,50 +125,50 @@ impl ProviderMatrix {
     pub fn new() -> Self {
         let capabilities = Self::build_capabilities();
         let provider_defaults = Self::build_provider_defaults();
-        
+
         Self {
             capabilities,
             provider_defaults,
         }
     }
-    
+
     /// Build comprehensive capability mappings for all providers.
     fn build_capabilities() -> Vec<ProviderCapability> {
         let mut capabilities = Vec::new();
-        
+
         // GitHub capabilities
         capabilities.extend(Self::github_capabilities());
-        
+
         // GitLab capabilities
         capabilities.extend(Self::gitlab_capabilities());
-        
+
         // Codeberg capabilities
         capabilities.extend(Self::codeberg_capabilities());
-        
+
         // Bitbucket capabilities
         capabilities.extend(Self::bitbucket_capabilities());
-        
+
         // SourceHut capabilities
         capabilities.extend(Self::sourcehut_capabilities());
-        
+
         // Gitea/Forgejo capabilities
         capabilities.extend(Self::gitea_capabilities());
-        
+
         // Gerrit capabilities
         capabilities.extend(Self::gerrit_capabilities());
-        
+
         // Azure DevOps capabilities
         capabilities.extend(Self::azure_capabilities());
-        
+
         // AWS CodeCommit capabilities
         capabilities.extend(Self::aws_capabilities());
-        
+
         // GCP capabilities
         capabilities.extend(Self::gcp_capabilities());
-        
+
         capabilities
     }
-    
+
     /// GitHub capability mappings.
     fn github_capabilities() -> Vec<ProviderCapability> {
         vec![
@@ -324,7 +324,7 @@ impl ProviderMatrix {
             },
         ]
     }
-    
+
     /// GitLab capability mappings.
     fn gitlab_capabilities() -> Vec<ProviderCapability> {
         vec![
@@ -405,7 +405,7 @@ impl ProviderMatrix {
             },
         ]
     }
-    
+
     /// Codeberg capability mappings.
     fn codeberg_capabilities() -> Vec<ProviderCapability> {
         vec![
@@ -471,7 +471,7 @@ impl ProviderMatrix {
             },
         ]
     }
-    
+
     /// Bitbucket capability mappings.
     fn bitbucket_capabilities() -> Vec<ProviderCapability> {
         vec![
@@ -486,7 +486,11 @@ impl ProviderMatrix {
                     "Enterprise SSO and user management".to_string(),
                 ],
                 ssh_accessible: true,
-                auth_methods: vec!["ssh".to_string(), "https".to_string(), "atlassian".to_string()],
+                auth_methods: vec![
+                    "ssh".to_string(),
+                    "https".to_string(),
+                    "atlassian".to_string(),
+                ],
                 availability: 0.97,
                 cost: 0.5,
             },
@@ -501,7 +505,11 @@ impl ProviderMatrix {
                     "Bitbucket Pipelines for CI/CD".to_string(),
                 ],
                 ssh_accessible: true,
-                auth_methods: vec!["ssh".to_string(), "https".to_string(), "atlassian".to_string()],
+                auth_methods: vec![
+                    "ssh".to_string(),
+                    "https".to_string(),
+                    "atlassian".to_string(),
+                ],
                 availability: 0.97,
                 cost: 0.5,
             },
@@ -516,13 +524,17 @@ impl ProviderMatrix {
                     "Built-in test reporting".to_string(),
                 ],
                 ssh_accessible: true,
-                auth_methods: vec!["ssh".to_string(), "https".to_string(), "atlassian".to_string()],
+                auth_methods: vec![
+                    "ssh".to_string(),
+                    "https".to_string(),
+                    "atlassian".to_string(),
+                ],
                 availability: 0.97,
                 cost: 0.5,
             },
         ]
     }
-    
+
     /// SourceHut capability mappings.
     fn sourcehut_capabilities() -> Vec<ProviderCapability> {
         vec![
@@ -573,7 +585,7 @@ impl ProviderMatrix {
             },
         ]
     }
-    
+
     /// Gitea/Forgejo capability mappings.
     fn gitea_capabilities() -> Vec<ProviderCapability> {
         vec![
@@ -624,7 +636,7 @@ impl ProviderMatrix {
             },
         ]
     }
-    
+
     /// Gerrit capability mappings.
     fn gerrit_capabilities() -> Vec<ProviderCapability> {
         vec![
@@ -660,7 +672,7 @@ impl ProviderMatrix {
             },
         ]
     }
-    
+
     /// Azure DevOps capability mappings.
     fn azure_capabilities() -> Vec<ProviderCapability> {
         vec![
@@ -711,7 +723,7 @@ impl ProviderMatrix {
             },
         ]
     }
-    
+
     /// AWS CodeCommit capability mappings.
     fn aws_capabilities() -> Vec<ProviderCapability> {
         vec![
@@ -762,7 +774,7 @@ impl ProviderMatrix {
             },
         ]
     }
-    
+
     /// GCP Source Repositories capability mappings.
     fn gcp_capabilities() -> Vec<ProviderCapability> {
         vec![
@@ -813,121 +825,181 @@ impl ProviderMatrix {
             },
         ]
     }
-    
+
     /// Build provider defaults.
     fn build_provider_defaults() -> HashMap<String, ProviderDefaults> {
         let mut defaults = HashMap::new();
-        
-        defaults.insert("github".to_string(), ProviderDefaults {
-            default_priority: 10,
-            ssh_accessible: true,
-            default_auth: "ssh".to_string(),
-            optimal_regions: vec!["global".to_string(), "us-east".to_string(), "eu-west".to_string()],
-            typical_latency: 50,
-        });
-        
-        defaults.insert("gitlab".to_string(), ProviderDefaults {
-            default_priority: 20,
-            ssh_accessible: true,
-            default_auth: "ssh".to_string(),
-            optimal_regions: vec!["global".to_string(), "eu-central".to_string(), "us-central".to_string()],
-            typical_latency: 60,
-        });
-        
-        defaults.insert("codeberg".to_string(), ProviderDefaults {
-            default_priority: 30,
-            ssh_accessible: true,
-            default_auth: "ssh".to_string(),
-            optimal_regions: vec!["eu-central".to_string(), "global".to_string()],
-            typical_latency: 80,
-        });
-        
-        defaults.insert("bitbucket".to_string(), ProviderDefaults {
-            default_priority: 40,
-            ssh_accessible: true,
-            default_auth: "ssh".to_string(),
-            optimal_regions: vec!["global".to_string(), "us-west".to_string(), "ap-southeast".to_string()],
-            typical_latency: 70,
-        });
-        
-        defaults.insert("sourcehut".to_string(), ProviderDefaults {
-            default_priority: 50,
-            ssh_accessible: true,
-            default_auth: "ssh".to_string(),
-            optimal_regions: vec!["global".to_string()],
-            typical_latency: 100,
-        });
-        
-        defaults.insert("gitea".to_string(), ProviderDefaults {
-            default_priority: 60,
-            ssh_accessible: true,
-            default_auth: "ssh".to_string(),
-            optimal_regions: vec!["self-hosted".to_string()],
-            typical_latency: 20,
-        });
-        
-        defaults.insert("forgejo".to_string(), ProviderDefaults {
-            default_priority: 65,
-            ssh_accessible: true,
-            default_auth: "ssh".to_string(),
-            optimal_regions: vec!["self-hosted".to_string(), "eu-central".to_string()],
-            typical_latency: 25,
-        });
-        
-        defaults.insert("gerrit".to_string(), ProviderDefaults {
-            default_priority: 70,
-            ssh_accessible: true,
-            default_auth: "ssh".to_string(),
-            optimal_regions: vec!["enterprise".to_string()],
-            typical_latency: 30,
-        });
-        
-        defaults.insert("azure".to_string(), ProviderDefaults {
-            default_priority: 80,
-            ssh_accessible: true,
-            default_auth: "ssh".to_string(),
-            optimal_regions: vec!["enterprise".to_string(), "microsoft".to_string()],
-            typical_latency: 40,
-        });
-        
-        defaults.insert("aws".to_string(), ProviderDefaults {
-            default_priority: 85,
-            ssh_accessible: true,
-            default_auth: "iam".to_string(),
-            optimal_regions: vec!["aws-global".to_string(), "us-east".to_string(), "eu-west".to_string()],
-            typical_latency: 45,
-        });
-        
-        defaults.insert("gcp".to_string(), ProviderDefaults {
-            default_priority: 90,
-            ssh_accessible: true,
-            default_auth: "oauth".to_string(),
-            optimal_regions: vec!["gcp-global".to_string(), "us-central".to_string(), "europe-west".to_string()],
-            typical_latency: 50,
-        });
-        
+
+        defaults.insert(
+            "github".to_string(),
+            ProviderDefaults {
+                default_priority: 10,
+                ssh_accessible: true,
+                default_auth: "ssh".to_string(),
+                optimal_regions: vec![
+                    "global".to_string(),
+                    "us-east".to_string(),
+                    "eu-west".to_string(),
+                ],
+                typical_latency: 50,
+            },
+        );
+
+        defaults.insert(
+            "gitlab".to_string(),
+            ProviderDefaults {
+                default_priority: 20,
+                ssh_accessible: true,
+                default_auth: "ssh".to_string(),
+                optimal_regions: vec![
+                    "global".to_string(),
+                    "eu-central".to_string(),
+                    "us-central".to_string(),
+                ],
+                typical_latency: 60,
+            },
+        );
+
+        defaults.insert(
+            "codeberg".to_string(),
+            ProviderDefaults {
+                default_priority: 30,
+                ssh_accessible: true,
+                default_auth: "ssh".to_string(),
+                optimal_regions: vec!["eu-central".to_string(), "global".to_string()],
+                typical_latency: 80,
+            },
+        );
+
+        defaults.insert(
+            "bitbucket".to_string(),
+            ProviderDefaults {
+                default_priority: 40,
+                ssh_accessible: true,
+                default_auth: "ssh".to_string(),
+                optimal_regions: vec![
+                    "global".to_string(),
+                    "us-west".to_string(),
+                    "ap-southeast".to_string(),
+                ],
+                typical_latency: 70,
+            },
+        );
+
+        defaults.insert(
+            "sourcehut".to_string(),
+            ProviderDefaults {
+                default_priority: 50,
+                ssh_accessible: true,
+                default_auth: "ssh".to_string(),
+                optimal_regions: vec!["global".to_string()],
+                typical_latency: 100,
+            },
+        );
+
+        defaults.insert(
+            "gitea".to_string(),
+            ProviderDefaults {
+                default_priority: 60,
+                ssh_accessible: true,
+                default_auth: "ssh".to_string(),
+                optimal_regions: vec!["self-hosted".to_string()],
+                typical_latency: 20,
+            },
+        );
+
+        defaults.insert(
+            "forgejo".to_string(),
+            ProviderDefaults {
+                default_priority: 65,
+                ssh_accessible: true,
+                default_auth: "ssh".to_string(),
+                optimal_regions: vec!["self-hosted".to_string(), "eu-central".to_string()],
+                typical_latency: 25,
+            },
+        );
+
+        defaults.insert(
+            "gerrit".to_string(),
+            ProviderDefaults {
+                default_priority: 70,
+                ssh_accessible: true,
+                default_auth: "ssh".to_string(),
+                optimal_regions: vec!["enterprise".to_string()],
+                typical_latency: 30,
+            },
+        );
+
+        defaults.insert(
+            "azure".to_string(),
+            ProviderDefaults {
+                default_priority: 80,
+                ssh_accessible: true,
+                default_auth: "ssh".to_string(),
+                optimal_regions: vec!["enterprise".to_string(), "microsoft".to_string()],
+                typical_latency: 40,
+            },
+        );
+
+        defaults.insert(
+            "aws".to_string(),
+            ProviderDefaults {
+                default_priority: 85,
+                ssh_accessible: true,
+                default_auth: "iam".to_string(),
+                optimal_regions: vec![
+                    "aws-global".to_string(),
+                    "us-east".to_string(),
+                    "eu-west".to_string(),
+                ],
+                typical_latency: 45,
+            },
+        );
+
+        defaults.insert(
+            "gcp".to_string(),
+            ProviderDefaults {
+                default_priority: 90,
+                ssh_accessible: true,
+                default_auth: "oauth".to_string(),
+                optimal_regions: vec![
+                    "gcp-global".to_string(),
+                    "us-central".to_string(),
+                    "europe-west".to_string(),
+                ],
+                typical_latency: 50,
+            },
+        );
+
         defaults
     }
-    
+
     /// Get best providers for a specific task type.
-    pub fn get_best_providers(&self, task_type: &TaskType, ssh_only: bool) -> Vec<ProviderCapability> {
-        let mut matching: Vec<_> = self.capabilities
+    pub fn get_best_providers(
+        &self,
+        task_type: &TaskType,
+        ssh_only: bool,
+    ) -> Vec<ProviderCapability> {
+        let mut matching: Vec<_> = self
+            .capabilities
             .iter()
             .filter(|cap| &cap.task_type == task_type)
             .filter(|cap| !ssh_only || cap.ssh_accessible)
             .cloned()
             .collect();
-        
+
         // Sort by score (descending), then by availability (descending), then by cost (ascending)
         matching.sort_by(|a, b| {
-            b.score.partial_cmp(&a.score).unwrap()
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap()
                 .then_with(|| b.availability.partial_cmp(&a.availability).unwrap())
                 .then_with(|| a.cost.partial_cmp(&b.cost).unwrap())
         });
-        
+
         matching
     }
-    
+
     /// Get all SSH-accessible providers.
     pub fn get_ssh_providers(&self) -> HashSet<String> {
         self.capabilities
@@ -936,18 +1008,19 @@ impl ProviderMatrix {
             .map(|cap| cap.provider.clone())
             .collect()
     }
-    
+
     /// Get provider defaults.
     pub fn get_provider_defaults(&self, provider: &str) -> Option<&ProviderDefaults> {
         self.provider_defaults.get(provider)
     }
-    
+
     /// Calculate fit score for a provider-task combination.
     pub fn calculate_fit_score(&self, provider: &str, task_type: &TaskType) -> f32 {
-        let capability = self.capabilities
+        let capability = self
+            .capabilities
             .iter()
             .find(|cap| cap.provider == provider && cap.task_type == *task_type);
-        
+
         match capability {
             Some(cap) => {
                 // Weighted score: capability (70%) + availability (20%) + cost inverse (10%)
@@ -957,7 +1030,7 @@ impl ProviderMatrix {
             None => 0.0,
         }
     }
-    
+
     /// Recommend providers for a task with fallback chain.
     pub fn recommend_providers_with_fallback(
         &self,
@@ -972,11 +1045,11 @@ impl ProviderMatrix {
             .map(|cap| cap.provider)
             .collect()
     }
-    
+
     /// Validate that configured remotes are SSH-accessible.
     pub fn validate_ssh_access(&self, remotes: &[RemoteConfig]) -> Result<()> {
         let ssh_providers = self.get_ssh_providers();
-        
+
         for remote in remotes {
             if !ssh_providers.contains(&remote.provider) {
                 tracing::warn!(
@@ -985,7 +1058,7 @@ impl ProviderMatrix {
                 );
             }
         }
-        
+
         Ok(())
     }
 }
@@ -999,64 +1072,61 @@ impl Default for ProviderMatrix {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_get_best_providers_for_feature_development() {
         let matrix = ProviderMatrix::new();
         let providers = matrix.get_best_providers(&TaskType::FeatureDevelopment, true);
-        
+
         assert!(!providers.is_empty());
         assert_eq!(providers[0].provider, "github");
         assert!(providers[0].score > 0.9);
     }
-    
+
     #[test]
     fn test_get_best_providers_for_ci() {
         let matrix = ProviderMatrix::new();
         let providers = matrix.get_best_providers(&TaskType::ContinuousIntegration, true);
-        
+
         assert!(!providers.is_empty());
         assert_eq!(providers[0].provider, "gitlab");
         assert!(providers[0].score > 0.9);
     }
-    
+
     #[test]
     fn test_ssh_only_filtering() {
         let matrix = ProviderMatrix::new();
         let all_providers = matrix.get_best_providers(&TaskType::FeatureDevelopment, false);
         let ssh_providers = matrix.get_best_providers(&TaskType::FeatureDevelopment, true);
-        
+
         // SSH-only should be subset of all providers
         assert!(ssh_providers.len() <= all_providers.len());
     }
-    
+
     #[test]
     fn test_fit_score_calculation() {
         let matrix = ProviderMatrix::new();
         let score = matrix.calculate_fit_score("github", &TaskType::FeatureDevelopment);
-        
+
         assert!(score > 0.0);
         assert!(score <= 1.0);
     }
-    
+
     #[test]
     fn test_recommendation_with_fallback() {
         let matrix = ProviderMatrix::new();
-        let recommendations = matrix.recommend_providers_with_fallback(
-            &TaskType::SecurityScanning,
-            true,
-            3,
-        );
-        
+        let recommendations =
+            matrix.recommend_providers_with_fallback(&TaskType::SecurityScanning, true, 3);
+
         assert_eq!(recommendations.len(), 3);
         assert_eq!(recommendations[0], "gitlab");
     }
-    
+
     #[test]
     fn test_provider_defaults() {
         let matrix = ProviderMatrix::new();
         let github_defaults = matrix.get_provider_defaults("github");
-        
+
         assert!(github_defaults.is_some());
         assert_eq!(github_defaults.unwrap().default_priority, 10);
         assert!(github_defaults.unwrap().ssh_accessible);

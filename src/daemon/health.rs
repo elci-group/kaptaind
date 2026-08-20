@@ -122,6 +122,7 @@ fn readiness(repo_path: &std::path::Path) -> (bool, &'static str) {
     match report.status {
         DaemonStatus::Failed => (false, "scheduler_failed"),
         DaemonStatus::Stopping | DaemonStatus::Stopped => (false, "scheduler_stopping"),
+        DaemonStatus::Suspended => (false, "scheduler_suspended"),
         DaemonStatus::Idle
         | DaemonStatus::Clustering
         | DaemonStatus::Testing

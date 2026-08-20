@@ -173,6 +173,11 @@ kaptaind-cli analyze
 kaptaind-cli aoc start "feature: auth flow"
 kaptaind-cli aoc status
 kaptaind-cli aoc ship
+kaptaind-cli aoc cancel
+
+# Suspend and resume automated daemon commits
+kaptaind-cli suspend --reason "manual hold"
+kaptaind-cli resume
 
 # Intercept agent operations for contextual tracing
 kaptaind-cli aoc intercept --model claude-3-5-sonnet --intent "refactor auth" -- npm test
@@ -217,7 +222,10 @@ kaptaind-cli ship status --format json
 | `kaptaind-cli log` | Recent automated commits | — |
 | `kaptaind-cli analyze` | Dry-run diff analysis | `[weights]`, `[inference]` |
 | `kaptaind-cli dashboard` | Live terminal dashboard | — |
-| `kaptaind-cli aoc start` | Start Aim-of-Change session | `[aoc]` |
+| `kaptaind-cli aoc start` | Start Aim-of-Change session | `[aoc]`, `[daemon]` |
+| `kaptaind-cli aoc cancel` | Cancel Aim-of-Change session | `[aoc]`, `[daemon]` |
+| `kaptaind-cli suspend` | Suspend automated commits | `[daemon]` |
+| `kaptaind-cli resume` | Resume automated commits | `[daemon]` |
 | `kaptaind-cli ship plan` | Preview release | `[ship]` |
 | `kaptaind-cli ship run` | Build and publish release | `[ship]`, `[distribution]` |
 | `kaptaind-cli ci-hint` | Release/hold recommendation | `[qualification]` |
@@ -229,6 +237,7 @@ kaptaind-cli ship status --format json
 | `kaptaind.toml` | Main configuration |
 | `.kaptainignore` | Paths ignored by the watcher |
 | `.kaptaind/status.json` | Daemon state |
+| `.kaptaind/suspend.json` | Daemon suspension state |
 | `.kaptaind/analysis/` | Per-cluster analysis artifacts |
 | `.kaptaind/audit.jsonl` | Structured audit log |
 | `.kaptaind/releases/` | Packaged release artifacts |
@@ -780,6 +789,20 @@ lease_ttl_ms = 10000
 upgrade_handoff_timeout_ms = 30000
 mode = "auto"              # "auto", "leader", "standby", "observer"
 ```
+
+### Daemon
+
+Graceful shutdown, startup guard, and AoC-driven suspend/resume.
+
+```toml
+[daemon]
+shutdown_grace_secs = 10          # Max seconds to wait for in-flight work
+startup_guard = false             # Refuse to start with a dirty worktree
+auto_suspend_on_aoc_start = true  # Suspend daemon when an AoC session starts
+auto_resume_on_aoc_end = true     # Resume daemon when an AoC session ships/cancels
+```
+
+When `auto_suspend_on_aoc_start` is true, `kaptaind-cli aoc start` writes `.kaptaind/suspend.json` and the daemon stops processing clusters. `kaptaind-cli aoc ship` and `kaptaind-cli aoc cancel` remove it when `auto_resume_on_aoc_end` is true. Manual `kaptaind-cli suspend`/`resume` work independently.
 
 ### Other Features
 

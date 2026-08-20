@@ -79,7 +79,7 @@ struct Cli {
     command: Commands,
 
     /// Repository path to operate on (overrides kaptaind.toml).
-    #[arg(short, long, value_name = "PATH")]
+    #[arg(short, long, value_name = "PATH", global = true)]
     repo: Option<PathBuf>,
 }
 
@@ -103,6 +103,49 @@ Examples:
 Notes:
     Reads the daemon PID file and .kaptaind/status.json in the repository."#)]
     Status,
+
+    /// ⏸️ Suspend automated daemon commits
+    #[command(long_about = r#"Purpose:
+    Temporarily suspend the daemon so it will not automatically process
+    clusters, run tests, or create commits.
+
+Usage:
+    kaptaind-cli suspend [OPTIONS]
+
+Options:
+    -r, --repo <PATH>     Operate on the specified repository
+        --reason <TEXT>   Optional human-readable reason
+
+Examples:
+    kaptaind-cli suspend
+    kaptaind-cli suspend --reason "manual hold"
+
+Notes:
+    Writes .kaptaind/suspend.json and updates .kaptaind/status.json to
+    Suspended. The daemon checks this gate at the start of every cluster."#)]
+    Suspend {
+        /// Optional reason for the suspension.
+        #[arg(long, value_name = "TEXT")]
+        reason: Option<String>,
+    },
+
+    /// ▶️ Resume automated daemon commits
+    #[command(long_about = r#"Purpose:
+    Resume a daemon that was suspended via 'kaptaind-cli suspend' or an
+    Aim-of-Change session.
+
+Usage:
+    kaptaind-cli resume [OPTIONS]
+
+Options:
+    -r, --repo <PATH>    Operate on the specified repository
+
+Examples:
+    kaptaind-cli resume
+
+Notes:
+    Removes .kaptaind/suspend.json and sets .kaptaind/status.json to Idle."#)]
+    Resume,
 
     /// ✅ Validate kaptaind.toml and report configuration errors
     #[command(long_about = r#"Purpose:
@@ -237,6 +280,7 @@ Subcommands:
     start      Start a new AoC session
     status     Show the active session
     ship       End and ship the current session
+    cancel     Cancel the current session
     intercept  Wrap a command and capture its trace
     log        List completed sessions
 
@@ -244,11 +288,12 @@ Examples:
     kaptaind-cli aoc start "feature: auth flow"
     kaptaind-cli aoc status
     kaptaind-cli aoc ship
+    kaptaind-cli aoc cancel
     kaptaind-cli aoc intercept -- npm test
 
 Notes:
     Session state is stored in .kaptaind/aoc/active.json and archived to
-    .kaptaind/aoc/manifests/<id>.json when shipped."#
+    .kaptaind/aoc/manifests/<id>.json when shipped or cancelled."#
     )]
     Aoc(AocCommand),
 
@@ -1635,6 +1680,22 @@ Notes:
     Returns an error if no session is active."#)]
     Status,
 
+    /// ❌ Cancel the current session
+    #[command(long_about = r#"Purpose:
+    Cancel the active Aim of Change session without creating a manifest.
+
+Usage:
+    kaptaind-cli aoc cancel
+
+Examples:
+    kaptaind-cli aoc cancel
+
+Notes:
+    Removes .kaptaind/aoc/active.json. When [daemon].auto_resume_on_aoc_end
+    is true (the default), this also resumes a daemon suspended by the
+    session."#)]
+    Cancel,
+
     /// 🤖 Intercept agent operations for contextual tracing
     #[command(
         long_about = r#"Purpose:
@@ -1944,6 +2005,12 @@ async fn main() -> anyhow::Result<()> {
     match &cli.command {
         Commands::Status => {
             handle_status(&config)?;
+        }
+        Commands::Suspend { reason } => {
+            handle_suspend(&config, reason.as_deref())?;
+        }
+        Commands::Resume => {
+            handle_resume(&config)?;
         }
         Commands::Validate => match config.validate() {
             Ok(()) => {

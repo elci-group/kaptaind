@@ -11,6 +11,7 @@ pub mod scheduler;
 pub mod shark;
 pub mod shutdown;
 pub mod status;
+pub mod suspend;
 pub mod telemetry;
 pub mod trace;
 pub mod web;

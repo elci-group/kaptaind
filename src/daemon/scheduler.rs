@@ -267,6 +267,19 @@ pub async fn run(
     // predating process start is historical, never resumed.
     write_status(&config.repo_path, &status);
 
+    // If the operator suspended the daemon while it was down, surface that
+    // immediately in status.json instead of leaving it idle-looking.
+    if crate::daemon::suspend::is_suspended(&config.repo_path) {
+        status.set_suspended(
+            crate::daemon::suspend::load(&config.repo_path)
+                .ok()
+                .flatten()
+                .and_then(|s| s.reason)
+                .as_deref(),
+        );
+        write_status(&config.repo_path, &status);
+    }
+
     // C5: consecutive blocking test failures, reset on any Passed outcome.
     let mut test_streak = TestFailureStreak::default();
 
@@ -522,6 +535,27 @@ async fn process_cluster(
     let mut test_outcome = TestOutcome::Skipped; // Default; will be overwritten if we get to testing
 
     metrics.clusters_processed.fetch_add(1, Ordering::Relaxed);
+
+    // Suspend gate: do not process clusters while the daemon is suspended.
+    if crate::daemon::suspend::is_suspended(&config.repo_path) {
+        tracing::debug!(
+            component = module_path!(),
+            "daemon is suspended; skipping cluster"
+        );
+        record_decision(
+            config,
+            &cluster,
+            crate::daemon::decisions::outcome::SUSPENDED,
+            "daemon is suspended",
+            None,
+            None,
+            None,
+            None,
+        );
+        status.set_suspended(Some("daemon is suspended"));
+        write_status(&config.repo_path, status);
+        return;
+    }
 
     // Load policy if configured
     let policy: Option<Policy> = match config.policy_id.as_deref() {
@@ -1754,7 +1788,10 @@ async fn process_cluster(
         if let Some(angler) = angler {
             // Determine remote(s) for notification
             let remote_names = if !config.push.remotes.is_empty() {
-                let enabled: Vec<_> = config.push.remotes.iter()
+                let enabled: Vec<_> = config
+                    .push
+                    .remotes
+                    .iter()
                     .filter(|r| r.enabled)
                     .map(|r| r.name.as_str())
                     .collect();
@@ -1766,7 +1803,7 @@ async fn process_cluster(
             } else {
                 vec![config.push.remote.as_str()]
             };
-            
+
             let webhook_event = WebhookEvent::Push {
                 branch: config.push.branch.clone(),
                 commits: 1,
@@ -1800,7 +1837,10 @@ async fn process_cluster(
 
         // Determine remote(s) for notification
         let remote_for_notification = if !config.push.remotes.is_empty() {
-            let enabled: Vec<_> = config.push.remotes.iter()
+            let enabled: Vec<_> = config
+                .push
+                .remotes
+                .iter()
                 .filter(|r| r.enabled)
                 .map(|r| r.name.as_str())
                 .collect();
@@ -1812,7 +1852,7 @@ async fn process_cluster(
         } else {
             config.push.remote.clone()
         };
-        
+
         crate::daemon::notification::notify_push_success(
             &config.notify,
             &next.to_string(),

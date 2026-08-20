@@ -1,4 +1,5 @@
 use crate::angler::config::AnglerConfig;
+use crate::collectors::jeenome::JeenomeConfig;
 use crate::notify::audio::TtsConfig;
 use crate::qualification::policy::QualificationConfig;
 use reqwest::Url;
@@ -23,6 +24,8 @@ pub struct Config {
     pub ratelimit: RateLimitConfig,
     #[serde(default)]
     pub test: TestConfig,
+    #[serde(default)]
+    pub jeenome: JeenomeConfig,
     #[serde(default)]
     pub audit: AuditConfig,
     #[serde(default)]
@@ -145,6 +148,13 @@ pub struct DaemonConfig {
     /// trees a daemon must never casually bump. Bypass with `--force`.
     #[serde(default)]
     pub startup_guard: bool,
+    /// Automatically suspend the daemon when an Aim-of-Change session starts.
+    #[serde(default = "default_true")]
+    pub auto_suspend_on_aoc_start: bool,
+    /// Automatically resume the daemon when an Aim-of-Change session is
+    /// shipped or cancelled.
+    #[serde(default = "default_true")]
+    pub auto_resume_on_aoc_end: bool,
 }
 
 impl Default for DaemonConfig {
@@ -152,6 +162,8 @@ impl Default for DaemonConfig {
         Self {
             shutdown_grace_secs: default_shutdown_grace_secs(),
             startup_guard: false,
+            auto_suspend_on_aoc_start: true,
+            auto_resume_on_aoc_end: true,
         }
     }
 }
@@ -723,7 +735,7 @@ pub struct PushConfig {
 pub struct RemoteConfig {
     /// Git remote name (e.g., "github", "gitlab", "codeberg")
     pub name: String,
-    /// Provider type: github, gitlab, bitbucket, azure, aws, gcp, codeberg, sourcehut, 
+    /// Provider type: github, gitlab, bitbucket, azure, aws, gcp, codeberg, sourcehut,
     /// gitea, forgejo, gogs, phabricator, gerrit, launchpad, savannah, pagure, perforce
     #[serde(default)]
     pub provider: String,
@@ -783,10 +795,6 @@ pub struct IntentPattern {
 
 fn default_intent() -> String {
     "general".to_string()
-}
-
-fn default_true() -> bool {
-    true
 }
 
 fn default_priority() -> u32 {
@@ -2454,6 +2462,7 @@ impl Default for Config {
             push: PushConfig::default(),
             ratelimit: RateLimitConfig::default(),
             test: TestConfig::default(),
+            jeenome: JeenomeConfig::default(),
             audit: AuditConfig::default(),
             notify: NotifyConfig::default(),
             bundle: BundleConfig::default(),

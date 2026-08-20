@@ -2,6 +2,7 @@ pub mod angler;
 pub mod aoc;
 pub mod audit;
 pub mod cluster;
+pub mod collectors;
 pub mod commit;
 pub mod compliance;
 pub mod config;

@@ -422,3 +422,110 @@ fn test_ship_status_json_when_empty() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(stdout.trim(), "null");
 }
+
+#[test]
+fn test_suspend_resume_roundtrip() {
+    let dir = tempdir().expect("temp dir");
+    write_default_config(dir.path());
+
+    // Suspend
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .args(["suspend", "--reason", "manual hold"])
+        .output()
+        .expect("run command");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "suspend failed with stderr: {}",
+        stderr
+    );
+    assert!(dir.path().join(".kaptaind").join("suspend.json").exists());
+
+    // Status shows Suspended
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .arg("status")
+        .output()
+        .expect("run command");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "status failed with stderr: {}",
+        stderr
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("Suspended"));
+    assert!(stdout.contains("manual hold"));
+
+    // Resume
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .arg("resume")
+        .output()
+        .expect("run command");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "resume failed with stderr: {}",
+        stderr
+    );
+    assert!(!dir.path().join(".kaptaind").join("suspend.json").exists());
+
+    // Status no longer shows Suspended
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .arg("status")
+        .output()
+        .expect("run command");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "status failed with stderr: {}",
+        stderr
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(!stdout.contains("Suspended"));
+}
+
+#[test]
+fn test_aoc_start_suspends_and_cancel_resumes() {
+    let dir = tempdir().expect("temp dir");
+    write_default_config(dir.path());
+    init_git(dir.path());
+    std::fs::write(dir.path().join("VERSION"), "1.0.0").unwrap();
+
+    // Start AoC — should suspend by default.
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .args(["aoc", "start", "feature: test"])
+        .output()
+        .expect("run command");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "aoc start failed with stderr: {}",
+        stderr
+    );
+    assert!(dir.path().join(".kaptaind").join("suspend.json").exists());
+
+    // Cancel — should resume by default.
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .args(["aoc", "cancel"])
+        .output()
+        .expect("run command");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "aoc cancel failed with stderr: {}",
+        stderr
+    );
+    assert!(!dir.path().join(".kaptaind").join("suspend.json").exists());
+    assert!(!dir
+        .path()
+        .join(".kaptaind")
+        .join("aoc")
+        .join("active.json")
+        .exists());
+}

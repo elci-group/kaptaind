@@ -1,0 +1,104 @@
+[workspace]
+members = [".", "crates/kaptaind-diff"]
+resolver = "2"
+
+[package]
+name = "kaptaind"
+version = "10.2.37"
+edition = "2021"
+license = "MIT"
+default-run = "kaptaind"
+
+[[bin]]
+name = "kaptaind"
+path = "src/main.rs"
+
+[[bin]]
+name = "kaptaind-cli"
+path = "src/cli/main.rs"
+
+[[bin]]
+name = "kaptaind-installer"
+path = "src/installer/gui.rs"
+required-features = ["gui"]
+
+[dependencies]
+kaptaind-diff = { path = "crates/kaptaind-diff" }
+# deckhand is consumed as a pinned git dependency so the project builds on a
+# clean machine (CI, Docker, release). Bump `rev` deliberately to advance it.
+# For local development against a sibling checkout, create a gitignored
+# `.cargo/config.toml` with: paths = ["../deckhand"]
+deckhand = { git = "https://github.com/elci-group/deckhand", rev = "b5c221b6182e871ffeb150d050af518c4121a753" }
+anyhow = "1"
+async-trait = "0.1"
+tokio = { version = "1", features = ["full"] }
+notify = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }
+cron = "0.15"
+petgraph = "0.6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+semver = "1"
+globset = "0.4"
+glob = "0.3"
+ignore = "0.4"
+clap = { version = "4", features = ["derive"] }
+libc = "0.2.184"
+toml_edit = "0.25.10"
+reqwest = { version = "0.13.2", features = ["json"] }
+regex = "1"
+syn = { version = "2", features = ["full", "visit"] }
+sha2 = "0.10"
+hmac = "0.12"
+subtle = "2"
+rand = "0.8"
+tar = "0.4"
+flate2 = "1"
+fltk = { version = "1.4", optional = true }
+notify-rust = { version = "4", optional = true }
+axum = "0.7"
+git2 = { version = "0.19", optional = true }
+tokio-stream = { version = "0.1", features = ["sync"] }
+
+[features]
+gui = ["fltk"]
+notifications = ["notify-rust"]
+git2 = ["dep:git2"]
+
+[dev-dependencies]
+tempfile = "3"
+divan = "0.1"
+proptest = "1"
+# Needed by tests/claims_audit.rs to construct timestamped FsEvents when
+# locking the documented structural-score formula.
+chrono = "0.4"
+
+[[bench]]
+name = "bench_cluster"
+path = "tests/benches/bench_cluster.rs"
+harness = false
+
+[[bench]]
+name = "bench_diff"
+path = "tests/benches/bench_diff.rs"
+harness = false
+
+[[bench]]
+name = "bench_adapters"
+path = "tests/benches/bench_adapters.rs"
+harness = false
+
+[[bench]]
+name = "bench_weight_version"
+path = "tests/benches/bench_weight_version.rs"
+harness = false
+
+[[bench]]
+name = "bench_compliance"
+path = "tests/benches/bench_compliance.rs"
+harness = false

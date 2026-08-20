@@ -40,18 +40,14 @@ pub async fn push_multi_remote(
     retry: &RetryConfig,
     protection: &PushProtectionConfig,
 ) -> anyhow::Result<Vec<String>> {
-    let mut enabled_remotes: Vec<_> = options
-        .remotes
-        .iter()
-        .filter(|r| r.enabled)
-        .collect();
-    
+    let mut enabled_remotes: Vec<_> = options.remotes.iter().filter(|r| r.enabled).collect();
+
     // Sort by priority (lower numbers first)
     enabled_remotes.sort_by_key(|r| r.priority);
-    
+
     let mut successful_pushes = Vec::new();
     let mut last_error: Option<anyhow::Error> = None;
-    
+
     for remote_config in enabled_remotes {
         let push_options = PushOptions {
             remote: remote_config.name.clone(),
@@ -59,13 +55,13 @@ pub async fn push_multi_remote(
             dry_run: options.dry_run,
             protect_branches: options.protect_branches.clone(),
         };
-        
+
         match push_with_audit(repo_path, &push_options, retry, protection, "push").await {
             Ok(_) => {
                 successful_pushes.push(remote_config.name.clone());
                 tracing::info!(
                     remote = %remote_config.name,
-                    purpose = %remote_config.purpose,
+                    role = %remote_config.role,
                     "push succeeded"
                 );
             }
@@ -73,14 +69,14 @@ pub async fn push_multi_remote(
                 last_error = Some(e);
                 tracing::warn!(
                     remote = %remote_config.name,
-                    purpose = %remote_config.purpose,
+                    role = %remote_config.role,
                     error = %last_error.as_ref().unwrap(),
                     "push failed, continuing with other remotes"
                 );
             }
         }
     }
-    
+
     if successful_pushes.is_empty() {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("no remotes were successfully pushed")))
     } else {

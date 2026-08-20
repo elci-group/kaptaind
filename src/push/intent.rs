@@ -1,17 +1,13 @@
 //! Intent-based routing for Git-provider-saturated stack.
-//! 
+//!
 //! This module implements the inference routing problem where Git providers
 //! become specialized execution environments in a software distribution mesh.
 
-use crate::config::loader::{IntentPattern, IntentRouting, RemoteConfig};
-use anyhow::{Context, Result};
+use crate::config::loader::{IntentRouting, RemoteConfig};
+use anyhow::Result;
 
 /// Detect commit intent based on file patterns and commit message.
-pub fn detect_intent(
-    files: &[String],
-    commit_message: &str,
-    routing: &IntentRouting,
-) -> String {
+pub fn detect_intent(files: &[String], commit_message: &str, routing: &IntentRouting) -> String {
     if !routing.enabled {
         return routing.default_intent.clone();
     }
@@ -53,7 +49,7 @@ fn simple_glob_match(pattern: &str, text: &str) -> bool {
     // Convert glob pattern to regex-like pattern
     let mut pattern_chars = pattern.chars().peekable();
     let mut regex_pattern = String::from("^");
-    
+
     while let Some(c) = pattern_chars.next() {
         match c {
             '*' => {
@@ -72,9 +68,9 @@ fn simple_glob_match(pattern: &str, text: &str) -> bool {
             _ => regex_pattern.push(c),
         }
     }
-    
+
     regex_pattern.push('$');
-    
+
     // Simple regex matching (very basic implementation)
     basic_regex_match(&regex_pattern, text)
 }
@@ -85,40 +81,33 @@ fn basic_regex_match(pattern: &str, text: &str) -> bool {
     if pattern == "^.*$" {
         return true;
     }
-    
+
     // Handle patterns ending with *
-    if pattern.ends_with("[^/]*$") {
-        let prefix = &pattern[..pattern.len() - 6];
+    if let Some(prefix) = pattern.strip_suffix("[^/]*$") {
         let pattern_prefix = &prefix[1..]; // remove ^
         return text.starts_with(pattern_prefix);
     }
-    
+
     // Handle patterns starting with *
-    if pattern.starts_with("^.*") {
-        let suffix = &pattern[3..];
+    if let Some(suffix) = pattern.strip_prefix("^.*") {
         let pattern_suffix = &suffix[..suffix.len() - 1]; // remove $
         return text.ends_with(pattern_suffix);
     }
-    
+
     // Exact match for simple patterns
     if pattern.starts_with('^') && pattern.ends_with('$') {
         let exact = &pattern[1..pattern.len() - 1];
         return text == exact;
     }
-    
+
     false
 }
 
 /// Select providers based on detected intent and provider capabilities.
-pub fn select_providers_by_intent(
-    intent: &str,
-    remotes: &[RemoteConfig],
-) -> Vec<RemoteConfig> {
+pub fn select_providers_by_intent(intent: &str, remotes: &[RemoteConfig]) -> Vec<RemoteConfig> {
     let mut selected: Vec<_> = remotes
         .iter()
-        .filter(|r| {
-            r.enabled && (r.intents.is_empty() || r.intents.iter().any(|i| i == intent))
-        })
+        .filter(|r| r.enabled && (r.intents.is_empty() || r.intents.iter().any(|i| i == intent)))
         .cloned()
         .collect();
 
@@ -203,22 +192,39 @@ pub fn validate_saturated_config(remotes: &[RemoteConfig]) -> Result<()> {
     // Check for canonical source
     let canonical_count = remotes.iter().filter(|r| r.canonical).count();
     if canonical_count > 1 {
-        anyhow::bail!("multiple canonical sources configured ({}), only one allowed", canonical_count);
+        anyhow::bail!(
+            "multiple canonical sources configured ({}), only one allowed",
+            canonical_count
+        );
     }
 
     // Check for at least one public nexus if OSS intent is present
     let has_public_nexus = remotes.iter().any(|r| r.role == "public_nexus");
     let has_oss_intent = remotes.iter().any(|r| r.intents.iter().any(|i| i == "oss"));
-    
+
     if has_oss_intent && !has_public_nexus {
         tracing::warn!("OSS intent configured but no public_nexus role found");
     }
 
     // Validate provider names
     let valid_providers = vec![
-        "github", "gitlab", "bitbucket", "azure", "aws", "gcp", 
-        "codeberg", "sourcehut", "gitea", "forgejo", "gogs", 
-        "phabricator", "gerrit", "launchpad", "savannah", "pagure", "perforce"
+        "github",
+        "gitlab",
+        "bitbucket",
+        "azure",
+        "aws",
+        "gcp",
+        "codeberg",
+        "sourcehut",
+        "gitea",
+        "forgejo",
+        "gogs",
+        "phabricator",
+        "gerrit",
+        "launchpad",
+        "savannah",
+        "pagure",
+        "perforce",
     ];
 
     for remote in remotes {
@@ -236,19 +242,18 @@ pub fn validate_saturated_config(remotes: &[RemoteConfig]) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::loader::IntentPattern;
 
     #[test]
     fn test_intent_detection_by_file_pattern() {
         let routing = IntentRouting {
             enabled: true,
             default_intent: "general".to_string(),
-            intent_patterns: vec![
-                IntentPattern {
-                    intent: "oss".to_string(),
-                    file_patterns: vec!["README.md".to_string(), "LICENSE".to_string()],
-                    message_patterns: vec![],
-                },
-            ],
+            intent_patterns: vec![IntentPattern {
+                intent: "oss".to_string(),
+                file_patterns: vec!["README.md".to_string(), "LICENSE".to_string()],
+                message_patterns: vec![],
+            }],
         };
 
         let files = vec!["README.md".to_string(), "src/main.rs".to_string()];
@@ -261,13 +266,15 @@ mod tests {
         let routing = IntentRouting {
             enabled: true,
             default_intent: "general".to_string(),
-            intent_patterns: vec![
-                IntentPattern {
-                    intent: "security".to_string(),
-                    file_patterns: vec![],
-                    message_patterns: vec!["security".to_string(), "CVE".to_string(), "vulnerability".to_string()],
-                },
-            ],
+            intent_patterns: vec![IntentPattern {
+                intent: "security".to_string(),
+                file_patterns: vec![],
+                message_patterns: vec![
+                    "security".to_string(),
+                    "CVE".to_string(),
+                    "vulnerability".to_string(),
+                ],
+            }],
         };
 
         let files = vec!["src/auth.rs".to_string()];

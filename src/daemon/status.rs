@@ -8,6 +8,7 @@ pub enum State {
     Clustering,
     Testing,
     Committing,
+    Suspended,
     Failed,
     Stopping,
     Stopped,
@@ -52,9 +53,18 @@ impl StatusReport {
         self.progress_percent = None;
         self.last_action_time = Utc::now();
     }
+
+    /// Mark the daemon as suspended.
+    pub fn set_suspended(&mut self, reason: Option<&str>) {
+        self.status = State::Suspended;
+        self.last_error = reason.map(|r| r.to_string());
+        self.current_task = None;
+        self.progress_percent = None;
+        self.last_action_time = Utc::now();
+    }
 }
 
-pub(crate) fn write_status(repo_path: &Path, report: &StatusReport) {
+pub fn write_status(repo_path: &Path, report: &StatusReport) {
     let dir = repo_path.join(".kaptaind");
     if std::fs::create_dir_all(&dir).is_err() {
         return;
@@ -116,5 +126,14 @@ mod tests {
         let parsed: StatusReport = serde_json::from_str(&content).expect("parse status");
         assert!(matches!(parsed.status, State::Failed));
         assert_eq!(parsed.last_error.as_deref(), Some("boom"));
+
+        // Suspended state round-trips too.
+        let mut suspended = report.clone();
+        suspended.set_suspended(Some("manual hold"));
+        write_status(dir.path(), &suspended);
+        let content = std::fs::read_to_string(&status_file).expect("read status");
+        let parsed: StatusReport = serde_json::from_str(&content).expect("parse status");
+        assert!(matches!(parsed.status, State::Suspended));
+        assert_eq!(parsed.last_error.as_deref(), Some("manual hold"));
     }
 }

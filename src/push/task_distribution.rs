@@ -1,13 +1,12 @@
 //! Task distribution system using provider matrix for intelligent routing.
-//! 
+//!
 //! This module implements the core logic for distributing development tasks
 //! across SSH-accessible Git providers based on the provider matrix capabilities.
 
 use crate::config::loader::RemoteConfig;
 use crate::push::intent::detect_intent;
 use crate::push::provider_matrix::{ProviderMatrix, TaskType};
-use anyhow::{Context, Result};
-use std::collections::HashMap;
+use anyhow::Result;
 
 /// Task distribution configuration.
 #[derive(Debug, Clone)]
@@ -88,12 +87,12 @@ impl TaskDistributionEngine {
             config,
         }
     }
-    
+
     /// Create a new task distribution engine with default config.
     pub fn with_defaults() -> Self {
         Self::new(TaskDistributionConfig::default())
     }
-    
+
     /// Distribute a task to the best-fit providers.
     pub fn distribute_task(
         &self,
@@ -105,21 +104,22 @@ impl TaskDistributionEngine {
         if !self.config.enabled {
             return self.fallback_distribution(available_remotes);
         }
-        
+
         // Detect task type from intent
         let intent = detect_intent(files, commit_message, routing_config);
         let task_type = self.intent_to_task_type(&intent);
-        
+
         // Get provider recommendations
-        let recommended_providers = self.provider_matrix
+        let recommended_providers = self
+            .provider_matrix
             .get_best_providers(&task_type, self.config.prefer_ssh);
-        
+
         // Filter by minimum capability score
         let qualified_providers: Vec<_> = recommended_providers
             .into_iter()
             .filter(|cap| cap.score >= self.config.min_capability_score)
             .collect();
-        
+
         if qualified_providers.is_empty() {
             if self.config.fallback_to_default {
                 tracing::warn!(
@@ -131,10 +131,11 @@ impl TaskDistributionEngine {
                 anyhow::bail!("no qualified providers found for task type {:?}", task_type);
             }
         }
-        
+
         // Map provider names to available remotes
-        let matched_remotes = self.match_providers_to_remotes(&qualified_providers, available_remotes);
-        
+        let matched_remotes =
+            self.match_providers_to_remotes(&qualified_providers, available_remotes);
+
         if matched_remotes.is_empty() {
             if self.config.fallback_to_default {
                 tracing::warn!(
@@ -146,14 +147,11 @@ impl TaskDistributionEngine {
                 anyhow::bail!("no matching remotes found for qualified providers");
             }
         }
-        
+
         // Apply distribution strategy
-        let (selected_remotes, scores, strategy) = self.apply_distribution_strategy(
-            &matched_remotes,
-            &qualified_providers,
-            &task_type,
-        );
-        
+        let (selected_remotes, scores, strategy) =
+            self.apply_distribution_strategy(&matched_remotes, &qualified_providers, &task_type);
+
         Ok(TaskDistribution {
             task_type,
             recommended_providers: selected_remotes,
@@ -162,7 +160,7 @@ impl TaskDistributionEngine {
             fallback_used: false,
         })
     }
-    
+
     /// Convert intent string to task type.
     fn intent_to_task_type(&self, intent: &str) -> TaskType {
         match intent {
@@ -180,7 +178,7 @@ impl TaskDistributionEngine {
             _ => TaskType::FeatureDevelopment, // Default fallback
         }
     }
-    
+
     /// Match provider recommendations to available remotes.
     fn match_providers_to_remotes(
         &self,
@@ -188,34 +186,33 @@ impl TaskDistributionEngine {
         available_remotes: &[RemoteConfig],
     ) -> Vec<(RemoteConfig, f32)> {
         let mut matched = Vec::new();
-        
+
         for provider_cap in qualified_providers {
             for remote in available_remotes {
                 if remote.provider == provider_cap.provider && remote.enabled {
-                    let fit_score = self.provider_matrix.calculate_fit_score(
-                        &provider_cap.provider,
-                        &provider_cap.task_type,
-                    );
+                    let fit_score = self
+                        .provider_matrix
+                        .calculate_fit_score(&provider_cap.provider, &provider_cap.task_type);
                     matched.push((remote.clone(), fit_score));
                     break; // Use first matching remote per provider
                 }
             }
         }
-        
+
         matched
     }
-    
+
     /// Apply distribution strategy to select final providers.
     fn apply_distribution_strategy(
         &self,
         matched_remotes: &[(RemoteConfig, f32)],
-        qualified_providers: &[crate::push::provider_matrix::ProviderCapability],
-        task_type: &TaskType,
+        _qualified_providers: &[crate::push::provider_matrix::ProviderCapability],
+        _task_type: &TaskType,
     ) -> (Vec<RemoteConfig>, Vec<f32>, DistributionStrategy) {
-        let strategy = self.determine_strategy(matched_remotes, qualified_providers);
-        
-        let mut scored: Vec<_> = matched_remotes.iter().cloned().collect();
-        
+        let strategy = self.determine_strategy(matched_remotes, _qualified_providers);
+
+        let mut scored: Vec<_> = matched_remotes.to_vec();
+
         match strategy {
             DistributionStrategy::BestFit => {
                 // Sort by fit score descending
@@ -226,7 +223,9 @@ impl TaskDistributionEngine {
                 scored.sort_by(|a, b| {
                     let a_cost = self.get_provider_cost(&a.0.provider);
                     let b_cost = self.get_provider_cost(&b.0.provider);
-                    a_cost.partial_cmp(&b_cost).unwrap()
+                    a_cost
+                        .partial_cmp(&b_cost)
+                        .unwrap()
                         .then_with(|| b.1.partial_cmp(&a.1).unwrap())
                 });
             }
@@ -235,7 +234,9 @@ impl TaskDistributionEngine {
                 scored.sort_by(|a, b| {
                     let a_avail = self.get_provider_availability(&a.0.provider);
                     let b_avail = self.get_provider_availability(&b.0.provider);
-                    b_avail.partial_cmp(&a_avail).unwrap()
+                    b_avail
+                        .partial_cmp(&a_avail)
+                        .unwrap()
                         .then_with(|| b.1.partial_cmp(&a.1).unwrap())
                 });
             }
@@ -244,7 +245,9 @@ impl TaskDistributionEngine {
                     scored.sort_by(|a, b| {
                         let a_region_score = self.get_region_score(&a.0.provider, region);
                         let b_region_score = self.get_region_score(&b.0.provider, region);
-                        b_region_score.partial_cmp(&a_region_score).unwrap()
+                        b_region_score
+                            .partial_cmp(&a_region_score)
+                            .unwrap()
                             .then_with(|| b.1.partial_cmp(&a.1).unwrap())
                     });
                 } else {
@@ -264,49 +267,52 @@ impl TaskDistributionEngine {
                 // Just return as-is (fallback handled elsewhere)
             }
         }
-        
+
         // Limit to max providers per task
         let limited: Vec<_> = scored
             .into_iter()
             .take(self.config.max_providers_per_task)
             .collect();
-        
+
         let (remotes, scores): (Vec<_>, Vec<_>) = limited.into_iter().unzip();
-        
+
         (remotes, scores, strategy)
     }
-    
+
     /// Determine the best distribution strategy.
     fn determine_strategy(
         &self,
         matched_remotes: &[(RemoteConfig, f32)],
-        qualified_providers: &[crate::push::provider_matrix::ProviderCapability],
+        _qualified_providers: &[crate::push::provider_matrix::ProviderCapability],
     ) -> DistributionStrategy {
         if self.config.preferred_region.is_some() {
             return DistributionStrategy::GeographicOptimization;
         }
-        
+
         if self.config.cost_sensitivity > 0.7 {
             return DistributionStrategy::CostOptimization;
         }
-        
+
         if matched_remotes.len() > 3 {
             return DistributionStrategy::Hybrid;
         }
-        
+
         DistributionStrategy::BestFit
     }
-    
+
     /// Calculate hybrid score combining multiple factors.
     fn calculate_hybrid_score(&self, remote: &RemoteConfig, fit_score: f32) -> f32 {
         let cost = self.get_provider_cost(&remote.provider);
         let availability = self.get_provider_availability(&remote.provider);
         let priority_bonus = 1.0 / (remote.priority as f32 + 1.0);
-        
+
         // Weighted combination
-        fit_score * 0.5 + availability * 0.2 + (1.0 - cost) * 0.2 * self.config.cost_sensitivity + priority_bonus * 0.1
+        fit_score * 0.5
+            + availability * 0.2
+            + (1.0 - cost) * 0.2 * self.config.cost_sensitivity
+            + priority_bonus * 0.1
     }
-    
+
     /// Get provider cost (0.0-1.0).
     fn get_provider_cost(&self, provider: &str) -> f32 {
         match provider {
@@ -319,7 +325,7 @@ impl TaskDistributionEngine {
             _ => 0.5,
         }
     }
-    
+
     /// Get provider availability (0.0-1.0).
     fn get_provider_availability(&self, provider: &str) -> f32 {
         match provider {
@@ -333,11 +339,14 @@ impl TaskDistributionEngine {
             _ => 0.90,
         }
     }
-    
+
     /// Get region match score (0.0-1.0).
     fn get_region_score(&self, provider: &str, preferred_region: &str) -> f32 {
         if let Some(defaults) = self.provider_matrix.get_provider_defaults(provider) {
-            if defaults.optimal_regions.contains(preferred_region) {
+            if defaults
+                .optimal_regions
+                .contains(&preferred_region.to_string())
+            {
                 return 1.0;
             }
             if defaults.optimal_regions.contains(&"global".to_string()) {
@@ -346,20 +355,23 @@ impl TaskDistributionEngine {
         }
         0.5
     }
-    
+
     /// Fallback distribution using available remotes.
-    fn fallback_distribution(&self, available_remotes: &[RemoteConfig]) -> Result<TaskDistribution> {
+    fn fallback_distribution(
+        &self,
+        available_remotes: &[RemoteConfig],
+    ) -> Result<TaskDistribution> {
         let mut enabled_remotes: Vec<_> = available_remotes
             .iter()
             .filter(|r| r.enabled)
             .cloned()
             .collect();
-        
+
         // Sort by priority
         enabled_remotes.sort_by_key(|r| r.priority);
-        
+
         let scores = vec![0.5; enabled_remotes.len()]; // Default fallback score
-        
+
         Ok(TaskDistribution {
             task_type: TaskType::FeatureDevelopment,
             recommended_providers: enabled_remotes,
@@ -368,12 +380,12 @@ impl TaskDistributionEngine {
             fallback_used: true,
         })
     }
-    
+
     /// Validate SSH accessibility for all configured remotes.
     pub fn validate_ssh_access(&self, remotes: &[RemoteConfig]) -> Result<()> {
         self.provider_matrix.validate_ssh_access(remotes)
     }
-    
+
     /// Get provider matrix for inspection.
     pub fn provider_matrix(&self) -> &ProviderMatrix {
         &self.provider_matrix
@@ -383,39 +395,37 @@ impl TaskDistributionEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::loader::{IntentPattern, IntentRouting};
-    
+    use crate::config::loader::IntentRouting;
+
     #[test]
     fn test_task_distribution_basic() {
         let engine = TaskDistributionEngine::with_defaults();
         let routing = IntentRouting::default();
-        
-        let remotes = vec![
-            RemoteConfig {
-                name: "github".to_string(),
-                provider: "github".to_string(),
-                role: "public_nexus".to_string(),
-                enabled: true,
-                priority: 10,
-                intents: vec!["oss".to_string()],
-                canonical: true,
-                backup: false,
-                regional: false,
-            },
-        ];
-        
+
+        let remotes = vec![RemoteConfig {
+            name: "github".to_string(),
+            provider: "github".to_string(),
+            role: "public_nexus".to_string(),
+            enabled: true,
+            priority: 10,
+            intents: vec!["oss".to_string()],
+            canonical: true,
+            backup: false,
+            regional: false,
+        }];
+
         let files = vec!["README.md".to_string()];
         let result = engine.distribute_task(&files, "update readme", &routing, &remotes);
-        
+
         assert!(result.is_ok());
         let distribution = result.unwrap();
         assert!(!distribution.recommended_providers.is_empty());
     }
-    
+
     #[test]
     fn test_intent_to_task_type_mapping() {
         let engine = TaskDistributionEngine::with_defaults();
-        
+
         assert_eq!(
             engine.intent_to_task_type("security"),
             TaskType::SecurityAudit
@@ -437,7 +447,7 @@ mod tests {
             TaskType::Experimentation
         );
     }
-    
+
     #[test]
     fn test_cost_sensitivity() {
         let config = TaskDistributionConfig {
@@ -445,29 +455,27 @@ mod tests {
             ..Default::default()
         };
         let engine = TaskDistributionEngine::new(config);
-        
+
         // With high cost sensitivity, should prefer free providers
         assert_eq!(engine.config.cost_sensitivity, 0.9);
     }
-    
+
     #[test]
     fn test_ssh_validation() {
         let engine = TaskDistributionEngine::with_defaults();
-        
-        let remotes = vec![
-            RemoteConfig {
-                name: "github".to_string(),
-                provider: "github".to_string(),
-                role: "public_nexus".to_string(),
-                enabled: true,
-                priority: 10,
-                intents: vec![],
-                canonical: false,
-                backup: false,
-                regional: false,
-            },
-        ];
-        
+
+        let remotes = vec![RemoteConfig {
+            name: "github".to_string(),
+            provider: "github".to_string(),
+            role: "public_nexus".to_string(),
+            enabled: true,
+            priority: 10,
+            intents: vec![],
+            canonical: false,
+            backup: false,
+            regional: false,
+        }];
+
         let result = engine.validate_ssh_access(&remotes);
         assert!(result.is_ok());
     }
