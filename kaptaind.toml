@@ -233,7 +233,7 @@ timeout_secs = 1200
 # builds linux x86_64/arm64, macOS x86_64/arm64, and Windows x86_64.
 # ---------------------------------------------------------------------------
 [ship]
-enabled = false               # Safe default: releases require an explicit release profile
+enabled = true                 # This repo ships its own releases; explicit opt-in
 sign = false
 require_qualification = false
 targets = ["x86_64-unknown-linux-gnu"]
