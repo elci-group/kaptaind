@@ -131,9 +131,9 @@ pub fn encode(input: &[u8]) -> String {
     }
 
     let mut out = String::with_capacity(input.len().div_ceil(3) * 4);
-    let mut chunks = input.chunks_exact(3);
+    let (chunks, remainder) = input.as_chunks::<3>();
 
-    for chunk in &mut chunks {
+    for chunk in chunks {
         let n = u32::from_be_bytes([0, chunk[0], chunk[1], chunk[2]]);
         out.push(ALPHABET[((n >> 18) & 0x3f) as usize] as char);
         out.push(ALPHABET[((n >> 12) & 0x3f) as usize] as char);
@@ -141,7 +141,6 @@ pub fn encode(input: &[u8]) -> String {
         out.push(ALPHABET[(n & 0x3f) as usize] as char);
     }
 
-    let remainder = chunks.remainder();
     match remainder.len() {
         0 => {}
         1 => {

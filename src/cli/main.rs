@@ -26,29 +26,6 @@ bump, and commits the result. This CLI provides visibility into the daemon's
 state and offers one-off analysis, session management, and release operations
 without starting the daemon.
 
-USAGE:
-    kaptaind-cli [OPTIONS] <COMMAND>
-
-COMMANDS:
-    status            View current daemon health and version
-    log               View recent automated commits and analysis decisions
-    analyze           Dry-run: analyze working tree without committing
-    dashboard         Live dashboard: stability, releases, recent analyses
-    ci-hint           Release/hold recommendation for CI/CD pipelines
-    aoc               Manage Aim of Change sessions (multi-commit grouping)
-    ship              Build release binaries, installers, and distribute
-    init              Initialize kaptaind config for a project
-    trawl             Discover and initialize codebases in a directory tree
-    trace             View and manage AoC traces
-    vacs              Manage Visual Asset Channel Saturation
-    storage           Workspace storage management
-    shark             Shark Stating: high availability leader election
-
-OPTIONS:
-    -r, --repo <PATH>    Operate on the specified repository
-    -h, --help           Print help (see --help for the long version)
-    -V, --version        Print version
-
 EXAMPLES:
     kaptaind-cli status
     kaptaind-cli log --limit 20
@@ -558,12 +535,14 @@ Usage:
 
 Subcommands:
     log     List traces for the current or a specified AoC session
+    list    List traces with optional JSON output
     show    Display a detailed trace breakdown
     prune   Remove traces older than N days
 
 Examples:
     kaptaind-cli trace log
     kaptaind-cli trace log --limit 20
+    kaptaind-cli trace list --format json
     kaptaind-cli trace show <cluster-id>
     kaptaind-cli trace prune --days 7"#
     )]
@@ -646,11 +625,13 @@ Usage:
     kaptaind-cli ship <SUBCOMMAND>
 
 Subcommands:
-    plan      Preview the ship plan without building or publishing
-    run       Execute the ship pipeline
-    stable    Ship a stable release from the current VERSION
-    nightly   Ship a nightly prerelease with an auto-generated version
-    status    Show the last ship run and scheduled auto-releases
+    plan             Preview the ship plan without building or publishing
+    run              Execute the ship pipeline
+    stable           Ship a stable release from the current VERSION
+    nightly          Ship a nightly prerelease with an auto-generated version
+    request-approval Request an approval-gated release for the current VERSION
+    approve          Approve a previously requested release
+    status           Show the last ship run and scheduled auto-releases
 
 Options (common):
     -t, --targets <TARGETS>    Override target triples (comma-separated).
@@ -868,6 +849,77 @@ Notes:
     Reads the health port from config (default 9090)."#
     )]
     Probe(ProbeCommand),
+
+    /// 🧬 Migrate the .kaptaind semantic-state document
+    #[command(long_about = r#"Purpose:
+    Deterministically migrate the repository's .kaptaind/state.toml semantic
+    document to a newer (or older) schema version, one discrete step at a
+    time. Normal analysis never rewrites the document — migrate is the only
+    mutation path, and every run is recorded in .kaptaind/migrations/.
+
+Usage:
+    kaptaind-cli migrate [OPTIONS]
+
+Options:
+        --check               Report whether migration is needed (no changes).
+        --strict              With --check: exit non-zero when outdated (CI).
+        --to <VERSION>        Target schema version (default: latest supported).
+        --allow-lossy         Permit migrations that discard information.
+    -f, --format <FORMAT>     Output format: text (default) or json.
+
+Examples:
+    kaptaind-cli migrate
+    kaptaind-cli migrate --check --strict
+    kaptaind-cli migrate --to 2.0 --allow-lossy
+    kaptaind-cli migrate --check --format json"#)]
+    Migrate {
+        /// Report whether migration is needed without changing anything.
+        #[arg(long)]
+        check: bool,
+        /// With --check: exit non-zero when the document is outdated.
+        #[arg(long)]
+        strict: bool,
+        /// Target schema version (default: latest supported).
+        #[arg(long, value_name = "VERSION")]
+        to: Option<String>,
+        /// Permit migrations that discard information.
+        #[arg(long)]
+        allow_lossy: bool,
+        /// Output format: text (default) or json.
+        #[arg(short, long, value_name = "FORMAT", default_value = "text")]
+        format: String,
+    },
+
+    /// 📚 Inspect installed .kaptaind schema versions
+    #[command(
+        subcommand,
+        long_about = r#"Purpose:
+    Show which .kaptaind schema versions this kaptaind knows about.
+
+Usage:
+    kaptaind-cli schema <SUBCOMMAND>
+
+Subcommands:
+    list               List installed schema versions
+    explain <VERSION> Describe a schema version
+
+Examples:
+    kaptaind-cli schema list
+    kaptaind-cli schema explain 2.1"#
+    )]
+    Schema(SchemaCommand),
+}
+
+#[derive(Subcommand)]
+enum SchemaCommand {
+    /// List installed schema versions
+    List,
+    /// Describe a schema version
+    Explain {
+        /// Schema version to explain (e.g. 2.1).
+        #[arg(value_name = "VERSION")]
+        version: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -2214,6 +2266,29 @@ async fn main() -> anyhow::Result<()> {
             };
             handle_probe(&config, &action, format)?;
         }
+        Commands::Migrate {
+            check,
+            strict,
+            to,
+            allow_lossy,
+            format,
+        } => {
+            let args = commands::MigrateArgs {
+                check: *check,
+                strict: *strict,
+                to: to.clone(),
+                allow_lossy: *allow_lossy,
+                format: format.clone(),
+            };
+            if !*check {
+                kaptaind::rbac::check_permission(&config.rbac, "config.edit")?;
+            }
+            commands::schema::handle_migrate(&config.repo_path, &args)?;
+        }
+        Commands::Schema(schema_cmd) => match schema_cmd {
+            SchemaCommand::List => commands::schema::handle_schema_list()?,
+            SchemaCommand::Explain { version } => commands::schema::handle_schema_explain(version)?,
+        },
         Commands::Vacs(vacs_cmd) => {
             handle_vacs(&config, vacs_cmd)?;
         }

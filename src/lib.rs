@@ -23,6 +23,7 @@ pub mod qualification;
 pub mod rbac;
 pub mod release;
 pub mod schedule;
+pub mod schema;
 pub mod stability;
 pub mod trawler;
 pub mod util;

@@ -231,11 +231,16 @@ kaptaind-cli ship status --format json
 | `kaptaind-cli ci-hint` | Release/hold recommendation | `[qualification]` |
 | `kaptaind-cli shark status` | HA leadership state | `[shark]` |
 | `kaptaind-cli rollback` | Revert the last kaptaind commit | — |
+| `kaptaind-cli migrate` | Migrate the `.kaptaind/state.toml` schema document | — |
+| `kaptaind-cli migrate --check --strict` | CI gate: fail when the document is outdated | — |
+| `kaptaind-cli schema list` | List installed `.kaptaind` schema versions | — |
 
 | File / Directory | Purpose |
 |------------------|---------|
 | `kaptaind.toml` | Main configuration |
 | `.kaptainignore` | Paths ignored by the watcher |
+| `.kaptaind/state.toml` | Versioned semantic-state document (schema-format header, surfaces, invariants, exceptions, versioning policy, baseline); migrate explicitly with `kaptaind-cli migrate` — the daemon never rewrites it |
+| `.kaptaind/migrations/` | Append-only migration ledger recording each schema migration with before/after digests |
 | `.kaptaind/status.json` | Daemon state |
 | `.kaptaind/suspend.json` | Daemon suspension state |
 | `.kaptaind/analysis/` | Per-cluster analysis artifacts |

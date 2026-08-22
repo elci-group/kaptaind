@@ -17,6 +17,7 @@ pub mod probe;
 pub mod report;
 pub mod resume;
 pub mod rollback;
+pub mod schema;
 pub mod service;
 pub mod shark;
 pub mod ship;
@@ -28,7 +29,7 @@ pub mod trace;
 pub mod trawl;
 pub mod vacs;
 
-pub use aoc::handle_aoc;
+/// Arguments for the `migrate` command.
 pub use audit::handle_audit;
 pub use autostart::handle_autostart;
 pub use cihint::handle_ci_hint;
@@ -45,6 +46,19 @@ pub use resume::handle_resume;
 pub use rollback::handle_rollback;
 pub use service::handle_service;
 pub use shark::handle_shark;
+
+/// Arguments for the `migrate` command.
+#[derive(Debug, Clone)]
+pub struct MigrateArgs {
+    pub check: bool,
+    pub strict: bool,
+    pub to: Option<String>,
+    pub allow_lossy: bool,
+    pub format: String,
+}
+
+pub use aoc::handle_aoc;
+
 pub use ship::handle_ship;
 pub use status::handle_status;
 pub use storage::handle_storage;
