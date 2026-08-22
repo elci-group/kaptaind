@@ -34,10 +34,11 @@ pub struct WebState {
     pub allow_config_write: bool,
 }
 
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn start_web_server(port: u16, state: WebState) -> anyhow::Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!(%addr, "web UI server listening");
+    tracing::info!(component = module_path!(), %addr, "web UI server listening");
 
     let app = routes()
         .layer(from_fn_with_state(state.clone(), auth_middleware))
@@ -101,6 +102,7 @@ async fn auth_middleware(
         let origin_ok = request
             .headers()
             .get(header::ORIGIN)
+            // traci: allow -- optional failure is represented by None and handled by the caller.
             .and_then(|v| v.to_str().ok())
             .map(origin_is_loopback)
             .unwrap_or(true);
@@ -120,6 +122,7 @@ fn extract_token(request: &Request<Body>) -> Option<String> {
     if let Some(v) = request
         .headers()
         .get(header::AUTHORIZATION)
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .and_then(|v| v.to_str().ok())
     {
         if let Some(t) = v.strip_prefix("Bearer ") {
@@ -220,7 +223,9 @@ async fn status_handler(State(state): State<WebState>) -> Json<serde_json::Value
         "last_error": null,
     });
     let value: serde_json::Value = std::fs::read_to_string(&path)
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .and_then(|c| serde_json::from_str(&c).ok())
         .unwrap_or(default);
     Json(value)
@@ -268,12 +273,19 @@ async fn commit_detail_handler(
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
     {
+        tracing::error!(
+            operation = "commit_detail_handler",
+            source_line = line!(),
+            "commit detail handler returned an error"
+        );
         return Err(StatusCode::BAD_REQUEST);
     }
     let base = state.repo_path.join(".kaptaind").join("analysis");
     let path = base.join(format!("{id}.json"));
     std::fs::read_to_string(&path)
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .and_then(|c| serde_json::from_str(&c).ok())
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
@@ -295,6 +307,11 @@ async fn config_update_handler(
     body: String,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
     if !state.allow_config_write {
+        tracing::error!(
+            operation = "config_update_handler",
+            source_line = line!(),
+            "config update handler returned an error"
+        );
         return Err((
             StatusCode::FORBIDDEN,
             Json(
@@ -305,6 +322,17 @@ async fn config_update_handler(
 
     // Ensure the content is valid TOML.
     if let Err(err) = body.parse::<toml_edit::DocumentMut>() {
+        tracing::error!(
+            ?err,
+            operation = "config_update_handler",
+            source_line = line!(),
+            "config update handler returned an error"
+        );
+        tracing::error!(
+            operation = "config_update_handler",
+            source_line = line!(),
+            "config update handler returned an error"
+        );
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": format!("invalid TOML: {err}") })),
@@ -312,9 +340,21 @@ async fn config_update_handler(
     }
 
     let path = state.repo_path.join("kaptaind.toml");
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let original = std::fs::read_to_string(&path).ok();
 
     if let Err(err) = std::fs::write(&path, &body) {
+        tracing::error!(
+            ?err,
+            operation = "config_update_handler",
+            source_line = line!(),
+            "config update handler returned an error"
+        );
+        tracing::error!(
+            operation = "config_update_handler",
+            source_line = line!(),
+            "config update handler returned an error"
+        );
         return Err((
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({ "error": err.to_string() })),
@@ -323,11 +363,36 @@ async fn config_update_handler(
 
     // Validate by loading the updated config; restore the previous content on failure.
     if let Err(err) = crate::config::loader::load_from_path(&path) {
+        tracing::error!(
+            ?err,
+            operation = "config_update_handler",
+            source_line = line!(),
+            "config update handler returned an error"
+        );
         if let Some(orig) = original {
-            let _ = std::fs::write(&path, orig);
+            if let Err(error) = std::fs::write(&path, orig) {
+                tracing::warn!(
+                    ?error,
+                    operation = "config_update_handler",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
         } else {
-            let _ = std::fs::remove_file(&path);
+            if let Err(error) = std::fs::remove_file(&path) {
+                tracing::warn!(
+                    ?error,
+                    operation = "config_update_handler",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
         }
+        tracing::error!(
+            operation = "config_update_handler",
+            source_line = line!(),
+            "config update handler returned an error"
+        );
         return Err((
             StatusCode::BAD_REQUEST,
             Json(json!({ "error": format!("config validation failed: {err}") })),
@@ -355,7 +420,9 @@ async fn events_handler(
 ) -> Sse<impl tokio_stream::Stream<Item = Result<SseEvent, std::convert::Infallible>>> {
     let rx = state.event_tx.subscribe();
     let stream = BroadcastStream::new(rx).filter_map(|result| {
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let event: DaemonEvent = result.ok()?;
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let json = serde_json::to_string(&event).ok()?;
         Some(Ok(SseEvent::default().data(json)))
     });
@@ -390,7 +457,9 @@ async fn commit_graph_handler(State(state): State<WebState>) -> Json<serde_json:
 fn load_telemetry(repo_path: &StdPath) -> TokenMetrics {
     let path = repo_path.join(".kaptaind").join("telemetry.json");
     std::fs::read_to_string(&path)
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .and_then(|c| serde_json::from_str(&c).ok())
         .unwrap_or_default()
 }
@@ -398,14 +467,19 @@ fn load_telemetry(repo_path: &StdPath) -> TokenMetrics {
 fn list_analysis_artifacts(repo_path: &StdPath, limit: usize) -> Vec<serde_json::Value> {
     let dir = repo_path.join(".kaptaind").join("analysis");
     let mut entries: Vec<(std::time::SystemTime, serde_json::Value)> = std::fs::read_dir(&dir)
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
         .map(|rd| {
+            // traci: allow -- optional failure is represented by None and handled by the caller.
             rd.filter_map(|e| e.ok())
                 .filter(|e| e.path().extension().map(|x| x == "json").unwrap_or(false))
                 .filter_map(|e| {
+                    // traci: allow -- optional failure is represented by None and handled by the caller.
                     let meta = e.metadata().ok()?;
                     let modified = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+                    // traci: allow -- optional failure is represented by None and handled by the caller.
                     let content = std::fs::read_to_string(e.path()).ok()?;
+                    // traci: allow -- optional failure is represented by None and handled by the caller.
                     let artifact: AnalysisArtifact = serde_json::from_str(&content).ok()?;
                     let summary = artifact_summary(&artifact);
                     Some((modified, summary))

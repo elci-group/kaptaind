@@ -157,19 +157,25 @@ fn resolve_dirs(
     let mut dirs = BTreeSet::new();
     let Some(array) = value.and_then(|v| v.as_array()) else {
         if value.is_some() {
-            tracing::warn!("[workspace] members/exclude is not a string array; ignoring it");
+            tracing::warn!(
+                component = module_path!(),
+                "[workspace] members/exclude is not a string array; ignoring it"
+            );
         }
         return Ok(dirs);
     };
     for item in array {
         let Some(entry) = item.as_str() else {
-            tracing::warn!("non-string [workspace] entry ignored: {item}");
+            tracing::warn!(
+                component = module_path!(),
+                "non-string [workspace] entry ignored: {item}"
+            );
             continue;
         };
         if entry.chars().any(|c| matches!(c, '*' | '?' | '[' | '{')) {
             let pattern = project_root.join(entry);
             let Some(pattern) = pattern.to_str() else {
-                tracing::warn!(%entry, "workspace member pattern is not valid UTF-8; ignored");
+                tracing::warn!(component = module_path!(), %entry, "workspace member pattern is not valid UTF-8; ignored");
                 continue;
             };
             for path in glob::glob(pattern)
@@ -208,6 +214,7 @@ fn read_member(manifest: &Path) -> anyhow::Result<Option<Member>> {
         .ok_or_else(|| anyhow::anyhow!("{} has no [package] table", manifest.display()))?;
     if package.get("workspace").is_some() {
         tracing::warn!(
+            component = module_path!(),
             "{} declares package.workspace; skipping — it belongs to a different workspace root",
             manifest.display()
         );

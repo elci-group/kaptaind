@@ -302,6 +302,7 @@ fn sign_approval(approval: &mut ReleaseApproval, required: bool) -> anyhow::Resu
 
 fn verify_approval_hmac(approval: &ReleaseApproval, required: bool) -> anyhow::Result<()> {
     let key = std::env::var("KAPTAIND_APPROVAL_HMAC_KEY")
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
         .filter(|key| !key.is_empty());
     verify_approval_hmac_with_key(approval, required, key.as_deref().map(str::as_bytes))
@@ -480,7 +481,10 @@ fn save_release_approval(
     approval: &ReleaseApproval,
 ) -> anyhow::Result<()> {
     let path = approval_path(repo_path, version)?;
-    std::fs::create_dir_all(path.parent().expect("approval path has parent"))?;
+    let parent = path.parent().ok_or_else(|| {
+        anyhow::anyhow!("release approval path has no parent: {}", path.display())
+    })?;
+    std::fs::create_dir_all(parent)?;
     let temporary = path.with_extension("json.tmp");
     std::fs::write(&temporary, serde_json::to_vec_pretty(approval)?)?;
     std::fs::rename(temporary, path)?;
@@ -611,6 +615,7 @@ pub fn current_branch(repo_path: &Path) -> Option<String> {
         .arg(repo_path)
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .output()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()?;
     if !output.status.success() {
         return None;
@@ -637,7 +642,11 @@ pub fn cluster_matches_allowlist(paths: &[PathBuf], allowlist: &[String]) -> boo
         // A policy typo must not silently widen the set of files that an
         // unattended daemon may commit.  Fail this cluster closed instead.
         let Ok(glob) = Glob::new(pattern) else {
-            tracing::warn!(pattern, "invalid policy allowlist glob; blocking cluster");
+            tracing::warn!(
+                component = module_path!(),
+                pattern,
+                "invalid policy allowlist glob; blocking cluster"
+            );
             return false;
         };
         builder.add(glob);

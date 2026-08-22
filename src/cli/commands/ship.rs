@@ -21,6 +21,7 @@ fn authorize_release_actor(
     Ok(())
 }
 
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn handle_ship(config: &Config, cmd: &ShipCommand) -> anyhow::Result<()> {
     match cmd {
         ShipCommand::RequestApproval { ticket } => {

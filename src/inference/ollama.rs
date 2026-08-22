@@ -78,6 +78,7 @@ pub(super) fn build_user_prompt(ctx: &CommitContext<'_>) -> String {
 /// Internal: calls Ollama /api/chat with a pre-built prompt string.
 /// This function is `'static`-safe and can be called from tokio::spawn tasks
 /// (unlike `generate`, which takes `CommitContext<'_>` with borrowed references).
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn generate_with_model_and_prompt(
     config: &InferenceConfig,
     user_prompt: &str,
@@ -136,7 +137,7 @@ pub async fn generate_with_model_and_prompt(
 
     let content = chat_response.message.content.trim();
     if content.is_empty() {
-        tracing::warn!("ollama returned empty content");
+        tracing::warn!(component = module_path!(), "ollama returned empty content");
         return None;
     }
 
@@ -150,7 +151,10 @@ pub async fn generate_with_model_and_prompt(
         .collect::<String>();
 
     if subject.is_empty() {
-        tracing::warn!("ollama subject line was empty after truncation");
+        tracing::warn!(
+            component = module_path!(),
+            "ollama subject line was empty after truncation"
+        );
         return None;
     }
 
@@ -160,6 +164,7 @@ pub async fn generate_with_model_and_prompt(
 /// Calls Ollama /api/chat with a specific model to generate a commit message subject line.
 /// Used by the consensus module to fan out across multiple models in parallel.
 /// Returns `None` on any error (timeout, network, malformed response, empty content).
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn generate_with_model(
     config: &InferenceConfig,
     ctx: &CommitContext<'_>,
@@ -172,6 +177,7 @@ pub async fn generate_with_model(
 /// Calls Ollama /api/chat to generate a commit message subject line.
 /// Returns `None` on any error (timeout, network, malformed response, empty content).
 /// Logs warnings for all failures; never panics.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn generate(
     config: &InferenceConfig,
     ctx: &CommitContext<'_>,

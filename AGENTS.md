@@ -54,7 +54,8 @@
 3. **Event ingestion**: `watcher::fs::start()` converts `notify` events into `FsEvent` values and sends them across the channel. The scheduler receives them on the async runtime.
 4. **Clustering**: `daemon::scheduler::run()` batches events with `ClusterEngine`. Events are grouped while the time delta is strictly less than the configured window.
 5. **Filtering & rate limits**: ignored paths are dropped, and commits are rate-limited by `min_commit_interval`.
-6. **Validation**: the configured test hook runs. A passing hook reduces runtime weight to `0.1`; a failing hook forces it to `1.0`.
+6. **Suspend gate**: if `.kaptaind/suspend.json` marks the daemon as suspended, the cluster is skipped and a `SUSPENDED` decision is recorded. Manual `kaptaind-cli suspend`/`resume` or AoC start/ship/cancel read/write this file.
+7. **Validation**: the configured test hook runs. A passing hook reduces runtime weight to `0.1`; a failing hook forces it to `1.0`.
 7. **Diff analysis**: structural + API + dependency + runtime + optional bundle scoring are computed.
 8. **Versioning**: `weight::calculator` combines scores, then `version::semver` decides `Major`/`Minor`/`Patch`/`None` and writes `VERSION` (+ updates `Cargo.toml` if present).
 9. **Persistence**: analysis artifacts, telemetry, traces, and bundle state are written under `.kaptaind/`.
@@ -77,6 +78,7 @@
   - test hook defaults to `cargo test` and is required by default.
   - push is disabled by default and targets branch `main` when enabled.
   - WebUI is disabled by default; `--web` starts it on port 8080.
+  - `[daemon].auto_suspend_on_aoc_start` and `[daemon].auto_resume_on_aoc_end` are `true` by default; starting an AoC session suspends the daemon, and shipping/cancelling it resumes the daemon.
 - Paths are normalized in `finalize_config()`:
   - `repo_path` is resolved relative to the process working directory.
   - `watch.path` and `watch.ignore_file` are resolved relative to `repo_path`.
@@ -87,6 +89,7 @@
   - `.kaptaind/telemetry.json` — token usage and cost tracking.
   - `.kaptaind/bundle.json` — previous bundle size (when bundle scoring is enabled).
   - `.kaptaind/traces/<cluster-id>.json` — per-cluster trace records linked to AoC sessions.
+  - `.kaptaind/suspend.json` — daemon suspension state (manual or AoC-driven).
   - `.kaptaind/aoc/active.json` — active Aim of Change session.
   - `.kaptaind/aoc/manifests/<id>.json` — shipped AoC session summaries.
 - Environment variables:
@@ -143,6 +146,17 @@
 cargo run --bin kaptaind-cli -- ship plan   # dry run
 cargo run --bin kaptaind-cli -- ship run    # execute
 ```
+
+### Suspend and resume the daemon
+
+```bash
+kaptaind-cli suspend --reason "manual hold"
+kaptaind-cli resume
+```
+
+- Starting an AoC session auto-suspends the daemon when `[daemon].auto_suspend_on_aoc_start = true` (default).
+- Shipping or cancelling an AoC session auto-resumes it when `[daemon].auto_resume_on_aoc_end = true` (default).
+- While suspended, `process_cluster` records a `SUSPENDED` decision and skips tests/analysis/commits.
 
 ### Debug the daemon
 

@@ -1,0 +1,26 @@
+# KAPTAIND SAFE DEFAULT PROFILE
+# Observation and analysis only. Actuation is intentionally disabled.
+[operation]
+mode = "observe"
+
+[push]
+enabled = false
+
+[capabilities]
+network_push = false
+
+[staging]
+mode = "cluster"
+
+[test]
+required = true
+
+[ship]
+enabled = false
+
+[inference]
+enabled = false
+
+[version_thresholds]
+patch = 0.1
+minor = 0.6

@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "kaptaind"
-version = "10.1.5"
+version = "10.2.38"
 edition = "2021"
 license = "MIT"
 default-run = "kaptaind"
@@ -30,6 +30,7 @@ kaptaind-diff = { path = "crates/kaptaind-diff" }
 # `.cargo/config.toml` with: paths = ["../deckhand"]
 deckhand = { git = "https://github.com/elci-group/deckhand", rev = "b5c221b6182e871ffeb150d050af518c4121a753" }
 anyhow = "1"
+async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 notify = "6"
 serde = { version = "1", features = ["derive"] }

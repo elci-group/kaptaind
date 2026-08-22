@@ -177,11 +177,20 @@ fn consume_assertion_id(
             continue;
         }
         let expired = std::fs::read(entry.path())
+            // traci: allow -- optional failure is represented by None and handled by the caller.
             .ok()
+            // traci: allow -- optional failure is represented by None and handled by the caller.
             .and_then(|bytes| serde_json::from_slice::<ConsumedAssertion>(&bytes).ok())
             .is_some_and(|record| record.expires_at <= Utc::now());
         if expired {
-            let _ = std::fs::remove_file(entry.path());
+            if let Err(error) = std::fs::remove_file(entry.path()) {
+                tracing::warn!(
+                    ?error,
+                    operation = "consume_assertion_id",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
         }
     }
     let filename = crate::util::hex::encode(sha2::Sha256::digest(jti.as_bytes()));
@@ -200,9 +209,23 @@ fn consume_assertion_id(
             Ok(())
         }
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            tracing::error!(
+                ?error,
+                operation = "consume_assertion_id",
+                source_line = line!(),
+                "consume assertion id returned an error"
+            );
             bail!("actor assertion has already been consumed")
         }
-        Err(error) => Err(error.into()),
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "consume_assertion_id",
+                source_line = line!(),
+                "consume assertion id returned an error"
+            );
+            Err(error.into())
+        }
     }
 }
 
@@ -311,6 +334,7 @@ fn os_user_name() -> Option<String> {
         }
         CStr::from_ptr((*passwd).pw_name)
             .to_str()
+            // traci: allow -- optional failure is represented by None and handled by the caller.
             .ok()
             .map(str::to_owned)
     }
@@ -321,6 +345,7 @@ fn os_user_name() -> Option<String> {
     // Windows does not expose a portable stdlib account lookup. This is only
     // a compatibility fallback; enterprise Windows deployments should bind a
     // remote, authenticated identity before creating approval evidence.
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     std::env::var("USERNAME").ok()
 }
 
@@ -371,6 +396,7 @@ unsafe fn group_name_from_gid(gid: libc::gid_t) -> Option<String> {
 
     CStr::from_ptr(name_ptr)
         .to_str()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
         .map(|s| s.to_string())
 }

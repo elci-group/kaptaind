@@ -1,0 +1,17 @@
+# KAPTAIND DEMO-UNSAFE PROFILE
+# This file is intentionally inert until copied into a repository and
+# explicitly reviewed. Never use it for enterprise or protected branches.
+[operation]
+mode = "observe"
+
+[push]
+enabled = false
+
+[capabilities]
+network_push = false
+
+[ship]
+enabled = false
+
+[inference]
+enabled = false

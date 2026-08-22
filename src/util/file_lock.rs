@@ -25,7 +25,13 @@ mod unix {
             if rc == 0 {
                 Ok(())
             } else {
-                Err(io::Error::last_os_error())
+                let error = io::Error::last_os_error();
+                tracing::error!(
+                    ?error,
+                    operation = "flock_lock",
+                    "advisory file lock failed"
+                );
+                Err(error)
             }
         }
 
@@ -34,7 +40,13 @@ mod unix {
             if rc == 0 {
                 Ok(())
             } else {
-                Err(io::Error::last_os_error())
+                let error = io::Error::last_os_error();
+                tracing::error!(
+                    ?error,
+                    operation = "flock_unlock",
+                    "advisory file unlock failed"
+                );
+                Err(error)
             }
         }
     }
@@ -90,7 +102,13 @@ mod windows {
         if rc != 0 {
             Ok(())
         } else {
-            Err(io::Error::last_os_error())
+            let error = io::Error::last_os_error();
+            tracing::error!(
+                ?error,
+                operation = "lock_file_ex",
+                "Windows advisory file lock operation failed"
+            );
+            Err(error)
         }
     }
 

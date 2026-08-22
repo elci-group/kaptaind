@@ -1,6 +1,10 @@
 # kaptaind configuration — automated semantic versioning, commits, and releases.
 # Copy this file to kaptaind.toml in your repo root and adjust values as needed.
 
+# Safe product profile: analysis is enabled, repository mutation is not.
+[operation]
+mode = "observe"
+
 # Filesystem watcher settings.
 [watch]
 path = "."                    # Directory to watch (relative to repo_path)
@@ -26,12 +30,12 @@ r = 0.15                      # Runtime / config weight
 
 # Automated git push behavior.
 [push]
-enabled = true                # Set to false to commit without pushing
+enabled = false               # Safe default: pushing requires explicit opt-in
 branch = "main"               # Target branch when pushing
 
 # Security capability flags for locked-down / air-gapped environments.
 [capabilities]
-network_push = true           # Allow outgoing git push
+network_push = false          # Safe default: network push requires explicit opt-in
 
 # Rate limiting between automated commits.
 [ratelimit]
@@ -46,7 +50,7 @@ startup_guard = true
 
 # Version bump thresholds. Score must exceed these to trigger Patch or Minor.
 [version_thresholds]
-patch = 0.0                   # Any non-zero score triggers a patch bump
+patch = 0.1                   # Scores must exceed this before a patch recommendation
 minor = 0.6                   # Score above this triggers a minor bump
 
 # Workspace version writeback policy (dogfooding the workspace bumping plan).
@@ -59,7 +63,7 @@ workspace = "touched"
 # Pre-commit validation hook.
 [test]
 command = "cargo test --tests" # Shell command run before each commit
-required = false              # When true, a failing hook blocks the commit
+required = true               # Required: a failing hook blocks the commit
 
 # Staging controls which files are included in automated commits.
 [staging]
@@ -229,7 +233,7 @@ timeout_secs = 1200
 # builds linux x86_64/arm64, macOS x86_64/arm64, and Windows x86_64.
 # ---------------------------------------------------------------------------
 [ship]
-enabled = true
+enabled = false               # Safe default: releases require an explicit release profile
 sign = false
 require_qualification = false
 targets = ["x86_64-unknown-linux-gnu"]

@@ -13,6 +13,16 @@ target/
 .amber/
 daemon.pid
 
+# Other ELCI tools' local runtime/cache state — never source, and some
+# (.dumdum/cache in particular) can accumulate thousands of files. These
+# got accidentally committed once on a feature branch (2100+ files, 70k+
+# lines of generated cache content) and had to be stripped back out
+# during a merge; ignoring them here is what should have existed before
+# that happened.
+.dumdum/
+.skillastic/
+.vox/
+
 # Prebuilt daemon binaries must never be committed (build via release.yml).
 deploy/daemon/
 

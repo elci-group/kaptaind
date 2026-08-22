@@ -134,7 +134,14 @@ struct Cli {
 fn main() -> anyhow::Result<()> {
     // Load optional `.env` file so provider API keys and other secrets can live
     // outside of `kaptaind.toml`.
-    let _ = kaptaind::util::dotenv::load();
+    if let Err(error) = kaptaind::util::dotenv::load() {
+        tracing::warn!(
+            ?error,
+            operation = "main",
+            source_line = line!(),
+            "best-effort operation failed"
+        );
+    }
     let cli = Cli::parse();
     if let Some(path) = cli.config.as_ref() {
         std::env::set_var("KAPTAIND_CONFIG", path);
@@ -148,7 +155,14 @@ fn main() -> anyhow::Result<()> {
     kaptaind::compliance::configure(config.clone());
 
     // Track this project as active in the monitor registry.
-    let _ = kaptaind::monitor::touch_last_active(&config.repo_path);
+    if let Err(error) = kaptaind::monitor::touch_last_active(&config.repo_path) {
+        tracing::warn!(
+            ?error,
+            operation = "main",
+            source_line = line!(),
+            "best-effort operation failed"
+        );
+    }
 
     if let Some(mode) = cli.shark_mode {
         config.shark.enabled = true;
@@ -168,6 +182,11 @@ fn main() -> anyhow::Result<()> {
     if cli.web || cli.web_port.is_some() {
         config.web_port = cli.web_port.unwrap_or(8080);
         if config.web_port == config.health_port {
+            tracing::error!(
+                operation = "main",
+                source_line = line!(),
+                "main returned an error"
+            );
             return Err(anyhow::anyhow!(
                 "WebUI port ({}) must be different from health port ({})",
                 config.web_port,
@@ -270,6 +289,11 @@ fn main() -> anyhow::Result<()> {
     if config.daemon.startup_guard && !cli.force {
         let dirty = kaptaind::git::repo::dirty_path_count(&config.repo_path)?;
         if dirty > 0 {
+            tracing::error!(
+                operation = "main",
+                source_line = line!(),
+                "main returned an error"
+            );
             return Err(anyhow::anyhow!(
                 "startup guard: {} uncommitted path(s) under {} — refusing to start. \
                  Commit or stash first, or pass --force to override.",
@@ -307,13 +331,18 @@ fn main() -> anyhow::Result<()> {
                     .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
             )
             .init();
-        tracing::info!("Starting kaptaind");
-        tracing::info!("Watching repository at: {}", config.repo_path.display());
+        tracing::info!(component = module_path!(), "Starting kaptaind");
+        tracing::info!(
+            component = module_path!(),
+            "Watching repository at: {}",
+            config.repo_path.display()
+        );
         if matches!(
             config.staging.mode,
             kaptaind::config::loader::StagingMode::All
         ) {
             tracing::warn!(
+                component = module_path!(),
                 "staging mode \"all\" runs `git add -A` across the whole worktree: \
                  untracked files — including secrets — may be committed. Prefer \
                  mode = \"cluster\" (the default since v9.7.17). Commits abort \

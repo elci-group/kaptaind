@@ -18,6 +18,9 @@ pub fn handle_aoc(config: &Config, cmd: &AocCommand) -> anyhow::Result<()> {
         AocCommand::Status => {
             handle_aoc_status(config)?;
         }
+        AocCommand::Cancel => {
+            handle_aoc_cancel(config)?;
+        }
         AocCommand::Intercept {
             model,
             intent,
@@ -60,6 +63,15 @@ fn handle_aoc_start(config: &Config, label: &str) -> anyhow::Result<()> {
     // Save session
     kaptaind::aoc::session::save_active(&config.repo_path, &session)?;
 
+    // Optionally suspend the daemon for the duration of the AoC session.
+    if config.daemon.auto_suspend_on_aoc_start {
+        let suspend_state = kaptaind::daemon::suspend::SuspendState::suspended(
+            "aoc",
+            Some(format!("AoC session started: {label}")),
+        );
+        kaptaind::daemon::suspend::save(&config.repo_path, &suspend_state)?;
+    }
+
     println!(
         "{} {} {} {}",
         "🎯".cyan(),
@@ -67,6 +79,14 @@ fn handle_aoc_start(config: &Config, label: &str) -> anyhow::Result<()> {
         label.magenta(),
         format!("@ v{}", initial_version).blue()
     );
+
+    if config.daemon.auto_suspend_on_aoc_start {
+        println!(
+            "{} {}",
+            "⏸️".yellow(),
+            "Daemon suspended for AoC session.".yellow()
+        );
+    }
 
     Ok(())
 }
@@ -114,6 +134,11 @@ fn handle_aoc_ship(config: &Config) -> anyhow::Result<()> {
     // Remove active session
     kaptaind::aoc::session::remove_active(&config.repo_path)?;
 
+    // Optionally resume the daemon now that the AoC session is complete.
+    if config.daemon.auto_resume_on_aoc_end {
+        kaptaind::daemon::suspend::remove(&config.repo_path)?;
+    }
+
     // Print summary
     println!(
         "{} {} {} {}",
@@ -122,6 +147,10 @@ fn handle_aoc_ship(config: &Config) -> anyhow::Result<()> {
         session.label.magenta(),
         "✓".green()
     );
+
+    if config.daemon.auto_resume_on_aoc_end {
+        println!("{} {}", "▶️".green(), "Daemon resumed.".green());
+    }
     println!("{}", "---".green());
     println!(
         "{} {} {}",
@@ -178,6 +207,30 @@ fn handle_aoc_status(config: &Config) -> anyhow::Result<()> {
         None => {
             println!("{} {}", "ℹ️".blue(), "No active AoC session.".blue());
         }
+    }
+
+    Ok(())
+}
+
+fn handle_aoc_cancel(config: &Config) -> anyhow::Result<()> {
+    let session = kaptaind::aoc::session::load_active(&config.repo_path)?
+        .ok_or_else(|| anyhow::anyhow!("No active AoC session found"))?;
+
+    kaptaind::aoc::session::remove_active(&config.repo_path)?;
+
+    if config.daemon.auto_resume_on_aoc_end {
+        kaptaind::daemon::suspend::remove(&config.repo_path)?;
+    }
+
+    println!(
+        "{} {} {}",
+        "🗑️".yellow(),
+        "AoC cancelled:".bold().yellow(),
+        session.label.magenta()
+    );
+
+    if config.daemon.auto_resume_on_aoc_end {
+        println!("{} {}", "▶️".green(), "Daemon resumed.".green());
     }
 
     Ok(())

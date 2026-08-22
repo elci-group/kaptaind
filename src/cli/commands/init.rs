@@ -56,7 +56,14 @@ pub fn handle_init(config: &Config) -> anyhow::Result<()> {
     );
 
     // Register project for autostart/monitoring
-    let _ = kaptaind::monitor::add(root, None, None, Some(true));
+    if let Err(error) = kaptaind::monitor::add(root, None, None, Some(true)) {
+        tracing::warn!(
+            ?error,
+            operation = "handle_init",
+            source_line = line!(),
+            "best-effort operation failed"
+        );
+    }
 
     Ok(())
 }

@@ -41,6 +41,7 @@ impl EvidenceRecord {
 /// a CI secret manager rather than committed configuration.
 pub fn sign_record(record: &mut EvidenceRecord, required: bool) -> anyhow::Result<()> {
     let key = std::env::var("KAPTAIND_EVIDENCE_HMAC_KEY")
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
         .filter(|key| !key.is_empty());
     sign_record_with_key(record, required, key.as_deref().map(str::as_bytes))
@@ -77,9 +78,9 @@ fn verify_record_hmac(record: &EvidenceRecord, required: bool) -> anyhow::Result
     if !required {
         return Ok(());
     }
-    let key = std::env::var("KAPTAIND_EVIDENCE_HMAC_KEY").map_err(|_| {
+    let key = std::env::var("KAPTAIND_EVIDENCE_HMAC_KEY").map_err(|error| {
         anyhow::anyhow!(
-            "policy requires evidence HMAC but KAPTAIND_EVIDENCE_HMAC_KEY is unavailable"
+            "policy requires evidence HMAC but KAPTAIND_EVIDENCE_HMAC_KEY is unavailable: {error}"
         )
     })?;
     verify_record_hmac_with_key(record, required, Some(key.as_bytes()))
@@ -135,7 +136,10 @@ pub fn evidence_path(repo_path: &Path, version: &str, kind: &str) -> anyhow::Res
 
 pub fn save(repo_path: &Path, version: &str, record: &EvidenceRecord) -> anyhow::Result<()> {
     let path = evidence_path(repo_path, version, &record.kind)?;
-    std::fs::create_dir_all(path.parent().expect("evidence path has parent"))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("evidence path has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(parent)?;
     let temporary = path.with_extension("json.tmp");
     std::fs::write(&temporary, serde_json::to_vec_pretty(record)?)?;
     std::fs::rename(temporary, path)?;

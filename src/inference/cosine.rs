@@ -35,6 +35,7 @@ struct ResponseMessage {
     content: String,
 }
 
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn generate(
     config: &InferenceConfig,
     ctx: &CommitContext<'_>,
@@ -42,11 +43,11 @@ pub async fn generate(
 ) -> Option<String> {
     let base = config.cosine_base_url.as_deref()?;
     if let Err(error) = crate::compliance::enforce_egress_url(EgressChannel::Inference, base) {
-        tracing::warn!(%error, "regional policy blocked Cosine Lumen inference");
+        tracing::warn!(component = module_path!(), %error, "regional policy blocked Cosine Lumen inference");
         return None;
     }
     if let Err(error) = crate::util::http::validate_inference_url(base) {
-        tracing::warn!(%error, "refusing unsafe Cosine Lumen endpoint");
+        tracing::warn!(component = module_path!(), %error, "refusing unsafe Cosine Lumen endpoint");
         return None;
     }
     let url = format!("{}/chat/completions", base.trim_end_matches('/'));
@@ -75,14 +76,14 @@ pub async fn generate(
             return None;
         }
         Err(error) => {
-            tracing::warn!(%error, "Cosine Lumen request failed");
+            tracing::warn!(component = module_path!(), %error, "Cosine Lumen request failed");
             return None;
         }
     };
     let response: Response = match response.json().await {
         Ok(response) => response,
         Err(error) => {
-            tracing::warn!(%error, "Cosine Lumen response was invalid");
+            tracing::warn!(component = module_path!(), %error, "Cosine Lumen response was invalid");
             return None;
         }
     };

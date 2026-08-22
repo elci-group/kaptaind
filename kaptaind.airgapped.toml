@@ -1,0 +1,19 @@
+# KAPTAIND AIR-GAPPED PROFILE
+[operation]
+mode = "observe"
+
+air_gapped = true
+
+[push]
+enabled = false
+
+[capabilities]
+network_push = false
+network_webhooks = false
+network_inference = false
+
+[ship]
+enabled = false
+
+[inference]
+enabled = false

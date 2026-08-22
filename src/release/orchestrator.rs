@@ -15,6 +15,7 @@ pub use crate::release::index::{ReleaseIndex, ReleaseIndexEntry};
 ///   3. Evaluate qualification
 ///   4. If qualified and intent ≠ None: package + distribute
 #[allow(clippy::too_many_arguments)]
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn post_commit(
     repo_path: &Path,
     config: &Config,
@@ -145,7 +146,10 @@ pub async fn post_commit(
     // 4. Determine intent and run release pipeline
     let intent = &config.release.intent;
     if *intent == ReleaseIntent::None {
-        tracing::debug!("release intent is None; skipping pipeline");
+        tracing::debug!(
+            component = module_path!(),
+            "release intent is None; skipping pipeline"
+        );
         return;
     }
 
@@ -214,7 +218,7 @@ pub async fn post_commit(
                         std::future::pending::<()>().await;
                     }
                 } => {
-                    tracing::info!("shutdown signal received during distribution, bailing out");
+                    tracing::info!(component = module_path!(), "shutdown signal received during distribution, bailing out");
                     None
                 }
             };
@@ -225,7 +229,14 @@ pub async fn post_commit(
                 // Penalise stability for failed release
                 if let Ok(mut s) = crate::stability::engine::load(repo_path) {
                     s.score = (s.score - 0.1).max(0.0);
-                    let _ = crate::stability::engine::save(repo_path, &s);
+                    if let Err(error) = crate::stability::engine::save(repo_path, &s) {
+                        tracing::warn!(
+                            ?error,
+                            operation = "post_commit",
+                            source_line = line!(),
+                            "best-effort operation failed"
+                        );
+                    }
                 }
                 return;
             } else if distribute_result.is_none() {

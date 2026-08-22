@@ -9,6 +9,7 @@
 //! lists the primary paths. The body keeps the kaptaind scorecard block.
 
 use crate::cluster::engine::Cluster;
+use crate::collectors::Artifact;
 use crate::diff::DiffAnalysis;
 use crate::version::Bump;
 use crate::weight::WeightResult;
@@ -257,6 +258,30 @@ pub fn format_commit(
     agent_event: &Option<crate::aoc::AgentEvent>,
     member_scope: Option<&str>,
 ) -> String {
+    format_commit_with_artifacts(
+        cluster,
+        diff,
+        weight,
+        bump,
+        version,
+        agent_event,
+        member_scope,
+        &[],
+    )
+}
+
+/// Render the commit message with optional artifact trailers (jeenome, benchmarks, etc.).
+#[allow(clippy::too_many_arguments)]
+pub fn format_commit_with_artifacts(
+    cluster: &Cluster,
+    diff: &DiffAnalysis,
+    weight: &WeightResult,
+    bump: Bump,
+    version: &Version,
+    agent_event: &Option<crate::aoc::AgentEvent>,
+    member_scope: Option<&str>,
+    artifacts: &[Artifact],
+) -> String {
     let subject = bump_subject(cluster, diff, member_scope);
     let body = format!(
         "kaptaind: {bump:?} -> v{version} [{}; paths={}; api_touches={}; deps={}; runtime={}; score={:.3}; cluster={}{}]",
@@ -269,7 +294,44 @@ pub fn format_commit(
         cluster.id,
         agent_info(agent_event),
     );
-    format!("{subject}\n\n{body}")
+
+    let trailers = format_artifact_trailers(artifacts);
+    if trailers.is_empty() {
+        format!("{subject}\n\n{body}")
+    } else {
+        format!("{subject}\n\n{body}\n\n{trailers}")
+    }
+}
+
+/// Format artifact trailers for git commit messages.
+///
+/// Converts collected artifacts (jeenome, benchmarks, etc.) into
+/// git-compatible trailer format: "Kaptaind-Artifact-Type: summary"
+fn format_artifact_trailers(artifacts: &[Artifact]) -> String {
+    if artifacts.is_empty() {
+        return String::new();
+    }
+
+    artifacts
+        .iter()
+        .map(|artifact| {
+            let key = format!("Kaptaind-{}", capitalize(&artifact.artifact_type));
+            format!(
+                "{}: {} (hash={})",
+                key, artifact.summary, artifact.content_hash
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Capitalize the first character of a string.
+fn capitalize(s: &str) -> String {
+    let mut chars = s.chars();
+    match chars.next() {
+        None => String::new(),
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+    }
 }
 
 /// Render the deterministic non-bumping chore message used when

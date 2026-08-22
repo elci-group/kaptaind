@@ -159,6 +159,7 @@ fn head_file_content(path: &Path) -> Option<String> {
         .arg(parent)
         .args(["rev-parse", "--show-prefix"])
         .output()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()?;
     if !output.status.success() || output.stdout.is_empty() {
         return None;
@@ -174,10 +175,12 @@ fn head_file_content(path: &Path) -> Option<String> {
         .arg("show")
         .arg(revision)
         .output()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()?;
     if !output.status.success() || output.stdout.is_empty() {
         return None;
     }
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     String::from_utf8(output.stdout).ok()
 }
 

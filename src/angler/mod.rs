@@ -111,14 +111,23 @@ impl AnglerSystem {
                 Ok(manager) => {
                     // Install hooks
                     if let Err(e) = manager.install_hooks() {
-                        error!("Failed to install git hooks: {}", e);
+                        error!(
+                            component = module_path!(),
+                            "Failed to install git hooks: {}", e
+                        );
                     } else {
-                        info!("Git hooks installed successfully");
+                        info!(
+                            component = module_path!(),
+                            "Git hooks installed successfully"
+                        );
                     }
                     system.git_hooks = Some(manager);
                 }
                 Err(e) => {
-                    error!("Failed to create git hook manager: {}", e);
+                    error!(
+                        component = module_path!(),
+                        "Failed to create git hook manager: {}", e
+                    );
                 }
             }
         }
@@ -127,11 +136,14 @@ impl AnglerSystem {
         if config.webhooks.enabled {
             match WebhookManager::new(&config.webhooks) {
                 Ok(manager) => {
-                    info!("Webhook manager initialized");
+                    info!(component = module_path!(), "Webhook manager initialized");
                     system.webhooks = Some(manager);
                 }
                 Err(e) => {
-                    error!("Failed to create webhook manager: {}", e);
+                    error!(
+                        component = module_path!(),
+                        "Failed to create webhook manager: {}", e
+                    );
                 }
             }
         }
@@ -141,13 +153,17 @@ impl AnglerSystem {
             match SelectiveEngine::new(&config.selective) {
                 Ok(engine) => {
                     info!(
+                        component = module_path!(),
                         "Selective capture engine initialized with {} rules",
                         engine.list_rules().len()
                     );
                     system.selective = Some(engine);
                 }
                 Err(e) => {
-                    error!("Failed to create selective engine: {}", e);
+                    error!(
+                        component = module_path!(),
+                        "Failed to create selective engine: {}", e
+                    );
                 }
             }
         }
@@ -157,13 +173,17 @@ impl AnglerSystem {
             match BaitManager::new(&config.bait, repo_path) {
                 Ok(manager) => {
                     info!(
+                        component = module_path!(),
                         "Bait manager initialized with {} baits",
                         manager.list_baits().len()
                     );
                     system.bait = Some(manager);
                 }
                 Err(e) => {
-                    error!("Failed to create bait manager: {}", e);
+                    error!(
+                        component = module_path!(),
+                        "Failed to create bait manager: {}", e
+                    );
                 }
             }
         }
@@ -185,12 +205,13 @@ impl AnglerSystem {
     }
 
     /// Run pre-commit hooks.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn run_pre_commit(&self, staged_files: &[std::path::PathBuf]) -> Option<HookResult> {
         if let Some(ref manager) = self.git_hooks {
             match manager.run_pre_commit(staged_files).await {
                 Ok(result) => return Some(result),
                 Err(e) => {
-                    error!("Pre-commit hook error: {}", e);
+                    error!(component = module_path!(), "Pre-commit hook error: {}", e);
                     return Some(HookResult::failure(format!("Error: {}", e)));
                 }
             }
@@ -199,12 +220,13 @@ impl AnglerSystem {
     }
 
     /// Run post-commit hooks.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn run_post_commit(&self) -> Option<HookResult> {
         if let Some(ref manager) = self.git_hooks {
             match manager.run_post_commit().await {
                 Ok(result) => return Some(result),
                 Err(e) => {
-                    error!("Post-commit hook error: {}", e);
+                    error!(component = module_path!(), "Post-commit hook error: {}", e);
                 }
             }
         }
@@ -212,6 +234,7 @@ impl AnglerSystem {
     }
 
     /// Run pre-push hooks.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn run_pre_push(
         &self,
         remote_name: &str,
@@ -222,7 +245,7 @@ impl AnglerSystem {
             match manager.run_pre_push(remote_name, remote_url, refs).await {
                 Ok(result) => return Some(result),
                 Err(e) => {
-                    error!("Pre-push hook error: {}", e);
+                    error!(component = module_path!(), "Pre-push hook error: {}", e);
                 }
             }
         }
@@ -230,6 +253,7 @@ impl AnglerSystem {
     }
 
     /// Broadcast an event to all webhooks.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn broadcast_webhook_event(
         &self,
         event: &WebhookEvent,
@@ -270,6 +294,7 @@ impl AnglerSystem {
     }
 
     /// Trigger bait plugins for an event.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn trigger_baits(
         &self,
         event: BaitEvent,
@@ -286,7 +311,10 @@ impl AnglerSystem {
     pub fn shutdown(&self) -> Result<()> {
         if let Some(ref manager) = self.git_hooks {
             if let Err(e) = manager.uninstall_hooks() {
-                error!("Failed to uninstall git hooks: {}", e);
+                error!(
+                    component = module_path!(),
+                    "Failed to uninstall git hooks: {}", e
+                );
             }
         }
         Ok(())

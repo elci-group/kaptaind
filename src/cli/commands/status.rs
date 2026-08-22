@@ -1,3 +1,4 @@
+use crate::format_datetime;
 use kaptaind::config::loader::Config;
 use kaptaind::util::style::*;
 use std::fs;
@@ -20,35 +21,63 @@ pub fn handle_status(config: &Config) -> anyhow::Result<()> {
     println!("{} {}", "🏷️  Version:    ".bold().cyan(), version.magenta());
 
     let pid_running = get_daemon_pid(config);
-    if let Some(pid) = pid_running {
-        let status_json = config.repo_path.join(".kaptaind").join("status.json");
-        let mut state_display = "[🟢 Running]".green().to_string();
+    let status_json = config.repo_path.join(".kaptaind").join("status.json");
+    let report = fs::read_to_string(&status_json).ok().and_then(|content| {
+        serde_json::from_str::<kaptaind::daemon::scheduler::StatusReport>(&content).ok()
+    });
 
-        if let Ok(content) = fs::read_to_string(&status_json) {
-            if let Ok(report) =
-                serde_json::from_str::<kaptaind::daemon::scheduler::StatusReport>(&content)
-            {
-                state_display = match report.status {
-                    kaptaind::daemon::scheduler::State::Idle => "[💤 Idle]".blue().to_string(),
-                    kaptaind::daemon::scheduler::State::Clustering => {
-                        "[🔍 Clustering]".cyan().to_string()
-                    }
-                    kaptaind::daemon::scheduler::State::Testing => {
-                        "[🧪 Testing]".yellow().to_string()
-                    }
-                    kaptaind::daemon::scheduler::State::Committing => {
-                        "[🚢 Committing]".magenta().to_string()
-                    }
-                    kaptaind::daemon::scheduler::State::Failed => "[🛑 Failed]".red().to_string(),
-                    kaptaind::daemon::scheduler::State::Stopping => {
-                        "[⏹️  Stopping]".yellow().to_string()
-                    }
-                    kaptaind::daemon::scheduler::State::Stopped => {
-                        "[⏹️  Stopped]".bright_black().to_string()
-                    }
-                };
+    let is_suspended = report
+        .as_ref()
+        .map(|r| matches!(r.status, kaptaind::daemon::scheduler::State::Suspended))
+        .unwrap_or(false);
+
+    if is_suspended {
+        // Suspended state is shown even when the daemon is not running,
+        // because CLI suspend/resume write status.json directly.
+        println!(
+            "{} {}",
+            "⚙️  Daemon:     ".bold().cyan(),
+            "[⏸️  Suspended]".yellow()
+        );
+        if let Some(report) = report {
+            if let Some(ref err) = report.last_error {
+                println!("{} {}", "   Reason:    ".cyan(), err.magenta());
             }
         }
+        if let Ok(Some(suspend)) = kaptaind::daemon::suspend::load(&config.repo_path) {
+            println!("{} {}", "   Source:    ".cyan(), suspend.source.yellow());
+            println!(
+                "{} {}",
+                "   Since:     ".cyan(),
+                format_datetime(suspend.since).blue()
+            );
+        }
+        if let Some(pid) = pid_running {
+            println!("{}", format!("   PID:       {pid}").blue());
+        }
+    } else if let Some(pid) = pid_running {
+        let state_display = report
+            .map(|r| match r.status {
+                kaptaind::daemon::scheduler::State::Idle => "[💤 Idle]".blue().to_string(),
+                kaptaind::daemon::scheduler::State::Clustering => {
+                    "[🔍 Clustering]".cyan().to_string()
+                }
+                kaptaind::daemon::scheduler::State::Testing => "[🧪 Testing]".yellow().to_string(),
+                kaptaind::daemon::scheduler::State::Committing => {
+                    "[🚢 Committing]".magenta().to_string()
+                }
+                kaptaind::daemon::scheduler::State::Failed => "[🛑 Failed]".red().to_string(),
+                kaptaind::daemon::scheduler::State::Stopping => {
+                    "[⏹️  Stopping]".yellow().to_string()
+                }
+                kaptaind::daemon::scheduler::State::Stopped => {
+                    "[⏹️  Stopped]".bright_black().to_string()
+                }
+                kaptaind::daemon::scheduler::State::Suspended => {
+                    "[⏸️  Suspended]".yellow().to_string()
+                }
+            })
+            .unwrap_or_else(|| "[🟢 Running]".green().to_string());
 
         println!(
             "{} {} {}",

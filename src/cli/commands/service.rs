@@ -5,9 +5,19 @@ pub fn handle_service(cmd: &ServiceCommand) -> anyhow::Result<()> {
     match cmd {
         ServiceCommand::Install { user, system } => {
             crate::monitor::install_service(*user, *system)?;
+            println!(
+                "{} {}",
+                "✅".green(),
+                "Service installation completed successfully.".green()
+            );
         }
         ServiceCommand::Uninstall { user, system } => {
             crate::monitor::uninstall_service(*user, *system)?;
+            println!(
+                "{} {}",
+                "✅".green(),
+                "Service uninstalled successfully.".green()
+            );
         }
         ServiceCommand::InstallIcon { user, system } => {
             let target = kaptaind::icon::install_icon(*user, *system)?;

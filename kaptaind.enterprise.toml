@@ -1,0 +1,24 @@
+# KAPTAIND ENTERPRISE PROFILE
+# Start from this profile and fill in organization policy, identity and
+# signed evidence settings before enabling any actuation capability.
+[operation]
+mode = "observe"
+
+[push]
+enabled = false
+safety = { allow_force = false, protect_branches = ["main", "master"] }
+
+[capabilities]
+network_push = false
+
+[staging]
+mode = "cluster"
+
+[test]
+required = true
+
+[ship]
+enabled = false
+
+[inference]
+enabled = false

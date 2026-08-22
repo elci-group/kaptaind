@@ -86,6 +86,7 @@ struct BuiltTarget {
 
 /// Manual release pipeline: build binaries for configured targets, produce
 /// installers, and distribute to package managers / app stores.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<ShipResult> {
     if !config.ship.enabled {
         anyhow::bail!("ship is not enabled. Add [ship] enabled = true to kaptaind.toml.");
@@ -222,12 +223,24 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
             ),
             Ok(None) => {}
             Err(error) => {
+                tracing::error!(
+                    ?error,
+                    operation = "run_ship",
+                    source_line = line!(),
+                    "run ship returned an error"
+                );
                 crate::audit::log_event(
                     &config.repo_path,
                     "ship",
                     "release_approval",
                     false,
                     serde_json::json!({"version": version, "policy_id": policy_id, "reason": error.to_string()}),
+                );
+                tracing::error!(
+                    ?error,
+                    operation = "run_ship",
+                    source_line = line!(),
+                    "run ship returned an error"
                 );
                 return Err(error);
             }
@@ -293,6 +306,12 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
                     err
                 );
                 if targets.len() == 1 {
+                    tracing::error!(
+                        ?err,
+                        operation = "run_ship",
+                        source_line = line!(),
+                        "run ship returned an error"
+                    );
                     return Err(err);
                 }
             }
@@ -553,6 +572,7 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
     // Create and optionally push a signed git tag for stable/nightly releases.
     if matches!(opts.kind, ShipKind::Stable | ShipKind::Nightly) {
         let sign_tag = signing_enabled(&config.ship, opts.kind);
+        // traci: allow -- this branch emits a structured tag-creation error before continuing.
         if let Err(err) = create_git_tag(
             &config.repo_path,
             &version,
@@ -562,6 +582,12 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
         )
         .await
         {
+            tracing::error!(
+                ?err,
+                operation = "run_ship",
+                source_line = line!(),
+                "run ship returned an error"
+            );
             eprintln!(
                 "{} {}: {}",
                 "⚠️".yellow(),
@@ -632,6 +658,7 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
 }
 
 /// Run a stable release from the current `VERSION`.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn run_stable(config: &Config, opts: ShipOptions) -> anyhow::Result<ShipResult> {
     let version = read_version(&config.repo_path)?;
     let require_qualification = config
@@ -652,6 +679,7 @@ pub async fn run_stable(config: &Config, opts: ShipOptions) -> anyhow::Result<Sh
 }
 
 /// Run a nightly release with a computed prerelease version.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn run_nightly(config: &Config, opts: ShipOptions) -> anyhow::Result<ShipResult> {
     let base = read_version(&config.repo_path)?;
     let commit = git_short_commit(&config.repo_path).unwrap_or_else(|_| "unknown".to_string());
@@ -996,16 +1024,22 @@ async fn build_shell_installer_bundle(
         let target_bin = bin_dir.join(&bt.triple);
         std::fs::create_dir_all(&target_bin)?;
         if bt.kaptaind.exists() {
-            std::fs::copy(
-                &bt.kaptaind,
-                target_bin.join(bt.kaptaind.file_name().unwrap()),
-            )?;
+            let file_name = bt.kaptaind.file_name().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "kaptaind artifact has no file name: {}",
+                    bt.kaptaind.display()
+                )
+            })?;
+            std::fs::copy(&bt.kaptaind, target_bin.join(file_name))?;
         }
         if bt.kaptaind_cli.exists() {
-            std::fs::copy(
-                &bt.kaptaind_cli,
-                target_bin.join(bt.kaptaind_cli.file_name().unwrap()),
-            )?;
+            let file_name = bt.kaptaind_cli.file_name().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "kaptaind-cli artifact has no file name: {}",
+                    bt.kaptaind_cli.display()
+                )
+            })?;
+            std::fs::copy(&bt.kaptaind_cli, target_bin.join(file_name))?;
         }
     }
 
@@ -1087,7 +1121,10 @@ fn collect_bundle_artifacts(
         } else {
             let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
             if matches!(ext, "deb" | "rpm" | "dmg" | "msi" | "AppImage") {
-                let dest = ship_dir.join(path.file_name().unwrap());
+                let file_name = path.file_name().ok_or_else(|| {
+                    anyhow::anyhow!("bundle artifact has no file name: {}", path.display())
+                })?;
+                let dest = ship_dir.join(file_name);
                 std::fs::copy(&path, &dest)?;
                 artifacts.push(dest);
             }
@@ -1413,6 +1450,7 @@ async fn push_git_tag(repo_path: &Path, remote: &str, version: &str) -> anyhow::
 /// today's date, and the current commit. Returns the existing version string if
 /// found.
 fn find_existing_nightly(repo_path: &Path, base: &str, commit: &str) -> Option<String> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let parsed = semver::Version::parse(base.trim()).ok()?;
     let core = format!("{}.{}.{}", parsed.major, parsed.minor, parsed.patch);
     let date = chrono::Utc::now().format("%Y%m%d").to_string();
@@ -1461,7 +1499,14 @@ fn prune_nightlies(repo_path: &Path, retain_count: Option<usize>) -> anyhow::Res
                 .join("ship")
                 .join(&entry.version);
             if ship_dir.exists() {
-                let _ = std::fs::remove_dir_all(&ship_dir);
+                if let Err(error) = std::fs::remove_dir_all(&ship_dir) {
+                    tracing::warn!(
+                        ?error,
+                        operation = "prune_nightlies",
+                        source_line = line!(),
+                        "best-effort operation failed"
+                    );
+                }
             }
             let tag = format!("v{}", entry.version);
             let _ = std::process::Command::new("git")
@@ -1479,9 +1524,32 @@ fn prune_nightlies(repo_path: &Path, retain_count: Option<usize>) -> anyhow::Res
         .collect();
 
     let ship_dir = repo_path.join(".kaptaind").join("ship");
-    let _ = std::fs::create_dir_all(&ship_dir);
+    if let Err(error) = std::fs::create_dir_all(&ship_dir) {
+        tracing::warn!(
+            ?error,
+            operation = "prune_nightlies",
+            source_line = line!(),
+            "best-effort operation failed"
+        );
+    }
     if let Ok(content) = serde_json::to_string_pretty(&index) {
-        let _ = crate::release::index::write_atomic(&ship_dir.join("index.json"), &content);
+        // traci: allow -- this branch emits structured index-persistence failure telemetry.
+        if let Err(error) =
+            crate::release::index::write_atomic(&ship_dir.join("index.json"), &content)
+        {
+            tracing::error!(
+                ?error,
+                operation = "prune_nightlies",
+                source_line = line!(),
+                "prune nightlies returned an error"
+            );
+            tracing::warn!(
+                ?error,
+                operation = "prune_nightlies",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
     }
 
     Ok(())

@@ -20,20 +20,27 @@ impl Scheduler {
         }
     }
 
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn schedule(&self, scored: ScoredConcept) -> anyhow::Result<()> {
-        let mut queue = self.queue.lock().unwrap();
+        let mut queue = self.queue.lock().unwrap_or_else(|error| error.into_inner());
         queue.push(scored);
-        queue.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        queue.sort_by(|a, b| b.score.total_cmp(&a.score));
         Ok(())
     }
 
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn run_pending(&self, asset_manager: &AssetManager) -> anyhow::Result<()> {
-        if *self.jobs_this_hour.lock().unwrap() >= self.config.max_jobs_per_hour {
+        if *self
+            .jobs_this_hour
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            >= self.config.max_jobs_per_hour
+        {
             return Ok(());
         }
 
         let to_process: Vec<ScoredConcept> = {
-            let mut queue = self.queue.lock().unwrap();
+            let mut queue = self.queue.lock().unwrap_or_else(|error| error.into_inner());
             queue.drain(..).collect()
         };
 

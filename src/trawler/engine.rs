@@ -166,6 +166,12 @@ pub fn trawl(options: &TrawlOptions) -> anyhow::Result<TrawlResult> {
 
                 if options.auto_register {
                     if let Err(e) = register_project(&project.path) {
+                        tracing::error!(
+                            ?e,
+                            operation = "trawl",
+                            source_line = line!(),
+                            "trawl returned an error"
+                        );
                         errors.push(format!(
                             "Failed to register {}: {}",
                             project.path.display(),
@@ -177,6 +183,12 @@ pub fn trawl(options: &TrawlOptions) -> anyhow::Result<TrawlResult> {
                 }
             }
             Err(e) => {
+                tracing::error!(
+                    ?e,
+                    operation = "trawl",
+                    source_line = line!(),
+                    "trawl returned an error"
+                );
                 errors.push(format!(
                     "Failed to initialize {}: {}",
                     project.path.display(),
@@ -236,7 +248,10 @@ fn compile_blacklist(patterns: &[String], errors: &mut Vec<String>) -> Vec<globs
         }
         match globset::Glob::new(trimmed) {
             Ok(g) => globs.push(g),
-            Err(e) => errors.push(format!("Invalid blacklist pattern {:?}: {}", trimmed, e)),
+            Err(e) => {
+                tracing::warn!(error = ?e, pattern = trimmed, "trawler blacklist pattern is invalid");
+                errors.push(format!("Invalid blacklist pattern {:?}: {}", trimmed, e));
+            }
         }
     }
     globs
@@ -271,7 +286,15 @@ fn collect_dirs(root: &Path, options: &TrawlOptions, blacklist: &[globset::Glob]
         Box::new(move |entry| {
             let entry = match entry {
                 Ok(e) => e,
-                Err(_) => return WalkState::Continue,
+                Err(error) => {
+                    tracing::error!(
+                        ?error,
+                        operation = "collect_dirs",
+                        source_line = line!(),
+                        "collect dirs returned an error"
+                    );
+                    return WalkState::Continue;
+                }
             };
             let is_dir = entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false);
             if !is_dir {
@@ -294,7 +317,15 @@ fn collect_dirs(root: &Path, options: &TrawlOptions, blacklist: &[globset::Glob]
 
     let mut dirs = match Arc::try_unwrap(found) {
         Ok(mutex) => mutex.into_inner().unwrap_or_default(),
-        Err(shared) => shared.lock().map(|v| v.clone()).unwrap_or_default(),
+        Err(shared) => {
+            tracing::error!(
+                ?shared,
+                operation = "collect_dirs",
+                source_line = line!(),
+                "collect dirs returned an error"
+            );
+            shared.lock().map(|v| v.clone()).unwrap_or_default()
+        }
     };
     // The walker yields the root entry in addition to our seed; de-duplicate so a
     // single directory is never detected twice.
@@ -490,53 +521,29 @@ fn generate_ignore(project: &ProjectType) -> String {
 
 /// Generate a summary report of discovered projects
 pub fn generate_report(result: &TrawlResult) -> String {
-    use std::fmt::Write;
-
     let mut report = String::new();
-
-    writeln!(report, "🔍 Trawling Complete").unwrap();
-    writeln!(report, "====================").unwrap();
-    writeln!(report).unwrap();
-
-    writeln!(report, "📊 Summary:").unwrap();
-    writeln!(report, "  Projects discovered: {}", result.projects.len()).unwrap();
-    writeln!(report, "  Initialized: {}", result.initialized_count).unwrap();
-    writeln!(report, "  Registered: {}", result.registered_count).unwrap();
-    writeln!(
-        report,
-        "  Skipped (already initialized): {}",
+    report.push_str("🔍 Trawling Complete\n====================\n\n📊 Summary:\n");
+    report.push_str(&format!(
+        "  Projects discovered: {}\n  Initialized: {}\n  Registered: {}\n  Skipped (already initialized): {}\n",
+        result.projects.len(),
+        result.initialized_count,
+        result.registered_count,
         result.skipped_count
-    )
-    .unwrap();
-
-    writeln!(report).unwrap();
-    writeln!(report, "🎯 Detection Confidence:").unwrap();
-    writeln!(
-        report,
-        "  Average confidence: {:.1}%",
-        result.avg_confidence * 100.0
-    )
-    .unwrap();
-    writeln!(
-        report,
-        "  Very high confidence (≥95%): {}",
-        result.very_high_confidence_count
-    )
-    .unwrap();
-    writeln!(
-        report,
-        "  High confidence (≥80%): {}",
+    ));
+    report.push_str("\n🎯 Detection Confidence:\n");
+    report.push_str(&format!(
+        "  Average confidence: {:.1}%\n  Very high confidence (≥95%): {}\n  High confidence (≥80%): {}\n",
+        result.avg_confidence * 100.0,
+        result.very_high_confidence_count,
         result.high_confidence_count
-    )
-    .unwrap();
+    ));
 
     if !result.errors.is_empty() {
-        writeln!(report, "  ⚠️  Errors: {}", result.errors.len()).unwrap();
+        report.push_str(&format!("  ⚠️  Errors: {}\n", result.errors.len()));
     }
 
     if !result.projects.is_empty() {
-        writeln!(report).unwrap();
-        writeln!(report, "📦 Discovered Projects:").unwrap();
+        report.push_str("\n📦 Discovered Projects:\n");
 
         for project in &result.projects {
             let confidence_bar = match project.confidence {
@@ -554,36 +561,36 @@ pub fn generate_report(result: &TrawlResult) -> String {
 
             let git_marker = if project.is_git_repo { "📚" } else { "  " };
 
-            writeln!(
-                report,
-                "  {} {} {:.0}% {} {} {}",
+            report.push_str(&format!(
+                "  {} {} {:.0}% {} {} {}\n",
                 git_marker,
                 project.project_type,
                 project.confidence_score * 100.0,
                 confidence_bar,
                 project.path.display(),
                 status
-            )
-            .unwrap();
+            ));
 
             if let Some(root) = &project.workspace_root {
-                writeln!(report, "      └─ workspace member of {}", root.display()).unwrap();
+                report.push_str(&format!(
+                    "      └─ workspace member of {}\n",
+                    root.display()
+                ));
             }
 
             // Show detection indicators for lower-confidence projects
             if project.confidence < Confidence::High && !project.detection_indicators.is_empty() {
                 for indicator in &project.detection_indicators {
-                    writeln!(report, "      └─ {}", indicator).unwrap();
+                    report.push_str(&format!("      └─ {}\n", indicator));
                 }
             }
         }
     }
 
     if !result.errors.is_empty() {
-        writeln!(report).unwrap();
-        writeln!(report, "❌ Errors:").unwrap();
+        report.push_str("\n❌ Errors:\n");
         for error in &result.errors {
-            writeln!(report, "  - {}", error).unwrap();
+            report.push_str(&format!("  - {}\n", error));
         }
     }
 

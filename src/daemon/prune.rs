@@ -8,6 +8,7 @@ pub struct PruneResult {
 
 /// Prune analysis artifacts older than the retention threshold.
 /// Ported from web/lib/retention.ts.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn prune_analysis_artifacts(repo_path: &Path, retention_days: u32) -> PruneResult {
     let dir = repo_path.join(".kaptaind").join("analysis");
     if !dir.exists() || !dir.is_dir() {
@@ -62,7 +63,13 @@ pub async fn prune_analysis_artifacts(repo_path: &Path, retention_days: u32) -> 
                     }
                 }
             }
-            Err(_) => {
+            Err(error) => {
+                tracing::error!(
+                    ?error,
+                    operation = "prune_analysis_artifacts",
+                    source_line = line!(),
+                    "prune analysis artifacts returned an error"
+                );
                 errors += 1;
             }
         }

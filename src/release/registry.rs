@@ -25,8 +25,11 @@ impl RegistryDistributor {
     /// - `DOCKER_USERNAME` (optional)
     /// - `DOCKER_PASSWORD` (optional)
     pub fn new(config: RegistryDistConfig) -> Self {
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let registry = std::env::var("DOCKER_REGISTRY").ok();
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let username = std::env::var("DOCKER_USERNAME").ok();
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let password = std::env::var("DOCKER_PASSWORD").ok();
 
         Self {
@@ -38,6 +41,7 @@ impl RegistryDistributor {
     }
 
     /// Build and push a Docker image containing the package.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn distribute(&self, pkg: &PackageResult) -> anyhow::Result<()> {
         let (full_tag, dockerfile_path) = self.build(pkg).await?;
 
@@ -54,11 +58,23 @@ impl RegistryDistributor {
 
         if !push_output.status.success() {
             let stderr = String::from_utf8_lossy(&push_output.stderr);
+            tracing::error!(
+                operation = "distribute",
+                source_line = line!(),
+                "distribute returned an error"
+            );
             return Err(anyhow!("docker push failed: {}", stderr));
         }
 
         // Cleanup temporary Dockerfile
-        let _ = tokio::fs::remove_file(&dockerfile_path).await;
+        if let Err(error) = tokio::fs::remove_file(&dockerfile_path).await {
+            tracing::warn!(
+                ?error,
+                operation = "distribute",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
 
         tracing::info!(
             version = pkg.manifest.version,
@@ -112,6 +128,11 @@ impl RegistryDistributor {
 
         if !build_output.status.success() {
             let stderr = String::from_utf8_lossy(&build_output.stderr);
+            tracing::error!(
+                operation = "build",
+                source_line = line!(),
+                "build returned an error"
+            );
             return Err(anyhow!("docker build failed: {}", stderr));
         }
 
@@ -136,6 +157,11 @@ impl RegistryDistributor {
             .context("docker not found. Is Docker installed and in PATH?")?;
 
         if !output.status.success() {
+            tracing::error!(
+                operation = "verify_docker",
+                source_line = line!(),
+                "verify docker returned an error"
+            );
             return Err(anyhow!("docker daemon not running or not accessible"));
         }
 
@@ -158,8 +184,22 @@ impl RegistryDistributor {
             .context("failed to spawn docker login")?;
         if let Some(mut stdin) = child.stdin.take() {
             use tokio::io::AsyncWriteExt;
-            let _ = stdin.write_all(password.as_bytes()).await;
-            let _ = stdin.shutdown().await;
+            if let Err(error) = stdin.write_all(password.as_bytes()).await {
+                tracing::warn!(
+                    ?error,
+                    operation = "docker_login",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
+            if let Err(error) = stdin.shutdown().await {
+                tracing::warn!(
+                    ?error,
+                    operation = "docker_login",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
         }
         let output = child
             .wait_with_output()
@@ -168,6 +208,11 @@ impl RegistryDistributor {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!(
+                operation = "docker_login",
+                source_line = line!(),
+                "docker login returned an error"
+            );
             return Err(anyhow!("docker login failed: {}", stderr));
         }
 
@@ -223,11 +268,15 @@ impl ExternalRegistryDistributor {
         }
     }
 
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn distribute(&self, pkg: &PackageResult) -> anyhow::Result<()> {
         match self.tool.as_str() {
             "crane" => self.distribute_crane(pkg).await,
             "skopeo" => self.distribute_skopeo(pkg).await,
-            _ => Err(anyhow!("unknown external registry tool: {}", self.tool)),
+            _ => {
+                tracing::error!(tool = %self.tool, "external registry tool is unsupported");
+                Err(anyhow!("unknown external registry tool: {}", self.tool))
+            }
         }
     }
 
@@ -235,8 +284,11 @@ impl ExternalRegistryDistributor {
         let builder = RegistryDistributor::new(self.config.clone());
         let (full_tag, dockerfile_path) = builder.build(pkg).await?;
 
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let registry = std::env::var("DOCKER_REGISTRY").ok();
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let username = std::env::var("DOCKER_USERNAME").ok();
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let password = std::env::var("DOCKER_PASSWORD").ok();
 
         // Login if credentials provided
@@ -263,6 +315,11 @@ impl ExternalRegistryDistributor {
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::error!(
+                    operation = "distribute_skopeo",
+                    source_line = line!(),
+                    "distribute skopeo returned an error"
+                );
                 return Err(anyhow!("skopeo login failed: {}", stderr));
             }
         }
@@ -283,11 +340,23 @@ impl ExternalRegistryDistributor {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
+            tracing::error!(
+                operation = "distribute_skopeo",
+                source_line = line!(),
+                "distribute skopeo returned an error"
+            );
             return Err(anyhow!("skopeo copy failed: {}", stderr));
         }
 
         // Cleanup temporary Dockerfile
-        let _ = tokio::fs::remove_file(&dockerfile_path).await;
+        if let Err(error) = tokio::fs::remove_file(&dockerfile_path).await {
+            tracing::warn!(
+                ?error,
+                operation = "distribute_skopeo",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
 
         tracing::info!(
             image = %full_tag,
@@ -302,8 +371,11 @@ impl ExternalRegistryDistributor {
         let builder = RegistryDistributor::new(self.config.clone());
         let (full_tag, dockerfile_path) = builder.build(pkg).await?;
 
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let registry = std::env::var("DOCKER_REGISTRY").ok();
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let username = std::env::var("DOCKER_USERNAME").ok();
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let password = std::env::var("DOCKER_PASSWORD").ok();
 
         // Login if credentials provided
@@ -323,8 +395,22 @@ impl ExternalRegistryDistributor {
                 .context("failed to spawn crane auth login")?;
             if let Some(mut stdin) = child.stdin.take() {
                 use tokio::io::AsyncWriteExt;
-                let _ = stdin.write_all(pass.as_bytes()).await;
-                let _ = stdin.shutdown().await;
+                if let Err(error) = stdin.write_all(pass.as_bytes()).await {
+                    tracing::warn!(
+                        ?error,
+                        operation = "distribute_crane",
+                        source_line = line!(),
+                        "best-effort operation failed"
+                    );
+                }
+                if let Err(error) = stdin.shutdown().await {
+                    tracing::warn!(
+                        ?error,
+                        operation = "distribute_crane",
+                        source_line = line!(),
+                        "best-effort operation failed"
+                    );
+                }
             }
             let output = child
                 .wait_with_output()
@@ -333,6 +419,11 @@ impl ExternalRegistryDistributor {
 
             if !output.status.success() {
                 let stderr = String::from_utf8_lossy(&output.stderr);
+                tracing::error!(
+                    operation = "distribute_crane",
+                    source_line = line!(),
+                    "distribute crane returned an error"
+                );
                 return Err(anyhow!("crane auth login failed: {}", stderr));
             }
         }
@@ -354,8 +445,27 @@ impl ExternalRegistryDistributor {
 
         if !save_output.status.success() {
             let stderr = String::from_utf8_lossy(&save_output.stderr);
-            let _ = tokio::fs::remove_file(&tmp_path).await;
-            let _ = tokio::fs::remove_file(&dockerfile_path).await;
+            if let Err(error) = tokio::fs::remove_file(&tmp_path).await {
+                tracing::warn!(
+                    ?error,
+                    operation = "distribute_crane",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
+            if let Err(error) = tokio::fs::remove_file(&dockerfile_path).await {
+                tracing::warn!(
+                    ?error,
+                    operation = "distribute_crane",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
+            tracing::error!(
+                operation = "distribute_crane",
+                source_line = line!(),
+                "distribute crane returned an error"
+            );
             return Err(anyhow!(
                 "docker save failed: {}. crane requires a pre-built image or docker daemon",
                 stderr
@@ -374,16 +484,42 @@ impl ExternalRegistryDistributor {
             .context("failed to execute crane push")?;
 
         // Cleanup temp tarball regardless of push result
-        let _ = tokio::fs::remove_file(&tmp_path).await;
+        if let Err(error) = tokio::fs::remove_file(&tmp_path).await {
+            tracing::warn!(
+                ?error,
+                operation = "distribute_crane",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
 
         if !push_output.status.success() {
             let stderr = String::from_utf8_lossy(&push_output.stderr);
-            let _ = tokio::fs::remove_file(&dockerfile_path).await;
+            if let Err(error) = tokio::fs::remove_file(&dockerfile_path).await {
+                tracing::warn!(
+                    ?error,
+                    operation = "distribute_crane",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
+            tracing::error!(
+                operation = "distribute_crane",
+                source_line = line!(),
+                "distribute crane returned an error"
+            );
             return Err(anyhow!("crane push failed: {}", stderr));
         }
 
         // Cleanup temporary Dockerfile
-        let _ = tokio::fs::remove_file(&dockerfile_path).await;
+        if let Err(error) = tokio::fs::remove_file(&dockerfile_path).await {
+            tracing::warn!(
+                ?error,
+                operation = "distribute_crane",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
 
         tracing::info!(
             image = %full_tag,

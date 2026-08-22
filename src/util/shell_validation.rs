@@ -27,6 +27,7 @@ impl std::error::Error for ShellValidationError {}
 /// gate, not this validator.
 pub fn validate_shell_command(cmd: &str) -> Result<(), ShellValidationError> {
     let reject = |reason: &str| -> Result<(), ShellValidationError> {
+        // traci: allow -- validation rejection is an expected typed result logged by execution boundaries.
         Err(ShellValidationError {
             reason: reason.to_string(),
         })

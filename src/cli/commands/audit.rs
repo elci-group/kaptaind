@@ -97,18 +97,33 @@ fn verify_export(config: &Config) -> ExportVerifyReport {
             ok: true,
             issue: None,
         },
-        Err(error) => ExportVerifyReport {
-            configured: true,
-            ok: false,
-            issue: Some(error.to_string()),
-        },
+        Err(error) => {
+            tracing::warn!(
+                ?error,
+                operation = "verify_audit_export",
+                "audit export verification failed"
+            );
+            ExportVerifyReport {
+                configured: true,
+                ok: false,
+                issue: Some(error.to_string()),
+            }
+        }
     }
 }
 
 fn read_rows(path: &Path) -> Vec<AuditRow> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "read_rows",
+                source_line = line!(),
+                "read rows returned an error"
+            );
+            return Vec::new();
+        }
     };
     content
         .lines()
@@ -196,6 +211,7 @@ fn verify(rows: &[AuditRow], repo_path: &Path) -> VerifyReport {
         .map(|r| {
             r.timestamp
                 .as_deref()
+                // traci: allow -- optional failure is represented by None and handled by the caller.
                 .and_then(|s| s.parse::<DateTime<Utc>>().ok())
         })
         .collect();
@@ -214,6 +230,12 @@ fn verify(rows: &[AuditRow], repo_path: &Path) -> VerifyReport {
     let chain = match kaptaind::audit::verify_chain(repo_path) {
         Ok(()) => "ok".to_string(),
         Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "verify",
+                source_line = line!(),
+                "verify returned an error"
+            );
             issues.push(format!("audit hash chain: {error}"));
             "broken".to_string()
         }

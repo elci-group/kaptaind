@@ -28,6 +28,7 @@ impl LanguageAdapter for SvelteAdapter {
         let is_svelte5 = version
             .split('.')
             .next()
+            // traci: allow -- optional failure is represented by None and handled by the caller.
             .and_then(|v| v.parse::<u32>().ok())
             .map(|major| major >= 5)
             .unwrap_or(false);

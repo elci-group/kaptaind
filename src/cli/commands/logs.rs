@@ -52,7 +52,15 @@ pub fn handle_logs(config: &Config, action: &LogsAction, format: &str) -> anyhow
 fn read_source(path: &Path, source: &str) -> Vec<LogLine> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
-        Err(_) => return Vec::new(),
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "read_source",
+                source_line = line!(),
+                "read source returned an error"
+            );
+            return Vec::new();
+        }
     };
     content
         .lines()

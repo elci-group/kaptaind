@@ -141,11 +141,34 @@ pub fn notify(config: &NotifyConfig, event: NotificationEvent<'_>, webhook_enabl
         let mut command = std::process::Command::new("sh");
         command.arg("-c").arg(cmd);
         inject_env(&mut command, &event);
-        let _ = command.spawn();
+        if let Err(error) = command.spawn() {
+            tracing::warn!(
+                ?error,
+                operation = "notify",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
     }
 
     // Desktop notification.
-    let _ = send_desktop_notification(&rendered.title, &rendered.body, rendered.priority);
+    // traci: allow -- this branch emits structured desktop-notification failure telemetry.
+    if let Err(error) =
+        send_desktop_notification(&rendered.title, &rendered.body, rendered.priority)
+    {
+        tracing::error!(
+            ?error,
+            operation = "notify",
+            source_line = line!(),
+            "notify returned an error"
+        );
+        tracing::warn!(
+            ?error,
+            operation = "notify",
+            source_line = line!(),
+            "best-effort operation failed"
+        );
+    }
 
     // Spoken notification.
     crate::notify::audio::speak(rendered.title.clone(), &config.tts);
@@ -154,7 +177,7 @@ pub fn notify(config: &NotifyConfig, event: NotificationEvent<'_>, webhook_enabl
     if webhook_enabled {
         if let Some(webhook_url) = config.webhook_url.clone() {
             let content = rendered.webhook;
-            tokio::spawn(async move {
+            let webhook_task = async move {
                 if let Err(err) = crate::util::http::validate_outbound_url(&webhook_url) {
                     tracing::warn!(error = %err, "refusing unsafe webhook URL");
                     return;
@@ -167,6 +190,7 @@ pub fn notify(config: &NotifyConfig, event: NotificationEvent<'_>, webhook_enabl
                     return;
                 }
                 let is_discord = reqwest::Url::parse(&webhook_url)
+                    // traci: allow -- optional failure is represented by None and handled by the caller.
                     .ok()
                     .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))
                     .map(|h| h == "discord.com" || h.ends_with(".discord.com"))
@@ -181,7 +205,9 @@ pub fn notify(config: &NotifyConfig, event: NotificationEvent<'_>, webhook_enabl
                 if let Err(err) = client.post(&webhook_url).json(&payload).send().await {
                     tracing::warn!(error = %err, "failed to send webhook notification");
                 }
-            });
+            };
+            use tracing::Instrument as _;
+            tokio::spawn(webhook_task.in_current_span());
         }
     }
 }

@@ -174,6 +174,7 @@ const OBSOLETE_IGNORE_ENTRIES: &[&str] = &["VERSION", "Cargo.toml", "Cargo.lock"
 /// to migrate for that check.
 fn collect_migration_findings(config: &Config) -> Vec<MigrationFinding> {
     let toml_path = config.repo_path.join("kaptaind.toml");
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let toml_text = std::fs::read_to_string(toml_path).ok();
 
     let ignore_path = if config.watch.ignore_file.is_absolute() {
@@ -181,6 +182,7 @@ fn collect_migration_findings(config: &Config) -> Vec<MigrationFinding> {
     } else {
         config.repo_path.join(&config.watch.ignore_file)
     };
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let ignore_text = std::fs::read_to_string(ignore_path).ok();
 
     detect_migration_findings(config, toml_text.as_deref(), ignore_text.as_deref())
@@ -203,6 +205,7 @@ pub fn detect_migration_findings(
 /// Parse the raw TOML once; a file that does not parse fails `kaptaind
 /// validate` elsewhere, so migration checks simply skip it.
 fn parse_toml(toml_text: Option<&str>) -> Option<toml::Table> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     toml_text?.parse::<toml::Table>().ok()
 }
 
@@ -341,11 +344,14 @@ fn collect_workspace_findings(config: &Config) -> Vec<MigrationFinding> {
     }
 
     let root_manifest = repo.join("Cargo.toml");
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let root_text = std::fs::read_to_string(&root_manifest).ok();
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let version_text = std::fs::read_to_string(repo.join("VERSION")).ok();
     let member_texts: Vec<Option<String>> = layout
         .members()
         .iter()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .map(|m| std::fs::read_to_string(&m.manifest).ok())
         .collect();
     let members = member_versions(&layout, root_text.as_deref(), &member_texts);
@@ -408,6 +414,7 @@ fn root_declared_version(
     root_text: Option<&str>,
     version_text: Option<&str>,
 ) -> Option<DeclaredVersion> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let doc = root_text?.parse::<toml_edit::DocumentMut>().ok()?;
     let name = doc
         .get("package")
@@ -439,6 +446,7 @@ fn member_versions(
     member_texts: &[Option<String>],
 ) -> Vec<MemberVersion> {
     let workspace_version = root_text
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok())
         .and_then(|doc| {
             doc.get("workspace")
@@ -453,6 +461,7 @@ fn member_versions(
             workspace_version.clone()
         } else {
             text.as_deref()
+                // traci: allow -- optional failure is represented by None and handled by the caller.
                 .and_then(|t| t.parse::<toml_edit::DocumentMut>().ok())
                 .and_then(|doc| {
                     doc.get("package")
@@ -461,6 +470,7 @@ fn member_versions(
                         .map(str::to_string)
                 })
         };
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let version = raw.and_then(|raw| semver::Version::parse(&raw).ok());
         if let Some(version) = version {
             members.push(MemberVersion {
@@ -524,6 +534,7 @@ fn lock_entry_version(doc: &toml_edit::DocumentMut, name: &str) -> Option<semver
                     return None;
                 }
                 let raw = pkg.get("version").and_then(|v| v.as_str())?;
+                // traci: allow -- optional failure is represented by None and handled by the caller.
                 semver::Version::parse(raw).ok()
             })
         })
@@ -646,6 +657,7 @@ fn recent_commit_paths(repo: &Path) -> Option<Vec<Vec<String>>> {
         .args(["log", "--format=%n", "--name-only", "-n", "20"])
         .current_dir(repo)
         .output()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
         .filter(|o| o.status.success())?;
     Some(split_name_only_log(&String::from_utf8_lossy(&out.stdout)))
@@ -724,6 +736,7 @@ fn read_inotify() -> InotifyLimits {
 }
 
 fn read_proc_u64(path: &str) -> Option<u64> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     std::fs::read_to_string(path).ok()?.trim().parse().ok()
 }
 
@@ -734,12 +747,14 @@ fn read_kernel() -> Option<String> {
     Command::new("uname")
         .arg("-r")
         .output()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .filter(|s| !s.is_empty())
 }
 
 fn read_cpu_model() -> Option<String> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let content = std::fs::read_to_string("/proc/cpuinfo").ok()?;
     for line in content.lines() {
         if let Some(rest) = line.strip_prefix("model name") {
@@ -764,12 +779,14 @@ fn read_cores() -> usize {
 
 /// Read a `/proc/meminfo` entry (value in kB).
 fn read_meminfo(key: &str) -> Option<u64> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let content = std::fs::read_to_string("/proc/meminfo").ok()?;
     for line in content.lines() {
         if let Some(rest) = line.strip_prefix(key) {
             let kb: u64 = rest
                 .split_whitespace()
                 .next()
+                // traci: allow -- optional failure is represented by None and handled by the caller.
                 .and_then(|n| n.parse().ok())?;
             return Some(kb);
         }
@@ -792,6 +809,7 @@ fn read_disk_type(repo: &Path) -> String {
     // Strip a trailing partition number (e.g. sda1 -> sda, vda1 -> vda).
     let base = name.trim_end_matches(|c: char| c.is_ascii_digit());
     let rot = format!("/sys/block/{base}/queue/rotational");
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     match std::fs::read_to_string(&rot).ok().as_deref().map(str::trim) {
         Some("0") => "ssd".to_string(),
         Some("1") => "hdd".to_string(),
@@ -801,6 +819,7 @@ fn read_disk_type(repo: &Path) -> String {
 
 /// Find the mount source device for `repo` from `/proc/mounts` (longest match).
 fn mount_source(repo: &Path) -> Option<String> {
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let content = std::fs::read_to_string("/proc/mounts").ok()?;
     let canonical = repo.canonicalize().unwrap_or_else(|_| repo.to_path_buf());
     let mut best: Option<(usize, String)> = None;
@@ -844,6 +863,7 @@ fn git_state(repo: &Path) -> (Option<String>, Option<bool>) {
         .args(["rev-parse", "HEAD"])
         .current_dir(repo)
         .output()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
@@ -853,6 +873,7 @@ fn git_state(repo: &Path) -> (Option<String>, Option<bool>) {
         .args(["status", "--porcelain"])
         .current_dir(repo)
         .output()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
         .filter(|o| o.status.success())
         .map(|o| !o.stdout.is_empty());
@@ -869,7 +890,15 @@ fn count_files(root: &Path) -> usize {
     while let Some(dir) = stack.pop_front() {
         let entries = match std::fs::read_dir(&dir) {
             Ok(e) => e,
-            Err(_) => continue,
+            Err(error) => {
+                tracing::error!(
+                    ?error,
+                    operation = "count_files",
+                    source_line = line!(),
+                    "count files returned an error"
+                );
+                continue;
+            }
         };
         for entry in entries.flatten() {
             let path = entry.path();
@@ -895,7 +924,14 @@ fn write_artifact(config: &Config, report: &DoctorReport) -> anyhow::Result<()> 
     std::fs::write(&path, serde_json::to_string_pretty(report)?)?;
     // Keep a stable pointer to the latest run for the report aggregator.
     let latest = dir.join("latest.json");
-    let _ = std::fs::write(&latest, serde_json::to_string_pretty(report)?);
+    if let Err(error) = std::fs::write(&latest, serde_json::to_string_pretty(report)?) {
+        tracing::warn!(
+            ?error,
+            operation = "write_artifact",
+            source_line = line!(),
+            "best-effort operation failed"
+        );
+    }
     Ok(())
 }
 

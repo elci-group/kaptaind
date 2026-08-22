@@ -154,6 +154,7 @@ fn redirect_fd(ops: &mut dyn ProcessOps, from: i32, to: i32) -> anyhow::Result<(
     Ok(())
 }
 
+#[cfg(test)]
 #[cfg(all(test, unix))]
 mod tests {
     use super::*;

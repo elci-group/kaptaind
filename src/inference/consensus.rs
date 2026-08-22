@@ -1,6 +1,7 @@
 use super::CommitContext;
 use crate::config::loader::InferenceConfig;
 use std::collections::HashSet;
+use tracing::Instrument;
 
 /// Content words to strip before Jaccard similarity computation.
 /// Only includes very common words that add little semantic meaning.
@@ -53,9 +54,13 @@ fn mean_similarity(candidate_tokens: &HashSet<String>, others: &[HashSet<String>
 /// Spawns one Ollama task per model in `config.consensus_models`,
 /// collects responses, applies semantic similarity scoring, and elects the best candidate.
 /// Returns `None` if quorum is not reached or similarity threshold is not met.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn generate(config: &InferenceConfig, ctx: &CommitContext<'_>) -> Option<String> {
     if config.consensus_models.is_empty() {
-        tracing::warn!("consensus_models is empty; cannot run consensus inference");
+        tracing::warn!(
+            component = module_path!(),
+            "consensus_models is empty; cannot run consensus inference"
+        );
         return None;
     }
 
@@ -79,14 +84,15 @@ pub async fn generate(config: &InferenceConfig, ctx: &CommitContext<'_>) -> Opti
         let model_clone = model_name.clone();
         let user_prompt_clone = user_prompt.clone();
 
-        handles.push(tokio::spawn(async move {
+        let model_task = async move {
             super::ollama::generate_with_model_and_prompt(
                 &config_clone,
                 &user_prompt_clone,
                 &model_clone,
             )
             .await
-        }));
+        };
+        handles.push(tokio::spawn(model_task.in_current_span()));
     }
 
     // Collect successful responses.

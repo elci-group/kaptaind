@@ -50,7 +50,10 @@ pub fn load_from(path: &Path) -> Result<(), Box<dyn std::error::Error>> {
     let content = match std::fs::read_to_string(path) {
         Ok(c) => c,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(e) => return Err(e.into()),
+        Err(e) => {
+            tracing::error!(error = ?e, path = %path.display(), "failed to load environment file");
+            return Err(e.into());
+        }
     };
 
     for line in content.lines() {

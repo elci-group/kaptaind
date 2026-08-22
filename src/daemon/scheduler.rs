@@ -186,6 +186,7 @@ fn hook_command_uses_cargo(command: Option<&str>) -> bool {
         repo_path = %config.repo_path.display()
     )
 )]
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn run(
     mut rx: Receiver<FsEvent>,
     mut config: Config,
@@ -197,7 +198,7 @@ pub async fn run(
     let angler = match AnglerSystem::new(&config.angler, &config.repo_path) {
         Ok(system) => {
             if system.is_active() {
-                tracing::info!("Angler system initialized");
+                tracing::info!(component = module_path!(), "Angler system initialized");
             }
             Some(system)
         }
@@ -266,6 +267,19 @@ pub async fn run(
     // predating process start is historical, never resumed.
     write_status(&config.repo_path, &status);
 
+    // If the operator suspended the daemon while it was down, surface that
+    // immediately in status.json instead of leaving it idle-looking.
+    if crate::daemon::suspend::is_suspended(&config.repo_path) {
+        status.set_suspended(
+            crate::daemon::suspend::load(&config.repo_path)
+                .ok()
+                .flatten()
+                .and_then(|s| s.reason)
+                .as_deref(),
+        );
+        write_status(&config.repo_path, &status);
+    }
+
     // C5: consecutive blocking test failures, reset on any Passed outcome.
     let mut test_streak = TestFailureStreak::default();
 
@@ -326,7 +340,7 @@ pub async fn run(
                 match maybe_event {
                     Some(mut event) => {
                         if ignore_matcher.is_ignored(&event.paths) {
-                            tracing::trace!(?event.paths, "event ignored");
+                            tracing::trace!(component = module_path!(), ?event.paths, "event ignored");
                             continue;
                         }
 
@@ -359,7 +373,7 @@ pub async fn run(
                         let original_len = event.paths.len();
                         event.paths.retain(|p| !self_writes.is_self_write(p));
                         if event.paths.is_empty() {
-                            tracing::trace!("self-write event suppressed");
+                            tracing::trace!(component = module_path!(), "self-write event suppressed");
                             continue;
                         }
                         if event.paths.len() != original_len {
@@ -370,19 +384,19 @@ pub async fn run(
                         }
 
                         if matches!(status.status, State::Idle) {
-                            tracing::trace!("transitioning state to Clustering");
+                            tracing::trace!(component = module_path!(), "transitioning state to Clustering");
                             status.set_task(State::Clustering, "Collecting changes", None);
                             write_status(&config.repo_path, &status);
                         }
 
-                        tracing::trace!(?event.paths, "ingesting event");
+                        tracing::trace!(component = module_path!(), ?event.paths, "ingesting event");
                         if let Some(cluster) = cluster_engine.ingest(event) {
                             tracing::info!(cluster_id = %cluster.id, "cluster window expired by new event");
                             process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &mut self_writes, &mut test_streak, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
                         }
                     }
                     None => {
-                        tracing::trace!("event channel closed");
+                        tracing::trace!(component = module_path!(), "event channel closed");
                         if let Some(cluster) = cluster_engine.flush() {
                             process_cluster(&mut repo, &config, &mut last_commit_at, cluster, &mut status, &mut self_writes, &mut test_streak, &vacs_engine, &mut tasks, shutdown.clone_token(), angler.as_ref(), metrics.clone(), event_tx.clone()).await;
                         }
@@ -438,7 +452,7 @@ pub async fn run(
                 );
             }
             _ = shutdown.wait() => {
-                tracing::info!("shutdown signal received, draining tasks");
+                tracing::info!(component = module_path!(), "shutdown signal received, draining tasks");
                 status.set_task(State::Stopping, "Shutting down", None);
                 write_status(&config.repo_path, &status);
                 break;
@@ -459,7 +473,7 @@ pub async fn run(
 
     status.set_task(State::Stopped, "Stopped", None);
     write_status(&config.repo_path, &status);
-    tracing::info!("scheduler shutdown complete");
+    tracing::info!(component = module_path!(), "scheduler shutdown complete");
 }
 
 /// True when `path` is the project's kaptaind.toml or its configured ignore
@@ -482,7 +496,10 @@ fn reload_config(config: &mut Config, ignore_matcher: &mut IgnoreMatcher) {
             config.ratelimit = fresh.ratelimit;
             config.watch.ignore_file = fresh.watch.ignore_file;
             *ignore_matcher = IgnoreMatcher::load(&config.repo_path, &config.watch.ignore_file);
-            tracing::info!("config reloaded: thresholds, weights, rate limits, ignore matcher");
+            tracing::info!(
+                component = module_path!(),
+                "config reloaded: thresholds, weights, rate limits, ignore matcher"
+            );
         }
         Err(err) => {
             tracing::warn!(error = %err, "config reload failed; keeping previous config");
@@ -519,6 +536,27 @@ async fn process_cluster(
 
     metrics.clusters_processed.fetch_add(1, Ordering::Relaxed);
 
+    // Suspend gate: do not process clusters while the daemon is suspended.
+    if crate::daemon::suspend::is_suspended(&config.repo_path) {
+        tracing::debug!(
+            component = module_path!(),
+            "daemon is suspended; skipping cluster"
+        );
+        record_decision(
+            config,
+            &cluster,
+            crate::daemon::decisions::outcome::SUSPENDED,
+            "daemon is suspended",
+            None,
+            None,
+            None,
+            None,
+        );
+        status.set_suspended(Some("daemon is suspended"));
+        write_status(&config.repo_path, status);
+        return;
+    }
+
     // Load policy if configured
     let policy: Option<Policy> = match config.policy_id.as_deref() {
         Some(id) => match Policy::load_with_trust(
@@ -530,13 +568,13 @@ async fn process_cluster(
             Ok(policy) => {
                 if config.governance.enforce_enterprise_controls {
                     let Some(export) = config.audit.export.as_ref() else {
-                        tracing::error!("enterprise governance audit export disappeared after configuration validation; blocking cluster");
+                        tracing::error!(component = module_path!(), "enterprise governance audit export disappeared after configuration validation; blocking cluster");
                         status.set_idle();
                         write_status(&config.repo_path, status);
                         return;
                     };
                     if let Err(error) = crate::audit::verify_export(&config.repo_path, export) {
-                        tracing::error!(%error, "enterprise audit export integrity failed; blocking cluster");
+                        tracing::error!(component = module_path!(), %error, "enterprise audit export integrity failed; blocking cluster");
                         status.set_idle();
                         write_status(&config.repo_path, status);
                         return;
@@ -550,6 +588,7 @@ async fn process_cluster(
                 }
                 Some(policy)
             }
+            // traci: allow -- adjacent structured event records this failure path.
             Err(error) => {
                 // A configured policy is an authorization boundary. Never
                 // continue automated commits after its trust check fails.
@@ -574,7 +613,10 @@ async fn process_cluster(
         if !p.file_pattern_allowlist.is_empty()
             && !policy::cluster_matches_allowlist(&cluster_paths, &p.file_pattern_allowlist)
         {
-            tracing::debug!("cluster blocked by file_pattern_allowlist");
+            tracing::debug!(
+                component = module_path!(),
+                "cluster blocked by file_pattern_allowlist"
+            );
             write_trace_if_active(
                 &config.repo_path,
                 &cluster,
@@ -612,7 +654,7 @@ async fn process_cluster(
     let agent_event = agent_events.into_iter().last();
 
     if !rate_limit_allows(now, *last_commit_at, config.ratelimit.min_commit_interval) {
-        tracing::debug!("commit rate-limited");
+        tracing::debug!(component = module_path!(), "commit rate-limited");
         write_trace_if_active(
             &config.repo_path,
             &cluster,
@@ -661,7 +703,10 @@ async fn process_cluster(
     };
 
     if is_clean {
-        tracing::debug!("working tree clean; nothing to commit");
+        tracing::debug!(
+            component = module_path!(),
+            "working tree clean; nothing to commit"
+        );
         write_trace_if_active(
             &config.repo_path,
             &cluster,
@@ -711,7 +756,10 @@ async fn process_cluster(
         .collect::<Vec<_>>();
     let cluster_has_change = cluster_overlaps_changes(&event_paths, &changed_paths);
     if !cluster_has_change {
-        tracing::debug!("cluster has no corresponding git change; skipping stale event");
+        tracing::debug!(
+            component = module_path!(),
+            "cluster has no corresponding git change; skipping stale event"
+        );
         write_trace_if_active(
             &config.repo_path,
             &cluster,
@@ -738,7 +786,7 @@ async fn process_cluster(
 
     status.set_task(State::Testing, "Running tests", Some(25));
     write_status(&config.repo_path, status);
-    tracing::trace!("running test hook");
+    tracing::trace!(component = module_path!(), "running test hook");
 
     // Branch protection: force test required on protected branches
     let branch_protection_forces_tests = policy
@@ -766,7 +814,10 @@ async fn process_cluster(
         }
         outcome
     } else {
-        tracing::debug!("docs-only cluster; skipping test hook (command_on = code_only)");
+        tracing::debug!(
+            component = module_path!(),
+            "docs-only cluster; skipping test hook (command_on = code_only)"
+        );
         TestOutcome::Skipped
     };
     test_streak.observe(&test_outcome);
@@ -791,6 +842,7 @@ async fn process_cluster(
         let streak = test_streak.record_blocked_failure();
         if test_streak.should_warn() {
             tracing::warn!(
+                component = module_path!(),
                 streak,
                 "commits blocked: {streak} consecutive test failures"
             );
@@ -885,15 +937,57 @@ async fn process_cluster(
         diff.ast_cache_misses,
         diff.ast_cache_entries,
     );
-    tracing::trace!(?diff, "diff analysis complete");
+    tracing::trace!(component = module_path!(), ?diff, "diff analysis complete");
     apply_test_outcome(&mut diff, &test_outcome);
     let weight = crate::weight::compute(&diff, &config.weights);
-    tracing::trace!(?weight, "weight computation complete");
+    tracing::trace!(
+        component = module_path!(),
+        ?weight,
+        "weight computation complete"
+    );
     let bump = crate::version::decide(&weight, &config.version_thresholds);
+
+    // Observation is the safe installation default. Preserve the deterministic
+    // analysis and decision evidence, but never stage, commit, write VERSION,
+    // push, or release unless the operator explicitly enables actuation.
+    if matches!(
+        config.operation.mode,
+        crate::config::loader::OperationMode::Observe
+    ) {
+        let observed_version = crate::version::resolve_baseline(&config.repo_path)
+            .unwrap_or_else(|_| Version::new(0, 1, 0));
+        if let Err(error) = persist_analysis_artifact(
+            config,
+            &cluster,
+            &diff,
+            &weight,
+            bump,
+            &observed_version,
+            config.air_gapped,
+        ) {
+            tracing::warn!(error = %error, "failed to persist observation artifact");
+        }
+        record_decision(
+            config,
+            &cluster,
+            crate::daemon::decisions::outcome::OBSERVED,
+            "observation mode: mutation requires explicit operation.mode = actuate",
+            Some(&diff),
+            Some(&weight),
+            Some(bump),
+            Some(&observed_version),
+        );
+        status.set_idle();
+        write_status(&config.repo_path, status);
+        return;
+    }
 
     if bump == Bump::None {
         if config.commit.require_bump {
-            tracing::debug!("no semantic version bump required");
+            tracing::debug!(
+                component = module_path!(),
+                "no semantic version bump required"
+            );
             write_trace_if_active(
                 &config.repo_path,
                 &cluster,
@@ -1379,7 +1473,10 @@ async fn process_cluster(
                 }
             }
             None => {
-                tracing::warn!("ollama inference unavailable; using deterministic message");
+                tracing::warn!(
+                    component = module_path!(),
+                    "ollama inference unavailable; using deterministic message"
+                );
                 metadata_line
             }
         }
@@ -1626,20 +1723,37 @@ async fn process_cluster(
             }
         }
 
-        let push_options = crate::push::PushOptions {
-            remote: config.push.remote.clone(),
-            branch: config.push.branch.clone(),
-            dry_run: config.push.dry_run,
-            protect_branches: config.push.safety.protect_branches.clone(),
+        // Use multi-remote push if configured, otherwise fall back to single remote
+        let push_result = if !config.push.remotes.is_empty() {
+            let multi_push_options = crate::push::MultiRemotePushOptions {
+                remotes: config.push.remotes.clone(),
+                branch: config.push.branch.clone(),
+                dry_run: config.push.dry_run,
+                protect_branches: config.push.safety.protect_branches.clone(),
+            };
+            crate::push::push_multi_remote(
+                &config.repo_path,
+                &multi_push_options,
+                &config.push.retry,
+                &config.push.protection,
+            )
+            .await
+            .map(|_| ())
+        } else {
+            let push_options = crate::push::PushOptions {
+                remote: config.push.remote.clone(),
+                branch: config.push.branch.clone(),
+                dry_run: config.push.dry_run,
+                protect_branches: config.push.safety.protect_branches.clone(),
+            };
+            crate::push::push(
+                &config.repo_path,
+                &push_options,
+                &config.push.retry,
+                &config.push.protection,
+            )
+            .await
         };
-
-        let push_result = crate::push::push(
-            &config.repo_path,
-            &push_options,
-            &config.push.retry,
-            &config.push.protection,
-        )
-        .await;
         if let Err(err) = push_result {
             tracing::warn!(error = %err, "push failed");
             write_trace_if_active(
@@ -1672,10 +1786,28 @@ async fn process_cluster(
 
         // Send push webhook event
         if let Some(angler) = angler {
+            // Determine remote(s) for notification
+            let remote_names = if !config.push.remotes.is_empty() {
+                let enabled: Vec<_> = config
+                    .push
+                    .remotes
+                    .iter()
+                    .filter(|r| r.enabled)
+                    .map(|r| r.name.as_str())
+                    .collect();
+                if enabled.is_empty() {
+                    vec![config.push.remote.as_str()]
+                } else {
+                    enabled
+                }
+            } else {
+                vec![config.push.remote.as_str()]
+            };
+
             let webhook_event = WebhookEvent::Push {
                 branch: config.push.branch.clone(),
                 commits: 1,
-                remote: config.push.remote.clone(),
+                remote: remote_names.join(", "),
             };
             let _ = angler
                 .broadcast_webhook_event(&webhook_event, &cluster_paths)
@@ -1703,11 +1835,29 @@ async fn process_cluster(
                 .await;
         }
 
+        // Determine remote(s) for notification
+        let remote_for_notification = if !config.push.remotes.is_empty() {
+            let enabled: Vec<_> = config
+                .push
+                .remotes
+                .iter()
+                .filter(|r| r.enabled)
+                .map(|r| r.name.as_str())
+                .collect();
+            if enabled.is_empty() {
+                config.push.remote.clone()
+            } else {
+                enabled.join(", ")
+            }
+        } else {
+            config.push.remote.clone()
+        };
+
         crate::daemon::notification::notify_push_success(
             &config.notify,
             &next.to_string(),
             &config.push.branch,
-            &config.push.remote,
+            &remote_for_notification,
             config.capabilities.network_webhooks,
         );
     }
@@ -1744,7 +1894,7 @@ async fn process_cluster(
     let aoc_id = match crate::aoc::session::load_active(&config.repo_path) {
         Ok(session) => session.map(|s| s.id),
         Err(error) => {
-            tracing::warn!(%error, "failed to load active AoC session for VACS event");
+            tracing::warn!(component = module_path!(), %error, "failed to load active AoC session for VACS event");
             None
         }
     };
@@ -2298,6 +2448,7 @@ async fn run_test_hook(config: &Config) -> TestOutcome {
         repo_path = %repo_path.display()
     )
 )]
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn run_test_hook_for_config(test: &TestConfig, repo_path: &Path) -> TestOutcome {
     let Some(command) = test.command.as_deref() else {
         return TestOutcome::Skipped;

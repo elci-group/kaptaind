@@ -16,7 +16,14 @@ pub fn channel() -> (ShutdownHandle, ShutdownToken) {
 impl ShutdownHandle {
     /// Signal all tasks to begin shutdown.
     pub fn signal(&self) {
-        let _ = self.0.send(true);
+        if let Err(error) = self.0.send(true) {
+            tracing::warn!(
+                ?error,
+                operation = "signal",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
     }
 }
 
@@ -32,7 +39,15 @@ impl ShutdownToken {
     }
 
     /// Wait for the shutdown signal to be sent.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn wait(&mut self) {
-        let _ = self.0.wait_for(|v| *v).await;
+        if let Err(error) = self.0.wait_for(|v| *v).await {
+            tracing::warn!(
+                ?error,
+                operation = "wait",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
     }
 }

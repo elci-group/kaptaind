@@ -143,6 +143,7 @@ impl WebhookManager {
     }
 
     /// Send an event to all subscribed endpoints.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn broadcast_event(
         &self,
         event: &WebhookEvent,
@@ -167,6 +168,7 @@ impl WebhookManager {
     }
 
     /// Send an event to a specific endpoint.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn send_to_endpoint(
         &self,
         endpoint: &WebhookEndpoint,
@@ -196,6 +198,12 @@ impl WebhookManager {
         // Re-validate at send time so a private/metadata target cannot be
         // reached even if config changed since validation or was never validated.
         if let Err(err) = crate::util::http::validate_outbound_url(&endpoint.url) {
+            tracing::error!(
+                ?err,
+                operation = "send_to_endpoint",
+                source_line = line!(),
+                "send to endpoint returned an error"
+            );
             return DeliveryResult {
                 success: false,
                 status_code: None,
@@ -205,10 +213,17 @@ impl WebhookManager {
                 response_body: None,
             };
         }
+        // traci: allow -- this branch emits a structured error before returning its failure result.
         if let Err(err) = crate::compliance::enforce_egress_url(
             crate::config::loader::EgressChannel::Webhooks,
             &endpoint.url,
         ) {
+            tracing::error!(
+                ?err,
+                operation = "send_to_endpoint",
+                source_line = line!(),
+                "send to endpoint returned an error"
+            );
             return DeliveryResult {
                 success: false,
                 status_code: None,
@@ -223,6 +238,12 @@ impl WebhookManager {
         let payload = match self.build_payload(event) {
             Ok(p) => p,
             Err(e) => {
+                tracing::error!(
+                    ?e,
+                    operation = "send_to_endpoint",
+                    source_line = line!(),
+                    "send to endpoint returned an error"
+                );
                 return DeliveryResult {
                     success: false,
                     status_code: None,
@@ -263,6 +284,7 @@ impl WebhookManager {
                         // Server error or retriable client error - retry
                         last_status = Some(status);
                         warn!(
+                            component = module_path!(),
                             "Webhook {} returned {}, retrying ({}/{})",
                             endpoint.id,
                             status,
@@ -284,6 +306,7 @@ impl WebhookManager {
                 Err(e) => {
                     last_error = Some(e.to_string());
                     warn!(
+                        component = module_path!(),
                         "Webhook {} delivery error: {}, retrying ({}/{})",
                         endpoint.id,
                         e,
@@ -312,6 +335,7 @@ impl WebhookManager {
     }
 
     /// Send a test ping to an endpoint.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn send_test_ping(&self, endpoint: &WebhookEndpoint) -> DeliveryResult {
         let ping = WebhookEvent::Custom {
             event_type: "ping".to_string(),
@@ -335,11 +359,24 @@ impl WebhookManager {
         if endpoint.url.is_empty() {
             errors.push("URL is required".to_string());
         } else if let Err(err) = crate::util::http::validate_outbound_url(&endpoint.url) {
+            tracing::error!(
+                ?err,
+                operation = "validate_endpoint",
+                source_line = line!(),
+                "validate endpoint returned an error"
+            );
             errors.push(format!("unsafe webhook URL: {err}"));
+        // traci: allow -- this branch emits a structured error before recording the validation failure.
         } else if let Err(err) = crate::compliance::enforce_egress_url(
             crate::config::loader::EgressChannel::Webhooks,
             &endpoint.url,
         ) {
+            tracing::error!(
+                ?err,
+                operation = "validate_endpoint",
+                source_line = line!(),
+                "validate endpoint returned an error"
+            );
             errors.push(format!("regional policy blocked webhook URL: {err}"));
         }
 
@@ -472,8 +509,8 @@ impl WebhookManager {
         }
 
         debug!(
-            "Webhook {} response: {} - body: {}",
-            endpoint.id, status, body_preview
+            component = module_path!(),
+            "Webhook {} response: {} - body: {}", endpoint.id, status, body_preview
         );
 
         Ok((status, body_text))
@@ -494,16 +531,18 @@ impl WebhookManager {
 
         match self.config.signature.algorithm {
             SignatureAlgorithm::HmacSha256 => {
-                let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-                    .expect("HMAC can take key of any size");
+                let Some(mut mac) = hmac_sha256(secret.as_bytes(), "sign_webhook") else {
+                    return String::new();
+                };
                 mac.update(data.as_bytes());
                 let result = mac.finalize();
                 let bytes = result.into_bytes();
                 format!("sha256={}", crate::util::hex::encode(bytes))
             }
             SignatureAlgorithm::HmacSha512 => {
-                let mut mac = HmacSha512::new_from_slice(secret.as_bytes())
-                    .expect("HMAC can take key of any size");
+                let Some(mut mac) = hmac_sha512(secret.as_bytes(), "sign_webhook") else {
+                    return String::new();
+                };
                 mac.update(data.as_bytes());
                 let result = mac.finalize();
                 let bytes = result.into_bytes();
@@ -512,14 +551,48 @@ impl WebhookManager {
             SignatureAlgorithm::Ed25519 => {
                 // Ed25519 signing would require additional dependencies
                 // For now, fall back to HMAC-SHA256
-                warn!("Ed25519 signing not implemented, using HMAC-SHA256");
-                let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-                    .expect("HMAC can take key of any size");
+                warn!(
+                    component = module_path!(),
+                    "Ed25519 signing not implemented, using HMAC-SHA256"
+                );
+                let Some(mut mac) = hmac_sha256(secret.as_bytes(), "sign_webhook_fallback") else {
+                    return String::new();
+                };
                 mac.update(data.as_bytes());
                 let result = mac.finalize();
                 let bytes = result.into_bytes();
                 format!("sha256={}", crate::util::hex::encode(bytes))
             }
+        }
+    }
+}
+
+fn hmac_sha256(key: &[u8], operation: &'static str) -> Option<HmacSha256> {
+    match HmacSha256::new_from_slice(key) {
+        Ok(mac) => Some(mac),
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation,
+                algorithm = "hmac-sha256",
+                "invalid webhook HMAC key"
+            );
+            None
+        }
+    }
+}
+
+fn hmac_sha512(key: &[u8], operation: &'static str) -> Option<HmacSha512> {
+    match HmacSha512::new_from_slice(key) {
+        Ok(mac) => Some(mac),
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation,
+                algorithm = "hmac-sha512",
+                "invalid webhook HMAC key"
+            );
+            None
         }
     }
 }
@@ -561,15 +634,17 @@ pub fn verify_signature(
 ) -> bool {
     let expected = match algorithm {
         SignatureAlgorithm::HmacSha256 => {
-            let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-                .expect("HMAC can take key of any size");
+            let Some(mut mac) = hmac_sha256(secret.as_bytes(), "verify_webhook") else {
+                return false;
+            };
             mac.update(payload.as_bytes());
             let result = mac.finalize();
             format!("sha256={}", crate::util::hex::encode(result.into_bytes()))
         }
         SignatureAlgorithm::HmacSha512 => {
-            let mut mac = HmacSha512::new_from_slice(secret.as_bytes())
-                .expect("HMAC can take key of any size");
+            let Some(mut mac) = hmac_sha512(secret.as_bytes(), "verify_webhook") else {
+                return false;
+            };
             mac.update(payload.as_bytes());
             let result = mac.finalize();
             format!("sha512={}", crate::util::hex::encode(result.into_bytes()))
@@ -613,7 +688,15 @@ pub fn verify_signature_with_timestamp(
 
     let ts: u64 = match ts_str.parse() {
         Ok(v) => v,
-        Err(_) => return false,
+        Err(error) => {
+            tracing::error!(
+                ?error,
+                operation = "verify_signature_with_timestamp",
+                source_line = line!(),
+                "verify signature with timestamp returned an error"
+            );
+            return false;
+        }
     };
 
     let now = SystemTime::now()
@@ -632,8 +715,9 @@ pub fn verify_signature_with_timestamp(
 
     let expected = match algorithm {
         SignatureAlgorithm::HmacSha256 => {
-            let mut mac = HmacSha256::new_from_slice(secret.as_bytes())
-                .expect("HMAC can take key of any size");
+            let Some(mut mac) = hmac_sha256(secret.as_bytes(), "verify_timestamped_webhook") else {
+                return false;
+            };
             mac.update(data.as_bytes());
             format!(
                 "sha256={}",
@@ -641,8 +725,9 @@ pub fn verify_signature_with_timestamp(
             )
         }
         SignatureAlgorithm::HmacSha512 => {
-            let mut mac = HmacSha512::new_from_slice(secret.as_bytes())
-                .expect("HMAC can take key of any size");
+            let Some(mut mac) = hmac_sha512(secret.as_bytes(), "verify_timestamped_webhook") else {
+                return false;
+            };
             mac.update(data.as_bytes());
             format!(
                 "sha512={}",

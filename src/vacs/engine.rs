@@ -48,6 +48,7 @@ impl VacsEngine {
         (Arc::new(engine), rx)
     }
 
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn ingest(&self, event: VacsEvent) -> anyhow::Result<()> {
         if !self.config.enabled {
             return Ok(());
@@ -56,10 +57,15 @@ impl VacsEngine {
         Ok(())
     }
 
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn process_queue(self: Arc<Self>, mut rx: mpsc::Receiver<VacsEvent>) {
         while let Some(event) = rx.recv().await {
             if let Err(e) = self.handle_event(event).await {
-                tracing::error!("VACS event handling failed: {}", e);
+                tracing::error!(
+                    component = module_path!(),
+                    "VACS event handling failed: {}",
+                    e
+                );
             }
         }
     }

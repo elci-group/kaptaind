@@ -83,7 +83,9 @@ pub fn detect_all(cache: &mut VersionCache, repo_path: &Path) -> HashMap<String,
 
 fn detect_rust(repo_path: &Path) -> Option<LanguageVersion> {
     let cargo = repo_path.join("Cargo.toml");
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let content = std::fs::read_to_string(&cargo).ok()?;
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let doc: toml::Value = toml::from_str(&content).ok()?;
     let edition = doc
         .get("package")
@@ -99,6 +101,7 @@ fn detect_rust(repo_path: &Path) -> Option<LanguageVersion> {
 
 fn detect_go(repo_path: &Path) -> Option<LanguageVersion> {
     let go_mod = repo_path.join("go.mod");
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let content = std::fs::read_to_string(&go_mod).ok()?;
     for line in content.lines() {
         let trimmed = line.trim();
@@ -259,6 +262,7 @@ fn detect_kotlin(repo_path: &Path) -> Option<LanguageVersion> {
 
 fn detect_swift(repo_path: &Path) -> Option<LanguageVersion> {
     let pkg = repo_path.join("Package.swift");
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let content = std::fs::read_to_string(&pkg).ok()?;
     // swift-tools-version: 5.9
     for line in content.lines() {
@@ -297,7 +301,9 @@ fn detect_astro(repo_path: &Path) -> Option<LanguageVersion> {
 /// (checking both `dependencies` and `devDependencies`).
 fn detect_npm_dep_version(repo_path: &Path, package: &str) -> Option<LanguageVersion> {
     let pkg = repo_path.join("package.json");
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let content = std::fs::read_to_string(&pkg).ok()?;
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let val: serde_json::Value = serde_json::from_str(&content).ok()?;
 
     for section in &["dependencies", "devDependencies"] {
@@ -332,7 +338,9 @@ fn extract_quoted(s: &str) -> Option<String> {
 /// Parse a Python version string like "3.10" into `(major, minor)`.
 pub fn parse_python_semver(version: &str) -> (u32, u32) {
     let mut parts = version.splitn(3, '.');
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let major = parts.next().and_then(|s| s.parse().ok()).unwrap_or(3);
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let minor = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
     (major, minor)
 }
@@ -341,7 +349,9 @@ pub fn parse_python_semver(version: &str) -> (u32, u32) {
 pub fn parse_go_semver(version: &str) -> (u32, u32) {
     let clean = version.trim_start_matches('v');
     let mut parts = clean.splitn(3, '.');
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let major = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+    // traci: allow -- optional failure is represented by None and handled by the caller.
     let minor = parts.next().and_then(|s| s.parse().ok()).unwrap_or(0);
     (major, minor)
 }

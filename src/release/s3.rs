@@ -27,16 +27,19 @@ impl S3Distributor {
     pub fn new(config: S3DistConfig) -> anyhow::Result<Self> {
         let access_key = std::env::var("AWS_ACCESS_KEY_ID")
             .or_else(|_| std::env::var("S3_ACCESS_KEY"))
-            .map_err(|_| {
-                anyhow!("S3 access key not found. Set AWS_ACCESS_KEY_ID or S3_ACCESS_KEY")
+            .map_err(|error| {
+                anyhow!("S3 access key not found. Set AWS_ACCESS_KEY_ID or S3_ACCESS_KEY: {error}")
             })?;
 
         let secret_key = std::env::var("AWS_SECRET_ACCESS_KEY")
             .or_else(|_| std::env::var("S3_SECRET_KEY"))
-            .map_err(|_| {
-                anyhow!("S3 secret key not found. Set AWS_SECRET_ACCESS_KEY or S3_SECRET_KEY")
+            .map_err(|error| {
+                anyhow!(
+                    "S3 secret key not found. Set AWS_SECRET_ACCESS_KEY or S3_SECRET_KEY: {error}"
+                )
             })?;
 
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         let endpoint = std::env::var("S3_ENDPOINT").ok();
 
         Ok(Self {
@@ -48,6 +51,7 @@ impl S3Distributor {
     }
 
     /// Upload a package to S3.
+    // traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
     pub async fn distribute(&self, pkg: &PackageResult) -> anyhow::Result<()> {
         let tarball_name = pkg
             .tarball
@@ -90,11 +94,11 @@ impl S3Distributor {
             .duration_since(SystemTime::UNIX_EPOCH)?
             .as_secs();
         let date = chrono::DateTime::from_timestamp(timestamp as i64, 0)
-            .unwrap()
+            .ok_or_else(|| anyhow!("current timestamp is outside chrono's supported range"))?
             .format("%Y%m%d")
             .to_string();
         let datetime = chrono::DateTime::from_timestamp(timestamp as i64, 0)
-            .unwrap()
+            .ok_or_else(|| anyhow!("current timestamp is outside chrono's supported range"))?
             .format("%Y%m%dT%H%M%SZ")
             .to_string();
 
@@ -140,7 +144,7 @@ impl S3Distributor {
         // Calculate signature
         let signing_key = self.get_signing_key(&date)?;
         let signature =
-            crate::util::hex::encode(hmac_sha256(&signing_key, string_to_sign.as_bytes()));
+            crate::util::hex::encode(hmac_sha256(&signing_key, string_to_sign.as_bytes())?);
 
         // Build authorization header
         let auth_header = format!(
@@ -181,6 +185,11 @@ impl S3Distributor {
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
+            tracing::error!(
+                operation = "upload_file",
+                source_line = line!(),
+                "upload file returned an error"
+            );
             return Err(anyhow!("S3 upload failed: {} - {}", status, body));
         }
 
@@ -189,21 +198,22 @@ impl S3Distributor {
 
     fn get_signing_key(&self, date: &str) -> anyhow::Result<Vec<u8>> {
         let k_secret = format!("AWS4{}", self.secret_key);
-        let k_date = hmac_sha256(k_secret.as_bytes(), date.as_bytes());
-        let k_region = hmac_sha256(&k_date, self.config.region.as_bytes());
-        let k_service = hmac_sha256(&k_region, b"s3");
-        let k_signing = hmac_sha256(&k_service, b"aws4_request");
+        let k_date = hmac_sha256(k_secret.as_bytes(), date.as_bytes())?;
+        let k_region = hmac_sha256(&k_date, self.config.region.as_bytes())?;
+        let k_service = hmac_sha256(&k_region, b"s3")?;
+        let k_signing = hmac_sha256(&k_service, b"aws4_request")?;
         Ok(k_signing)
     }
 }
 
-fn hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
+fn hmac_sha256(key: &[u8], data: &[u8]) -> anyhow::Result<Vec<u8>> {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
 
     type HmacSha256 = Hmac<Sha256>;
 
-    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC can take key of any size");
+    let mut mac =
+        HmacSha256::new_from_slice(key).map_err(|error| anyhow!("invalid HMAC key: {error:?}"))?;
     mac.update(data);
-    mac.finalize().into_bytes().to_vec()
+    Ok(mac.finalize().into_bytes().to_vec())
 }

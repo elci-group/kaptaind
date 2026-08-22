@@ -94,11 +94,10 @@ impl LanguageAdapter for PluginAdapter {
             .spawn()
             .and_then(|mut child| {
                 use std::io::Write;
-                child
-                    .stdin
-                    .take()
-                    .expect("stdin piped")
-                    .write_all(request.as_bytes())?;
+                let mut stdin = child.stdin.take().ok_or_else(|| {
+                    std::io::Error::other("plugin stdin was not piped as configured")
+                })?;
+                stdin.write_all(request.as_bytes())?;
                 child.wait_with_output()
             })
             .map_err(|e| {

@@ -3,7 +3,7 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 
-use crate::config::loader::{PushProtectionConfig, RetryConfig};
+use crate::config::loader::{PushProtectionConfig, RemoteConfig, RetryConfig};
 use anyhow::{bail, Context};
 use serde::Deserialize;
 
@@ -15,6 +15,15 @@ pub struct PushOptions {
     pub protect_branches: Vec<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct MultiRemotePushOptions {
+    pub remotes: Vec<RemoteConfig>,
+    pub branch: String,
+    pub dry_run: bool,
+    pub protect_branches: Vec<String>,
+}
+
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn push(
     repo_path: &Path,
     options: &PushOptions,
@@ -22,6 +31,57 @@ pub async fn push(
     protection: &PushProtectionConfig,
 ) -> anyhow::Result<()> {
     push_with_audit(repo_path, options, retry, protection, "push").await
+}
+
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
+pub async fn push_multi_remote(
+    repo_path: &Path,
+    options: &MultiRemotePushOptions,
+    retry: &RetryConfig,
+    protection: &PushProtectionConfig,
+) -> anyhow::Result<Vec<String>> {
+    let mut enabled_remotes: Vec<_> = options.remotes.iter().filter(|r| r.enabled).collect();
+
+    // Sort by priority (lower numbers first)
+    enabled_remotes.sort_by_key(|r| r.priority);
+
+    let mut successful_pushes = Vec::new();
+    let mut last_error: Option<anyhow::Error> = None;
+
+    for remote_config in enabled_remotes {
+        let push_options = PushOptions {
+            remote: remote_config.name.clone(),
+            branch: options.branch.clone(),
+            dry_run: options.dry_run,
+            protect_branches: options.protect_branches.clone(),
+        };
+
+        match push_with_audit(repo_path, &push_options, retry, protection, "push").await {
+            Ok(_) => {
+                successful_pushes.push(remote_config.name.clone());
+                tracing::info!(
+                    remote = %remote_config.name,
+                    role = %remote_config.role,
+                    "push succeeded"
+                );
+            }
+            Err(e) => {
+                last_error = Some(e);
+                tracing::warn!(
+                    remote = %remote_config.name,
+                    role = %remote_config.role,
+                    error = %last_error.as_ref().unwrap(),
+                    "push failed, continuing with other remotes"
+                );
+            }
+        }
+    }
+
+    if successful_pushes.is_empty() {
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("no remotes were successfully pushed")))
+    } else {
+        Ok(successful_pushes)
+    }
 }
 
 async fn push_with_audit(
@@ -86,6 +146,12 @@ async fn push_with_audit(
                 ));
             }
             Err(e) => {
+                tracing::error!(
+                    ?e,
+                    operation = "push_with_audit",
+                    source_line = line!(),
+                    "push with audit returned an error"
+                );
                 last_error = Some(anyhow::anyhow!("Failed to execute git command: {}", e));
             }
         }
@@ -95,6 +161,7 @@ async fn push_with_audit(
                 * retry.backoff_multiplier.powi((attempt - 1) as i32))
             .min(retry.max_delay_ms as f64) as u64;
             tracing::debug!(
+                component = module_path!(),
                 "push attempt {} failed, retrying in {}ms",
                 attempt,
                 delay_ms
@@ -115,6 +182,7 @@ async fn push_with_audit(
         false,
         Some(&err.to_string()),
     );
+    tracing::error!(error = ?err, attempts = retry.max_attempts, "git push exhausted its retry budget");
     Err(err)
 }
 
@@ -125,6 +193,7 @@ async fn push_with_audit(
 /// queried for both legacy commit statuses and GitHub Actions check runs. In
 /// all other cases the function falls back to a local `.kaptaind/ci-status.json`
 /// file, or returns `Ok` if no local override is present.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn check_branch_protection(
     repo_path: &Path,
     options: &PushOptions,
@@ -154,7 +223,10 @@ pub async fn check_branch_protection(
     };
 
     let Some(token_env) = protection.github_token_env.as_deref() else {
-        tracing::warn!("github_token_env not configured; falling back to local CI status check");
+        tracing::warn!(
+            component = module_path!(),
+            "github_token_env not configured; falling back to local CI status check"
+        );
         return local_ci_status_check(repo_path, protection).await;
     };
 

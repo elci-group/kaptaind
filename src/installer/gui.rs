@@ -74,6 +74,17 @@ fn check_dependencies(info: &SystemInfo) -> Vec<(String, bool)> {
     ]
 }
 
+fn set_editor_text(editor: &mut TextEditor, text: &str, screen: &'static str) {
+    match editor.buffer() {
+        Some(mut buffer) => buffer.set_text(text),
+        None => tracing::error!(
+            screen,
+            operation = "set_editor_text",
+            "installer text buffer missing"
+        ),
+    }
+}
+
 fn screen_welcome(sender: app::Sender<Message>) -> app::Receiver<Message> {
     let (sender, receiver) = app::channel::<Message>();
 
@@ -95,8 +106,10 @@ fn screen_welcome(sender: app::Sender<Message>) -> app::Receiver<Message> {
         .with_size(WINDOW_WIDTH - 2 * PADDING, 200)
         .with_pos(PADDING, PADDING + 70);
     info_text.set_buffer(fltk::text::TextBuffer::default());
-    info_text.buffer().unwrap().set_text(&format!(
-        "System Information:\n\
+    set_editor_text(
+        &mut info_text,
+        &format!(
+            "System Information:\n\
          ├─ OS: {}\n\
          ├─ Architecture: {}\n\
          ├─ Rust (rustc): {}\n\
@@ -107,24 +120,26 @@ fn screen_welcome(sender: app::Sender<Message>) -> app::Receiver<Message> {
          • Build release binaries\n\
          • Install to ~/.local/bin\n\
          • Create configuration directory",
-        info.os,
-        info.arch,
-        if info.has_rust {
-            "✓ Found"
-        } else {
-            "✗ Missing"
-        },
-        if info.has_cargo {
-            "✓ Found"
-        } else {
-            "✗ Missing"
-        },
-        if info.has_git {
-            "✓ Found"
-        } else {
-            "✗ Missing"
-        }
-    ));
+            info.os,
+            info.arch,
+            if info.has_rust {
+                "✓ Found"
+            } else {
+                "✗ Missing"
+            },
+            if info.has_cargo {
+                "✓ Found"
+            } else {
+                "✗ Missing"
+            },
+            if info.has_git {
+                "✓ Found"
+            } else {
+                "✗ Missing"
+            }
+        ),
+        "welcome",
+    );
     info_text.set_buffer_type(fltk::text::TextEditorType::Wrapped);
 
     let mut next_btn = Button::default()
@@ -193,7 +208,7 @@ fn screen_dependencies(sender: app::Sender<Message>) -> app::Receiver<Message> {
         );
     }
 
-    deps_text.buffer().unwrap().set_text(&dep_display);
+    set_editor_text(&mut deps_text, &dep_display, "dependencies");
     deps_text.set_buffer_type(fltk::text::TextEditorType::Wrapped);
 
     let mut next_btn = Button::default()
@@ -254,11 +269,13 @@ fn screen_options(
         .with_size(WINDOW_WIDTH - 2 * PADDING, 120)
         .with_pos(PADDING, PADDING + 70);
     info_text.set_buffer(fltk::text::TextBuffer::default());
-    info_text.buffer().unwrap().set_text(
+    set_editor_text(
+        &mut info_text,
         "Installation Path: ~/.local/bin\n\
          (Add to PATH if not already present)\n\n\
          Build Mode: Release (optimized)\n\
          Configuration: ~/.kaptaind/",
+        "options",
     );
 
     let mut autostart_checkbox = CheckButton::default()
@@ -329,11 +346,13 @@ fn screen_progress(sender: app::Sender<Message>) -> app::Receiver<Message> {
         .with_size(WINDOW_WIDTH - 2 * PADDING, 350)
         .with_pos(PADDING, PADDING + 70);
     progress_text.set_buffer(fltk::text::TextBuffer::default());
-    progress_text.buffer().unwrap().set_text(
+    set_editor_text(
+        &mut progress_text,
         "⏳ Cloning repository...\n\
          ⏳ Building binaries (this may take 1-3 minutes)...\n\
          ⏳ Installing binaries...\n\
          ⏳ Setting up configuration...",
+        "progress",
     );
 
     wind.end();
@@ -392,7 +411,7 @@ fn screen_complete(
             kaptaind --daemon\n{}",
         autostart_msg
     );
-    info_text.buffer().unwrap().set_text(&completion_text);
+    set_editor_text(&mut info_text, &completion_text, "complete");
 
     let mut finish_btn = Button::default()
         .with_size(BUTTON_WIDTH, BUTTON_HEIGHT)

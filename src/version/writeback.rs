@@ -551,6 +551,7 @@ fn sync_lock(
                 .unwrap_or(false);
             if !ok {
                 tracing::warn!(
+                    component = module_path!(),
                     "cargo metadata --offline failed; falling back to patching Cargo.lock"
                 );
                 sync_cargo_lock(&repo_root.join("Cargo.lock"), packages)?;

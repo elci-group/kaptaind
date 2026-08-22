@@ -83,7 +83,10 @@ pub fn append(repo_path: &Path, event: &EnvironmentEvent) -> Result<()> {
         bail!("environment rollout percent must be at most 100");
     }
     let path = timeline_path(repo_path);
-    std::fs::create_dir_all(path.parent().expect("timeline has parent"))?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("environment timeline has no parent: {}", path.display()))?;
+    std::fs::create_dir_all(parent)?;
     let encoded = serde_json::to_vec(event)?;
     let mut file = OpenOptions::new().create(true).append(true).open(path)?;
     file.write_all(&encoded)?;

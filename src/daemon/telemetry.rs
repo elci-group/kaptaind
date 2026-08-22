@@ -57,7 +57,14 @@ pub fn track_cost(
 ) -> TokenMetrics {
     let telemetry_file = repo_path.join(".kaptaind").join("telemetry.json");
     if let Some(parent) = telemetry_file.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            tracing::warn!(
+                ?error,
+                operation = "track_cost",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
     }
     let mut existing = load(repo_path);
 
@@ -96,7 +103,14 @@ pub fn track_cost(
     };
 
     if let Ok(content) = serde_json::to_string_pretty(&metrics) {
-        let _ = write_atomic(&telemetry_file, content.as_bytes());
+        if let Err(error) = write_atomic(&telemetry_file, content.as_bytes()) {
+            tracing::warn!(
+                ?error,
+                operation = "track_cost",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
     }
 
     metrics
@@ -117,7 +131,14 @@ pub fn update_release_metrics(repo_path: &Path, stability: f64, release_succeede
         metrics.failed_releases += 1;
     }
     if let Ok(content) = serde_json::to_string_pretty(&metrics) {
-        let _ = write_atomic(&telemetry_file, content.as_bytes());
+        if let Err(error) = write_atomic(&telemetry_file, content.as_bytes()) {
+            tracing::warn!(
+                ?error,
+                operation = "update_release_metrics",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
     }
 }
 
@@ -129,17 +150,33 @@ pub fn update_cache_metrics(repo_path: &Path, hits: usize, misses: usize, entrie
     metrics.ast_cache_misses = metrics.ast_cache_misses.saturating_add(misses as u64);
     metrics.ast_cache_entries = entries as u64;
     if let Some(parent) = telemetry_file.parent() {
-        let _ = std::fs::create_dir_all(parent);
+        if let Err(error) = std::fs::create_dir_all(parent) {
+            tracing::warn!(
+                ?error,
+                operation = "update_cache_metrics",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
     }
     if let Ok(content) = serde_json::to_string_pretty(&metrics) {
-        let _ = write_atomic(&telemetry_file, content.as_bytes());
+        if let Err(error) = write_atomic(&telemetry_file, content.as_bytes()) {
+            tracing::warn!(
+                ?error,
+                operation = "update_cache_metrics",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
     }
 }
 
 fn load(repo_path: &Path) -> TokenMetrics {
     let path = repo_path.join(".kaptaind").join("telemetry.json");
     std::fs::read_to_string(&path)
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .ok()
+        // traci: allow -- optional failure is represented by None and handled by the caller.
         .and_then(|c| serde_json::from_str(&c).ok())
         .unwrap_or_default()
 }

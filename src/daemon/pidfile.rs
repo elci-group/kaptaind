@@ -36,7 +36,14 @@ pub fn validate_and_clean(path: &Path) -> PidFileState {
     };
     let Ok(pid) = content.trim().parse::<u32>() else {
         tracing::warn!(path = %path.display(), "unparseable daemon pid file; removing");
-        let _ = std::fs::remove_file(path);
+        if let Err(error) = std::fs::remove_file(path) {
+            tracing::warn!(
+                ?error,
+                operation = "validate_and_clean",
+                source_line = line!(),
+                "best-effort operation failed"
+            );
+        }
         return PidFileState::Missing;
     };
 
@@ -56,7 +63,14 @@ pub fn validate_and_clean(path: &Path) -> PidFileState {
         path = %path.display(),
         "removing stale daemon pid file (process no longer exists)"
     );
-    let _ = std::fs::remove_file(path);
+    if let Err(error) = std::fs::remove_file(path) {
+        tracing::warn!(
+            ?error,
+            operation = "validate_and_clean",
+            source_line = line!(),
+            "best-effort operation failed"
+        );
+    }
     PidFileState::StaleRemoved(pid)
 }
 

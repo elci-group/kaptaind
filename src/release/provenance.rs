@@ -158,6 +158,7 @@ pub fn generate_provenance(
 /// Create a detached ASCII-armored GPG signature for a provenance attestation.
 ///
 /// The returned path is `<path>.asc`.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
 pub async fn sign_provenance(path: &Path, gpg_key_id: Option<&str>) -> anyhow::Result<PathBuf> {
     let mut args = vec![
         "--batch".to_string(),

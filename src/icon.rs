@@ -49,7 +49,7 @@ pub fn install_icon(user: bool, system: bool) -> anyhow::Result<PathBuf> {
     } else if user {
         std::env::var("HOME")
             .map(|h| PathBuf::from(h).join(".local/share/icons/hicolor/256x256/apps"))
-            .map_err(|_| anyhow::anyhow!("HOME not set"))?
+            .map_err(|error| anyhow::anyhow!("HOME not set: {error}"))?
     } else {
         anyhow::bail!("specify --user or --system");
     };
@@ -59,7 +59,14 @@ pub fn install_icon(user: bool, system: bool) -> anyhow::Result<PathBuf> {
     std::fs::write(&target, NOTIFICATION_LOGO_PNG)?;
 
     // Best-effort icon cache refresh.
-    let _ = refresh_icon_cache(system);
+    if let Err(error) = refresh_icon_cache(system) {
+        tracing::warn!(
+            ?error,
+            operation = "install_icon",
+            source_line = line!(),
+            "best-effort operation failed"
+        );
+    }
 
     Ok(target)
 }

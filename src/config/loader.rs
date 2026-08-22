@@ -1,4 +1,5 @@
 use crate::angler::config::AnglerConfig;
+use crate::collectors::jeenome::JeenomeConfig;
 use crate::notify::audio::TtsConfig;
 use crate::qualification::policy::QualificationConfig;
 use reqwest::Url;
@@ -9,6 +10,8 @@ use std::time::Duration;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct Config {
+    #[serde(default)]
+    pub operation: OperationConfig,
     #[serde(default)]
     pub watch: WatchConfig,
     #[serde(default)]
@@ -21,6 +24,8 @@ pub struct Config {
     pub ratelimit: RateLimitConfig,
     #[serde(default)]
     pub test: TestConfig,
+    #[serde(default)]
+    pub jeenome: JeenomeConfig,
     #[serde(default)]
     pub audit: AuditConfig,
     #[serde(default)]
@@ -96,6 +101,37 @@ pub struct Config {
     pub daemon: DaemonConfig,
 }
 
+/// Controls whether the daemon may perform repository mutations.
+///
+/// Observation is deliberately the default. Actuation requires an explicit
+/// `[operation] mode = "actuate"` declaration in the repository profile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OperationMode {
+    Observe,
+    Actuate,
+}
+
+impl Default for OperationMode {
+    fn default() -> Self {
+        Self::Observe
+    }
+}
+
+#[derive(Debug, Clone, Copy, Deserialize)]
+pub struct OperationConfig {
+    #[serde(default)]
+    pub mode: OperationMode,
+}
+
+impl Default for OperationConfig {
+    fn default() -> Self {
+        Self {
+            mode: OperationMode::default(),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Daemon runtime config
 // ---------------------------------------------------------------------------
@@ -112,6 +148,13 @@ pub struct DaemonConfig {
     /// trees a daemon must never casually bump. Bypass with `--force`.
     #[serde(default)]
     pub startup_guard: bool,
+    /// Automatically suspend the daemon when an Aim-of-Change session starts.
+    #[serde(default = "default_true")]
+    pub auto_suspend_on_aoc_start: bool,
+    /// Automatically resume the daemon when an Aim-of-Change session is
+    /// shipped or cancelled.
+    #[serde(default = "default_true")]
+    pub auto_resume_on_aoc_end: bool,
 }
 
 impl Default for DaemonConfig {
@@ -119,6 +162,8 @@ impl Default for DaemonConfig {
         Self {
             shutdown_grace_secs: default_shutdown_grace_secs(),
             startup_guard: false,
+            auto_suspend_on_aoc_start: true,
+            auto_resume_on_aoc_end: true,
         }
     }
 }
@@ -657,8 +702,18 @@ pub struct PushConfig {
     /// `push.enabled = true`; with pushing disabled it is inert.
     #[serde(default = "default_branch")]
     pub branch: String,
+    /// Primary remote for backward compatibility. Deprecated in favor of remotes array.
     #[serde(default = "default_remote")]
     pub remote: String,
+    /// Multiple remotes with different purposes following the Git-provider-saturated stack:
+    /// GitHub (global public nexus), GitLab (engineering operations), Bitbucket (enterprise),
+    /// Azure/AWS/GCP (cloud infrastructure), Codeberg (independent OSS), SourceHut (minimalist),
+    /// Gitea/Forgejo (private sovereign), Gerrit (code review authority), etc.
+    #[serde(default)]
+    pub remotes: Vec<RemoteConfig>,
+    /// Intent-based routing configuration for automatic provider selection
+    #[serde(default)]
+    pub intent_routing: IntentRouting,
     #[serde(default)]
     pub dry_run: bool,
     #[serde(default)]
@@ -675,12 +730,85 @@ pub struct PushConfig {
     pub protection: PushProtectionConfig,
 }
 
+/// Remote configuration with purpose-based roles for Git-provider-saturated stack.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RemoteConfig {
+    /// Git remote name (e.g., "github", "gitlab", "codeberg")
+    pub name: String,
+    /// Provider type: github, gitlab, bitbucket, azure, aws, gcp, codeberg, sourcehut,
+    /// gitea, forgejo, gogs, phabricator, gerrit, launchpad, savannah, pagure, perforce
+    #[serde(default)]
+    pub provider: String,
+    /// Role in the saturated stack: "public_nexus", "engineering_ops", "enterprise_collab",
+    /// "microsoft_enterprise", "aws_infrastructure", "gcp_integration", "independent_oss",
+    /// "minimalist_unix", "private_sovereign", "community_controlled", "ultra_light",
+    /// "legacy_review", "code_review_authority", "ubuntu_ecosystem", "fsf_ecosystem",
+    /// "fedora_ecosystem", "ethical_oss", "binary_asset"
+    #[serde(default)]
+    pub role: String,
+    /// Whether this remote is enabled for pushing
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Priority order for pushing (lower numbers push first)
+    #[serde(default = "default_priority")]
+    pub priority: u32,
+    /// Intent tags that trigger routing to this provider (e.g., ["oss", "public", "community"])
+    #[serde(default)]
+    pub intents: Vec<String>,
+    /// Whether this provider is the canonical source of truth
+    #[serde(default)]
+    pub canonical: bool,
+    /// Whether this provider is a backup/archive mirror
+    #[serde(default)]
+    pub backup: bool,
+    /// Whether this provider is regional/cloud-specific
+    #[serde(default)]
+    pub regional: bool,
+}
+
+/// Intent-based routing configuration for provider selection.
+#[derive(Debug, Clone, Deserialize)]
+pub struct IntentRouting {
+    /// Enable intent-based routing (automatically selects providers based on commit intent)
+    #[serde(default)]
+    pub enabled: bool,
+    /// Default intent if none is specified
+    #[serde(default = "default_intent")]
+    pub default_intent: String,
+    /// Intent tag mappings: file patterns or commit message patterns that trigger intents
+    #[serde(default)]
+    pub intent_patterns: Vec<IntentPattern>,
+}
+
+/// Pattern mapping for intent detection.
+#[derive(Debug, Clone, Deserialize)]
+pub struct IntentPattern {
+    /// Intent tag to assign when pattern matches
+    pub intent: String,
+    /// File glob patterns that trigger this intent
+    #[serde(default)]
+    pub file_patterns: Vec<String>,
+    /// Commit message regex patterns that trigger this intent
+    #[serde(default)]
+    pub message_patterns: Vec<String>,
+}
+
+fn default_intent() -> String {
+    "general".to_string()
+}
+
+fn default_priority() -> u32 {
+    100
+}
+
 impl Default for PushConfig {
     fn default() -> Self {
         Self {
             enabled: false,
             branch: default_branch(),
             remote: default_remote(),
+            remotes: Vec::new(),
+            intent_routing: IntentRouting::default(),
             dry_run: false,
             retry: RetryConfig::default(),
             conflict: ConflictConfig::default(),
@@ -688,6 +816,16 @@ impl Default for PushConfig {
             safety: SafetyConfig::default(),
             batch: BatchConfig::default(),
             protection: PushProtectionConfig::default(),
+        }
+    }
+}
+
+impl Default for IntentRouting {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            default_intent: default_intent(),
+            intent_patterns: Vec::new(),
         }
     }
 }
@@ -2270,6 +2408,7 @@ impl Config {
                 || self.ship.stable.sign == Some(true);
             if signing_requested && !gpg_available() {
                 tracing::warn!(
+                    component = module_path!(),
                     "ship signing is enabled but gpg is not available; signing will fail at runtime"
                 );
             }
@@ -2306,6 +2445,7 @@ impl Config {
 
         if self.commit.sign && !gpg_available() {
             tracing::warn!(
+                component = module_path!(),
                 "commit.sign is enabled but gpg is not available; signed commits will fail at runtime"
             );
         }
@@ -2355,12 +2495,14 @@ impl Default for Config {
     fn default() -> Self {
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         Self {
+            operation: OperationConfig::default(),
             watch: WatchConfig::default(),
             cluster: ClusterConfig::default(),
             weights: crate::weight::WeightConfig::default(),
             push: PushConfig::default(),
             ratelimit: RateLimitConfig::default(),
             test: TestConfig::default(),
+            jeenome: JeenomeConfig::default(),
             audit: AuditConfig::default(),
             notify: NotifyConfig::default(),
             bundle: BundleConfig::default(),
@@ -2675,6 +2817,16 @@ mod tests {
     use super::{finalize_config, CapabilitiesConfig, Config};
     use std::path::PathBuf;
     use std::time::Duration;
+
+    #[test]
+    fn operation_defaults_to_observe() {
+        assert_eq!(
+            Config::default().operation.mode,
+            super::OperationMode::Observe
+        );
+        let parsed: Config = toml::from_str("[operation]\nmode = \"actuate\"\n").unwrap();
+        assert_eq!(parsed.operation.mode, super::OperationMode::Actuate);
+    }
 
     #[test]
     fn finalizes_relative_paths_against_repo_root() {
