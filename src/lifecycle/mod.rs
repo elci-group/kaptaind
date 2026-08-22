@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::process::Command;
+use tracing::{debug, error, warn};
 
 pub const STATE_FILE: &str = ".kaptaind/lifecycle.json";
 pub const STATE_SCHEMA: u32 = 1;
@@ -63,7 +64,13 @@ impl BranchRole {
             "server/staging" => Self::ServerStaging,
             _ => name
                 .strip_prefix("release/")
-                .and_then(|version| Version::parse(version).ok())
+                .and_then(|version| match Version::parse(version) {
+                    Ok(version) => Some(version),
+                    Err(error) => {
+                        debug!(branch = name, error = %error, "branch is not a valid release version");
+                        None
+                    }
+                })
                 .map(Self::Release)
                 .unwrap_or(Self::Unmanaged),
         }
@@ -162,10 +169,12 @@ impl LifecycleState {
         let text = match std::fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Self::default())
+                debug!(path = %path.display(), "lifecycle state does not exist; using defaults");
+                return Ok(Self::default());
             }
             Err(error) => {
-                return Err(error).with_context(|| format!("failed to read {}", path.display()))
+                error!(path = %path.display(), error = %error, "failed to read lifecycle state");
+                return Err(error).with_context(|| format!("failed to read {}", path.display()));
             }
         };
         let state: Self = serde_json::from_str(&text)
@@ -325,9 +334,13 @@ fn is_clean(repo: &Path) -> Result<bool> {
 }
 
 fn version_at(repo: &Path, reference: &str) -> Option<String> {
-    git_output(repo, &["show", &format!("{reference}:VERSION")])
-        .ok()
-        .map(|value| value.trim().to_owned())
+    match git_output(repo, &["show", &format!("{reference}:VERSION")]) {
+        Ok(value) => Some(value.trim().to_owned()),
+        Err(error) => {
+            debug!(reference, error = %error, "no VERSION found at Git reference");
+            None
+        }
+    }
 }
 
 fn ahead_behind(repo: &Path, source: &str, target: &str) -> Result<(usize, usize)> {
@@ -362,7 +375,13 @@ pub fn status(repo: &Path, platform: Platform) -> Result<LifecycleStatus> {
     let development = platform.development_branch();
     let production_commit = ref_commit(repo, production)?;
     let development_commit = ref_commit(repo, development)?;
-    let upstream_branch = git_output(repo, &["rev-parse", "--abbrev-ref", "@{upstream}"]).ok();
+    let upstream_branch = match git_output(repo, &["rev-parse", "--abbrev-ref", "@{upstream}"]) {
+        Ok(branch) => Some(branch),
+        Err(error) => {
+            debug!(error = %error, "current branch has no upstream");
+            None
+        }
+    };
     let dirty = !is_clean(repo)?;
     let unreleased_commits = match (&production_commit, &development_commit) {
         (Some(production), Some(development)) => production != development,
@@ -430,9 +449,13 @@ pub fn init(repo: &Path, dry_run: bool) -> Result<InitReport> {
             .releases
             .iter()
             .filter_map(|entry| {
-                Version::parse(&entry.version)
-                    .ok()
-                    .map(|version| (version, entry))
+                match Version::parse(&entry.version) {
+                    Ok(version) => Some((version, entry)),
+                    Err(error) => {
+                        debug!(version = %entry.version, error = %error, "ignoring malformed legacy release version");
+                        None
+                    }
+                }
             })
             .max_by(|(left, _), (right, _)| left.cmp(right))
         {
@@ -519,7 +542,10 @@ pub fn sync(repo: &Path) -> Result<SyncReport> {
         .filter_map(|name| match ref_commit(repo, name) {
             Ok(None) => Some(Ok((*name).to_owned())),
             Ok(Some(_)) => None,
-            Err(error) => Some(Err(error)),
+            Err(error) => {
+                error!(branch = name, error = %error, "failed to inspect mandatory lifecycle branch");
+                Some(Err(error))
+            }
         })
         .collect::<Result<Vec<_>>>()?;
     let mut divergences = Vec::new();
@@ -711,11 +737,14 @@ fn command_gate(repo: &Path, name: &str, command: &str) -> ValidationGate {
                 String::from_utf8_lossy(&output.stderr).trim().to_owned()
             },
         },
-        Err(error) => ValidationGate {
-            name: name.into(),
-            passed: false,
-            detail: error.to_string(),
-        },
+        Err(error) => {
+            warn!(gate = name, error = %error, "validation command could not be started");
+            ValidationGate {
+                name: name.into(),
+                passed: false,
+                detail: error.to_string(),
+            }
+        }
     }
 }
 

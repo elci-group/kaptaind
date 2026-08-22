@@ -5,7 +5,7 @@
 
 use kaptaind::config::loader::Config;
 use kaptaind::util::style::*;
-use regex::Regex;
+use regex_lite::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 

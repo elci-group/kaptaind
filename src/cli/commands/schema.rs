@@ -100,10 +100,10 @@ pub fn handle_migrate(repo: &Path, args: &MigrateArgs) -> Result<()> {
     let digest_before = document.digest();
     let digest_after = migrated.digest();
 
-    // traci: allow -- state_path is repo.join(STATE_FILE) and STATE_FILE
-    // (".kaptaind/state.toml") always has a directory component, so
-    // .parent() is never None.
-    std::fs::create_dir_all(state_path.parent().expect("state path has a parent"))
+    let state_parent = state_path
+        .parent()
+        .context("schema state path has no parent directory")?;
+    std::fs::create_dir_all(state_parent)
         .with_context(|| format!("failed to create {}", state_path.display()))?;
     std::fs::write(&state_path, migrated.to_canonical_toml())
         .with_context(|| format!("failed to write {}", state_path.display()))?;

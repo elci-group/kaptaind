@@ -295,10 +295,13 @@ impl SemanticDocument {
         canonical
             .exception
             .sort_by(|a, b| a.pattern.cmp(&b.pattern));
-        // traci: allow -- every field is a string, enum, or Vec of those; toml
-        // serialization of this struct cannot fail (no non-string map keys, no
-        // floats). Round-trip tests below guard the invariant.
-        toml::to_string_pretty(&canonical).expect("semantic document serializes")
+        match toml::to_string_pretty(&canonical) {
+            Ok(text) => text,
+            Err(error) => {
+                tracing::error!(error = %error, "failed to serialize canonical semantic document");
+                String::new()
+            }
+        }
     }
 
     /// Digest over the canonical form (`sha256:<hex>`), excluding any

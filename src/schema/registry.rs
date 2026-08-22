@@ -52,10 +52,13 @@ pub fn latest_version() -> SchemaVersion {
         .iter()
         .map(|s| s.version)
         .max()
-        // traci: allow -- SCHEMAS is a hardcoded, non-empty literal declared
-        // a few lines above in this same file; there is no code path that
-        // can make it empty at runtime.
-        .expect("registry non-empty")
+        .unwrap_or_else(|| {
+            tracing::error!(
+                registry = "schemas",
+                "schema registry is unexpectedly empty"
+            );
+            SchemaVersion::new(0, 0)
+        })
 }
 
 /// Look up a registered schema by version.

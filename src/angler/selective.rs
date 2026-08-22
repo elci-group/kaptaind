@@ -7,7 +7,7 @@
 
 use crate::angler::config::{CaptureAction, CaptureRule, ChangeType, SelectiveConfig};
 use anyhow::{anyhow, Result};
-use regex::Regex;
+use regex_lite::Regex;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
