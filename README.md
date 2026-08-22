@@ -208,6 +208,19 @@ kaptaind-cli ship nightly --dry-run   # Preview the nightly version
 kaptaind-cli ship status              # Show the last ship run
 kaptaind-cli ship status --auto       # Show last run + next auto-ship fires
 kaptaind-cli ship status --format json
+
+# Govern development, integration, staging, and production explicitly
+kaptaind-cli branch init --dry-run
+kaptaind-cli branch init
+kaptaind-cli branch status --json
+kaptaind-cli branch sync
+kaptaind-cli branch promote desktop/development integration --dry-run
+kaptaind-cli release prepare 1.5.0
+kaptaind-cli release validate 1.5.0
+kaptaind-cli release issue 1.5.0 --dry-run
+kaptaind-cli release issue 1.5.0
+kaptaind-cli checkout stable
+kaptaind-cli checkout bleeding
 ```
 
 ## Quick Reference
@@ -234,6 +247,11 @@ kaptaind-cli ship status --format json
 | `kaptaind-cli migrate` | Migrate the `.kaptaind/state.toml` schema document | — |
 | `kaptaind-cli migrate --check --strict` | CI gate: fail when the document is outdated | — |
 | `kaptaind-cli schema list` | List installed `.kaptaind` schema versions | — |
+| `kaptaind-cli branch status` | Typed lifecycle and promotion status | `.kaptaind/state.toml` |
+| `kaptaind-cli branch init` | Safely create missing lifecycle branches | `.kaptaind/state.toml` |
+| `kaptaind-cli branch sync` | Detect missing/divergent lifecycle refs | `.kaptaind/state.toml` |
+| `kaptaind-cli release prepare/validate/issue` | Explicit release governance | `[test]`, `[build]` |
+| `kaptaind-cli checkout stable/bleeding` | Deterministic consumer channel checkout | `.kaptaind/state.toml` |
 
 | File / Directory | Purpose |
 |------------------|---------|
@@ -241,12 +259,30 @@ kaptaind-cli ship status --format json
 | `.kaptainignore` | Paths ignored by the watcher |
 | `.kaptaind/state.toml` | Versioned semantic-state document (schema-format header, surfaces, invariants, exceptions, versioning policy, baseline); migrate explicitly with `kaptaind-cli migrate` — the daemon never rewrites it |
 | `.kaptaind/migrations/` | Append-only migration ledger recording each schema migration with before/after digests |
+| `.kaptaind/lifecycle.json` | Versioned candidates, validation evidence, staging revisions, and issued release events |
 | `.kaptaind/status.json` | Daemon state |
 | `.kaptaind/suspend.json` | Daemon suspension state |
 | `.kaptaind/analysis/` | Per-cluster analysis artifacts |
 | `.kaptaind/audit.jsonl` | Structured audit log |
 | `.kaptaind/releases/` | Packaged release artifacts |
 | `.kaptaind/ship/` | Ship artifacts, SBOMs, provenance |
+
+## Branch lifecycle and promotion
+
+Kaptaind treats `desktop/development`, `mobile/development`, `integration`,
+`local/staging`, `server/staging`, `release/<version>`, and the two production
+branches as semantic states. Generic promotion is clean-tree and
+fast-forward-only; divergence is reported and never merged or reset. Production
+refs are excluded from generic promotion and can move only through
+`release issue` or the auditable `release rollback <old> --as <new>` operation.
+
+`stable` resolves to an issued release recorded against the selected production
+branch. `bleeding` resolves to the selected development branch. Thus an
+unreleased default-branch commit can never become stable by implication.
+
+Schema format 2.2 declares the canonical topology and channel mapping in
+`.kaptaind/state.toml`. Run `kaptaind-cli migrate` to upgrade older semantic
+documents; migration remains explicit, deterministic, and ledgered.
 
 The `ship stable` and `ship nightly` commands automate release versioning and
 publishing semantics. `stable` uses the current `VERSION`, creates a `v{VERSION}`

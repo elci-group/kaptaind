@@ -22,9 +22,21 @@ pub fn handle_status(config: &Config) -> anyhow::Result<()> {
 
     let pid_running = get_daemon_pid(config);
     let status_json = config.repo_path.join(".kaptaind").join("status.json");
-    let report = fs::read_to_string(&status_json).ok().and_then(|content| {
-        serde_json::from_str::<kaptaind::daemon::scheduler::StatusReport>(&content).ok()
-    });
+    let report = match fs::read_to_string(&status_json) {
+        Ok(content) => {
+            match serde_json::from_str::<kaptaind::daemon::scheduler::StatusReport>(&content) {
+                Ok(report) => Some(report),
+                Err(error) => {
+                    tracing::warn!(path = %status_json.display(), error = %error, "status.json is malformed; showing status without daemon report");
+                    None
+                }
+            }
+        }
+        Err(error) => {
+            tracing::debug!(path = %status_json.display(), error = %error, "no status.json yet; daemon may never have run");
+            None
+        }
+    };
 
     let is_suspended = report
         .as_ref()

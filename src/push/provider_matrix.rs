@@ -988,13 +988,23 @@ impl ProviderMatrix {
             .cloned()
             .collect();
 
-        // Sort by score (descending), then by availability (descending), then by cost (ascending)
+        // Sort by score (descending), then by availability (descending), then by cost (ascending).
+        // NaN scores are treated as equal rather than panicking; a malformed
+        // provider capability shouldn't be able to crash provider selection.
         matching.sort_by(|a, b| {
             b.score
                 .partial_cmp(&a.score)
-                .unwrap()
-                .then_with(|| b.availability.partial_cmp(&a.availability).unwrap())
-                .then_with(|| a.cost.partial_cmp(&b.cost).unwrap())
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    b.availability
+                        .partial_cmp(&a.availability)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+                .then_with(|| {
+                    a.cost
+                        .partial_cmp(&b.cost)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
         });
 
         matching

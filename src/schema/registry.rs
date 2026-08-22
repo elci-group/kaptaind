@@ -38,6 +38,11 @@ static SCHEMAS: LazyLock<Vec<SchemaInfo>> = LazyLock::new(|| {
             family: "semantic-state",
             description: "adds surface audience/stability/compatibility (unknown is a valid state)",
         },
+        SchemaInfo {
+            version: SchemaVersion::new(2, 2),
+            family: "semantic-state",
+            description: "declares branch lifecycle topology and stable/bleeding consumer channels",
+        },
     ]
 });
 
@@ -47,6 +52,9 @@ pub fn latest_version() -> SchemaVersion {
         .iter()
         .map(|s| s.version)
         .max()
+        // traci: allow -- SCHEMAS is a hardcoded, non-empty literal declared
+        // a few lines above in this same file; there is no code path that
+        // can make it empty at runtime.
         .expect("registry non-empty")
 }
 
@@ -63,7 +71,7 @@ mod tests {
     fn registry_is_ordered_and_complete() {
         let all = schemas();
         assert!(all.windows(2).all(|w| w[0].version < w[1].version));
-        assert_eq!(latest_version(), SchemaVersion::new(2, 1));
+        assert_eq!(latest_version(), SchemaVersion::new(2, 2));
         assert!(find(SchemaVersion::new(2, 0)).is_some());
         assert!(find(SchemaVersion::new(9, 9)).is_none());
     }

@@ -1,0 +1,98 @@
+segments:
+- name: platform_engineers
+  description: Teams responsible for engineering governance
+  pains:
+  - identity drift
+  - inconsistent UX copy
+- name: developer_tools_adopters
+  description: People and teams evaluating kaptaind for their workflow
+  pains:
+  - finding trustworthy tools that fit existing workflows
+  - keeping technical decisions aligned with project identity
+- name: technical_early_adopters
+  description: People and teams evaluating kaptaind for their workflow
+  pains:
+  - finding trustworthy tools that fit existing workflows
+  - keeping technical decisions aligned with project identity
+narratives:
+- capability: brand linting
+  narrative: prevent identity drift before it ships
+  audiences:
+  - platform_engineers
+  formats:
+  - x_post
+  - blog
+  - demo_video
+  - docs
+- capability: API Analysis
+  narrative: Use API Analysis to help teams adopt kaptaind with evidence from real project workflows
+  audiences:
+  - developer_tools_adopters
+  - technical_early_adopters
+  formats:
+  - docs
+  - blog
+  - demo_video
+- capability: AST/API (ast.rs + lang/)
+  narrative: Use AST/API (ast.rs + lang/) to help teams adopt kaptaind with evidence from real project workflows
+  audiences:
+  - developer_tools_adopters
+  - technical_early_adopters
+  formats:
+  - docs
+  - blog
+  - demo_video
+- capability: Adaptive Clustering
+  narrative: Use Adaptive Clustering to help teams adopt kaptaind with evidence from real project workflows
+  audiences:
+  - developer_tools_adopters
+  - technical_early_adopters
+  formats:
+  - docs
+  - blog
+  - demo_video
+- capability: Aim of Change (AoC) sessions
+  narrative: Use Aim of Change (AoC) sessions to help teams adopt kaptaind with evidence from real project workflows
+  audiences:
+  - developer_tools_adopters
+  - technical_early_adopters
+  formats:
+  - docs
+  - blog
+  - demo_video
+- capability: Automated Commit Formatting
+  narrative: Use Automated Commit Formatting to help teams adopt kaptaind with evidence from real project workflows
+  audiences:
+  - developer_tools_adopters
+  - technical_early_adopters
+  formats:
+  - docs
+  - blog
+  - demo_video
+- capability: Bait Plugin System
+  narrative: Use Bait Plugin System to help teams adopt kaptaind with evidence from real project workflows
+  audiences:
+  - developer_tools_adopters
+  - technical_early_adopters
+  formats:
+  - docs
+  - blog
+  - demo_video
+- capability: 'Blank lines and # comments'
+  narrative: 'Use Blank lines and # comments to help teams adopt kaptaind with evidence from real project workflows'
+  audiences:
+  - developer_tools_adopters
+  - technical_early_adopters
+  formats:
+  - docs
+  - blog
+  - demo_video
+- capability: Build fails
+  narrative: Use Build fails to help teams adopt kaptaind with evidence from real project workflows
+  audiences:
+  - developer_tools_adopters
+  - technical_early_adopters
+  formats:
+  - docs
+  - blog
+  - demo_video

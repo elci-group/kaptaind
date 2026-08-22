@@ -872,6 +872,12 @@ pub struct RetryConfig {
     pub backoff_multiplier: f64,
     #[serde(default = "default_retry_max_delay_ms")]
     pub max_delay_ms: u64,
+    /// Maximum time to wait for a single `git push` attempt to complete before
+    /// treating it as failed and moving on to the next retry. Without this, a
+    /// hung child process (e.g. a credential helper blocked on interactive
+    /// input) can stall the push indefinitely with no error logged.
+    #[serde(default = "default_retry_attempt_timeout_secs")]
+    pub attempt_timeout_secs: u64,
 }
 
 fn default_retry_max_attempts() -> u32 {
@@ -886,6 +892,9 @@ fn default_retry_backoff_multiplier() -> f64 {
 fn default_retry_max_delay_ms() -> u64 {
     30000
 }
+fn default_retry_attempt_timeout_secs() -> u64 {
+    60
+}
 
 impl Default for RetryConfig {
     fn default() -> Self {
@@ -894,6 +903,7 @@ impl Default for RetryConfig {
             initial_delay_ms: default_retry_initial_delay_ms(),
             backoff_multiplier: default_retry_backoff_multiplier(),
             max_delay_ms: default_retry_max_delay_ms(),
+            attempt_timeout_secs: default_retry_attempt_timeout_secs(),
         }
     }
 }
@@ -1348,6 +1358,10 @@ pub struct CommitConfig {
     /// version only moves on threshold-crossing clusters (#17).
     #[serde(default = "default_false")]
     pub require_bump: bool,
+    /// `[commit.orb_sanitize]` — redact sensitive values from staged
+    /// `.orb` files before they land in a commit a public remote can see.
+    #[serde(default)]
+    pub orb_sanitize: OrbSanitizeConfig,
 }
 
 impl Default for CommitConfig {
@@ -1356,6 +1370,42 @@ impl Default for CommitConfig {
             sign: false,
             gpg_key_id: None,
             require_bump: false,
+            orb_sanitize: OrbSanitizeConfig::default(),
+        }
+    }
+}
+
+/// `[commit.orb_sanitize]` configuration. See `angler::orb_sanitize` for
+/// the mechanism: sensitive values are redacted in the STAGED content of
+/// any `.orb` file only — the working tree file is never touched, so a
+/// developer's local `.orb` can carry whatever config they need.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+pub struct OrbSanitizeConfig {
+    /// Master switch. On by default: an `.orb` file is meant to be shared,
+    /// and the cost of checking a handful of staged files for sensitive
+    /// key names is negligible next to the cost of a leaked credential.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// When the target remote's visibility can't be confirmed (`gh`
+    /// unavailable, not a GitHub remote, network failure), sanitize
+    /// anyway rather than skip — fail closed, not open. Setting this to
+    /// `false` restricts sanitization to remotes explicitly confirmed
+    /// public, which is more permissive and not the recommended setting.
+    #[serde(default = "default_true")]
+    pub sanitize_when_visibility_unknown: bool,
+    /// Extra key-name fragments (case-insensitive substring match, same
+    /// as the built-in list) that mark a value as sensitive, beyond the
+    /// built-in password/secret/token/api_key/credential/... set.
+    #[serde(default)]
+    pub extra_sensitive_key_fragments: Vec<String>,
+}
+
+impl Default for OrbSanitizeConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            sanitize_when_visibility_unknown: true,
+            extra_sensitive_key_fragments: Vec::new(),
         }
     }
 }
@@ -2335,6 +2385,9 @@ impl Config {
         }
         if self.build.timeout_secs == 0 {
             anyhow::bail!("build.timeout_secs must be greater than 0");
+        }
+        if self.push.retry.attempt_timeout_secs == 0 {
+            anyhow::bail!("push.retry.attempt_timeout_secs must be greater than 0");
         }
         if self.health_port == 0 {
             anyhow::bail!("health_port must be greater than 0");

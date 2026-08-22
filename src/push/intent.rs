@@ -203,7 +203,10 @@ pub fn validate_saturated_config(remotes: &[RemoteConfig]) -> Result<()> {
     let has_oss_intent = remotes.iter().any(|r| r.intents.iter().any(|i| i == "oss"));
 
     if has_oss_intent && !has_public_nexus {
-        tracing::warn!("OSS intent configured but no public_nexus role found");
+        tracing::warn!(
+            remote_count = remotes.len(),
+            "OSS intent configured but no public_nexus role found"
+        );
     }
 
     // Validate provider names

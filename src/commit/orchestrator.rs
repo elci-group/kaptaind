@@ -96,6 +96,26 @@ pub fn commit_with_staging(
 
     unstage_excluded(ctx, &staging.exclude)?;
 
+    match crate::angler::orb_sanitize::sanitize_staged_orb_files(ctx, &commit_config.orb_sanitize) {
+        Ok(redactions) => {
+            for (path, keys) in &redactions {
+                tracing::warn!(
+                    path = %path,
+                    redacted_keys = ?keys,
+                    "sanitized sensitive values from staged .orb file before commit"
+                );
+            }
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "failed to run .orb sanitization on staged files");
+            // Fail-closed would mean aborting the commit, but a bug in
+            // visibility detection or git plumbing here must not be able
+            // to block every commit in the repo — log loudly and let
+            // the (still-unmodified-if-this-failed) staged content
+            // proceed rather than wedging the daemon.
+        }
+    }
+
     if commit_config.sign {
         repo::commit_signed(git_root, msg, commit_config.gpg_key_id.as_deref())?;
     } else {

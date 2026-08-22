@@ -270,13 +270,14 @@ pub async fn run(
     // If the operator suspended the daemon while it was down, surface that
     // immediately in status.json instead of leaving it idle-looking.
     if crate::daemon::suspend::is_suspended(&config.repo_path) {
-        status.set_suspended(
-            crate::daemon::suspend::load(&config.repo_path)
-                .ok()
-                .flatten()
-                .and_then(|s| s.reason)
-                .as_deref(),
-        );
+        let reason = match crate::daemon::suspend::load(&config.repo_path) {
+            Ok(loaded) => loaded.and_then(|s| s.reason),
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to load suspend marker; surfacing suspended state without a reason");
+                None
+            }
+        };
+        status.set_suspended(reason.as_deref());
         write_status(&config.repo_path, &status);
     }
 
@@ -954,8 +955,10 @@ async fn process_cluster(
         config.operation.mode,
         crate::config::loader::OperationMode::Observe
     ) {
-        let observed_version = crate::version::resolve_baseline(&config.repo_path)
-            .unwrap_or_else(|_| Version::new(0, 1, 0));
+        let observed_version = crate::version::resolve_baseline(&config.repo_path).unwrap_or_else(|error| {
+            tracing::warn!(error = %error, "failed to resolve baseline version; defaulting to 0.1.0 for observation");
+            Version::new(0, 1, 0)
+        });
         if let Err(error) = persist_analysis_artifact(
             config,
             &cluster,

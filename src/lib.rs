@@ -16,6 +16,7 @@ pub mod icon;
 pub mod inference;
 pub mod installer;
 pub mod integrations;
+pub mod lifecycle;
 pub mod monitor;
 pub mod notify;
 pub mod push;

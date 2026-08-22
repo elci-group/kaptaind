@@ -64,10 +64,10 @@ impl FromStr for SchemaVersion {
             .ok_or_else(|| format!("expected `<major>.<minor>`, got `{s}`"))?;
         let major = major
             .parse()
-            .map_err(|_| format!("invalid major version in `{s}`"))?;
+            .map_err(|e| format!("invalid major version in `{s}`: {e}"))?;
         let minor = minor
             .parse()
-            .map_err(|_| format!("invalid minor version in `{s}`"))?;
+            .map_err(|e| format!("invalid minor version in `{s}`: {e}"))?;
         Ok(Self { major, minor })
     }
 }

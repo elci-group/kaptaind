@@ -102,11 +102,9 @@ impl JeenomeCollector {
                 "-tt", // timestamp with microseconds
                 "-T",  // time spent in syscall
                 "-o",  // output file
-                strace_file.to_str().unwrap(),
-                "sh",
-                "-lc",
-                command,
             ])
+            .arg(&strace_file) // passed as OsStr; evidence_dir need not be valid UTF-8
+            .args(["sh", "-lc", command])
             .current_dir(repo_path)
             .output()
             .context("failed to run strace")?;
@@ -145,7 +143,13 @@ impl JeenomeCollector {
         let stdout = String::from_utf8_lossy(&output.stdout);
         let events: Vec<serde_json::Value> = stdout
             .lines()
-            .filter_map(|line| serde_json::from_str(line).ok())
+            .filter_map(|line| match serde_json::from_str(line) {
+                Ok(value) => Some(value),
+                Err(error) => {
+                    tracing::debug!(error = %error, line, "skipping malformed jeenome NDJSON line");
+                    None
+                }
+            })
             .collect();
 
         Ok(JeenomeOutput::from_events(events))
@@ -199,7 +203,7 @@ impl Collector for JeenomeCollector {
         }
 
         let Some(command) = &ctx.test_command else {
-            tracing::debug!("no test command configured, skipping jeenome collection");
+            tracing::debug!(collector = "jeenome", "no test command configured, skipping collection");
             return Ok(None);
         };
 

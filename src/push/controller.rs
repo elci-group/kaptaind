@@ -66,19 +66,22 @@ pub async fn push_multi_remote(
                 );
             }
             Err(e) => {
-                last_error = Some(e);
                 tracing::warn!(
                     remote = %remote_config.name,
                     role = %remote_config.role,
-                    error = %last_error.as_ref().unwrap(),
+                    error = %e,
                     "push failed, continuing with other remotes"
                 );
+                last_error = Some(e);
             }
         }
     }
 
     if successful_pushes.is_empty() {
-        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("no remotes were successfully pushed")))
+        let error =
+            last_error.unwrap_or_else(|| anyhow::anyhow!("no remotes were successfully pushed"));
+        tracing::error!(error = %error, "all remotes failed; no push succeeded");
+        Err(error)
     } else {
         Ok(successful_pushes)
     }
@@ -109,16 +112,48 @@ async fn push_with_audit(
 
     for attempt in 1..=retry.max_attempts {
         let mut command = Command::new("git");
-        command.current_dir(repo_path).arg("push");
+        command
+            .current_dir(repo_path)
+            // Never let git block waiting on a TTY for credentials: a stuck
+            // credential helper or askpass prompt has no terminal to read
+            // from in a daemon context and would otherwise hang the push
+            // silently until an external caller times it out.
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("GIT_ASKPASS", "false")
+            .env("SSH_ASKPASS_REQUIRE", "never")
+            .arg("push");
         if options.dry_run {
             command.arg("--dry-run");
         }
-        let output = command
+        command
             .arg(&options.remote)
             .arg(&refspec)
-            .kill_on_drop(true)
-            .output()
-            .await;
+            .kill_on_drop(true);
+
+        let attempt_timeout = Duration::from_secs(retry.attempt_timeout_secs);
+        let output = match tokio::time::timeout(attempt_timeout, command.output()).await {
+            Ok(result) => result,
+            Err(_) => {
+                tracing::error!(
+                    attempt,
+                    timeout_secs = retry.attempt_timeout_secs,
+                    operation = "push_with_audit",
+                    "git push attempt timed out; killing child process"
+                );
+                last_error = Some(anyhow::anyhow!(
+                    "git push attempt {} timed out after {}s",
+                    attempt,
+                    retry.attempt_timeout_secs
+                ));
+                if attempt < retry.max_attempts {
+                    let delay_ms = (retry.initial_delay_ms as f64
+                        * retry.backoff_multiplier.powi((attempt - 1) as i32))
+                    .min(retry.max_delay_ms as f64) as u64;
+                    tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                }
+                continue;
+            }
+        };
 
         match output {
             Ok(output) => {

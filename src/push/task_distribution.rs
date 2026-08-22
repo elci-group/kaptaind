@@ -213,10 +213,15 @@ impl TaskDistributionEngine {
 
         let mut scored: Vec<_> = matched_remotes.to_vec();
 
+        // NaN fit/cost/availability scores are treated as equal rather than
+        // panicking; a bad score from one provider shouldn't be able to crash
+        // distribution for every task.
         match strategy {
             DistributionStrategy::BestFit => {
                 // Sort by fit score descending
-                scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+                scored.sort_by(|a, b| {
+                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                });
             }
             DistributionStrategy::CostOptimization => {
                 // Sort by cost (lower is better) then by fit score
@@ -225,8 +230,10 @@ impl TaskDistributionEngine {
                     let b_cost = self.get_provider_cost(&b.0.provider);
                     a_cost
                         .partial_cmp(&b_cost)
-                        .unwrap()
-                        .then_with(|| b.1.partial_cmp(&a.1).unwrap())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| {
+                            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                        })
                 });
             }
             DistributionStrategy::AvailabilityOptimization => {
@@ -236,8 +243,10 @@ impl TaskDistributionEngine {
                     let b_avail = self.get_provider_availability(&b.0.provider);
                     b_avail
                         .partial_cmp(&a_avail)
-                        .unwrap()
-                        .then_with(|| b.1.partial_cmp(&a.1).unwrap())
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                        .then_with(|| {
+                            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                        })
                 });
             }
             DistributionStrategy::GeographicOptimization => {
@@ -247,12 +256,16 @@ impl TaskDistributionEngine {
                         let b_region_score = self.get_region_score(&b.0.provider, region);
                         b_region_score
                             .partial_cmp(&a_region_score)
-                            .unwrap()
-                            .then_with(|| b.1.partial_cmp(&a.1).unwrap())
+                            .unwrap_or(std::cmp::Ordering::Equal)
+                            .then_with(|| {
+                                b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                            })
                     });
                 } else {
                     // Fall back to best fit if no region preference
-                    scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap());
+                    scored.sort_by(|a, b| {
+                        b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
+                    });
                 }
             }
             DistributionStrategy::Hybrid => {
@@ -260,7 +273,9 @@ impl TaskDistributionEngine {
                 scored.sort_by(|a, b| {
                     let a_hybrid = self.calculate_hybrid_score(&a.0, a.1);
                     let b_hybrid = self.calculate_hybrid_score(&b.0, b.1);
-                    b_hybrid.partial_cmp(&a_hybrid).unwrap()
+                    b_hybrid
+                        .partial_cmp(&a_hybrid)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
             }
             DistributionStrategy::Fallback => {

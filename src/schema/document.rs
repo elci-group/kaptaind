@@ -48,6 +48,8 @@ pub struct Capabilities {
     pub fingerprints: bool,
     #[serde(default)]
     pub decision_memory: bool,
+    #[serde(default)]
+    pub branch_lifecycle: bool,
 }
 
 impl Capabilities {
@@ -59,6 +61,51 @@ impl Capabilities {
             negative_space: true,
             fingerprints: true,
             decision_memory: true,
+            branch_lifecycle: true,
+        }
+    }
+}
+
+/// Declarative names for Kaptaind's governed Git topology. Operational
+/// candidate and release records live in `.kaptaind/lifecycle.json`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct BranchTopology {
+    pub desktop_development: String,
+    pub desktop_production: String,
+    pub mobile_development: String,
+    pub mobile_production: String,
+    pub integration: String,
+    pub local_staging: String,
+    pub server_staging: String,
+    pub release_pattern: String,
+}
+
+impl Default for BranchTopology {
+    fn default() -> Self {
+        Self {
+            desktop_development: "desktop/development".into(),
+            desktop_production: "desktop/production".into(),
+            mobile_development: "mobile/development".into(),
+            mobile_production: "mobile/production".into(),
+            integration: "integration".into(),
+            local_staging: "local/staging".into(),
+            server_staging: "server/staging".into(),
+            release_pattern: "release/{version}".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ConsumerChannels {
+    pub stable: String,
+    pub bleeding: String,
+}
+
+impl Default for ConsumerChannels {
+    fn default() -> Self {
+        Self {
+            stable: "production".into(),
+            bleeding: "development".into(),
         }
     }
 }
@@ -194,6 +241,10 @@ pub struct SemanticDocument {
     #[serde(default)]
     pub baseline: Baseline,
     #[serde(default)]
+    pub branches: BranchTopology,
+    #[serde(default)]
+    pub channels: ConsumerChannels,
+    #[serde(default)]
     pub memory: MemoryBudget,
 }
 
@@ -212,6 +263,8 @@ impl SemanticDocument {
             exception: default_exceptions(),
             versioning: VersioningPolicy::default(),
             baseline: Baseline::default(),
+            branches: BranchTopology::default(),
+            channels: ConsumerChannels::default(),
             memory: MemoryBudget::default(),
         }
     }
@@ -242,6 +295,9 @@ impl SemanticDocument {
         canonical
             .exception
             .sort_by(|a, b| a.pattern.cmp(&b.pattern));
+        // traci: allow -- every field is a string, enum, or Vec of those; toml
+        // serialization of this struct cannot fail (no non-string map keys, no
+        // floats). Round-trip tests below guard the invariant.
         toml::to_string_pretty(&canonical).expect("semantic document serializes")
     }
 
@@ -290,6 +346,16 @@ impl SemanticDocument {
         for invariant in &self.invariant {
             if invariant.scope.is_empty() {
                 errors.push(format!("invariant `{}` has no scope", invariant.id));
+            }
+        }
+        if format >= SchemaVersion::new(2, 2) {
+            let expected = BranchTopology::default();
+            if self.branches != expected {
+                errors.push("format 2.2 requires the canonical Kaptaind branch topology".into());
+            }
+            if self.channels != ConsumerChannels::default() {
+                errors
+                    .push("format 2.2 requires stable=production and bleeding=development".into());
             }
         }
         if errors.is_empty() {

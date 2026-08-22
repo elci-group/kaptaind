@@ -33,6 +33,89 @@ required = false
     std::fs::write(dir.join("kaptaind.toml"), config).unwrap();
 }
 
+fn write_lifecycle_config(dir: &std::path::Path) {
+    let config = r#"
+repo_path = "."
+
+[test]
+command = "true"
+required = true
+
+[build]
+command = "true"
+
+[push]
+enabled = false
+branch = "main"
+"#;
+    std::fs::write(dir.join("kaptaind.toml"), config).unwrap();
+}
+
+#[test]
+fn test_branch_lifecycle_release_and_channels() {
+    let dir = tempdir().expect("temp dir");
+    write_lifecycle_config(dir.path());
+    std::fs::write(dir.path().join("VERSION"), "1.0.0").unwrap();
+    init_git(dir.path());
+
+    for args in [
+        vec!["branch", "init"],
+        vec!["release", "prepare", "1.0.0"],
+        vec!["release", "validate", "1.0.0"],
+        vec!["release", "issue", "1.0.0"],
+    ] {
+        let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+            .current_dir(dir.path())
+            .args(&args)
+            .output()
+            .expect("run lifecycle command");
+        assert!(
+            output.status.success(),
+            "{:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    let status = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .args(["status", "--json"])
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
+    assert_eq!(json["production_version"], "1.0.0");
+
+    let stable = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .args(["checkout", "stable", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(stable.status.success());
+    assert!(String::from_utf8_lossy(&stable.stdout).contains("desktop/production"));
+}
+
+#[test]
+fn test_branch_init_dry_run_does_not_create_refs() {
+    let dir = tempdir().expect("temp dir");
+    write_lifecycle_config(dir.path());
+    std::fs::write(dir.path().join("VERSION"), "1.0.0").unwrap();
+    init_git(dir.path());
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        .current_dir(dir.path())
+        .args(["branch", "init", "--dry-run", "--json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let verify = Command::new("git")
+        .arg("-C")
+        .arg(dir.path())
+        .args(["show-ref", "--verify", "--quiet", "refs/heads/integration"])
+        .status()
+        .unwrap();
+    assert!(!verify.success());
+}
+
 #[test]
 fn test_status_command() {
     let dir = tempdir().expect("temp dir");

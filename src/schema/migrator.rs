@@ -65,6 +65,15 @@ static MIGRATIONS: &[Migration] = &[
         transform: migrate_2_0_to_2_1,
         reverse: Some(reverse_2_1_to_2_0),
     },
+    Migration {
+        from: SchemaVersion::new(2, 1),
+        to: SchemaVersion::new(2, 2),
+        reversible: true,
+        lossy: false,
+        notes: "declare governed branch topology and stable/bleeding channels",
+        transform: migrate_2_1_to_2_2,
+        reverse: Some(reverse_2_2_to_2_1),
+    },
 ];
 
 /// The implicit document representing pre-semantic-state repositories
@@ -232,6 +241,18 @@ fn reverse_2_1_to_2_0(doc: &mut SemanticDocument) -> Result<()> {
     Ok(())
 }
 
+fn migrate_2_1_to_2_2(doc: &mut SemanticDocument) -> Result<()> {
+    doc.capabilities.branch_lifecycle = true;
+    doc.branches = super::document::BranchTopology::default();
+    doc.channels = super::document::ConsumerChannels::default();
+    Ok(())
+}
+
+fn reverse_2_2_to_2_1(doc: &mut SemanticDocument) -> Result<()> {
+    doc.capabilities.branch_lifecycle = false;
+    Ok(())
+}
+
 /// One entry in the append-only migration ledger under
 /// `.kaptaind/migrations/`.
 #[derive(Debug, Serialize)]
@@ -266,7 +287,7 @@ mod tests {
         let (migrated, steps) = migrate_document(&legacy, registry::latest_version(), false)
             .expect("legacy migrates losslessly");
         assert_eq!(migrated.format(), registry::latest_version());
-        assert_eq!(steps.len(), 2);
+        assert_eq!(steps.len(), 3);
 
         // Idempotence: migrating again applies nothing.
         let (again, steps) =
@@ -329,7 +350,7 @@ mod tests {
             .iter()
             .map(|s| format!("{}->{}", s.from, s.to))
             .collect();
-        assert_eq!(versions, vec!["1.0->2.0", "2.0->2.1"]);
+        assert_eq!(versions, vec!["1.0->2.0", "2.0->2.1", "2.1->2.2"]);
     }
 
     #[test]

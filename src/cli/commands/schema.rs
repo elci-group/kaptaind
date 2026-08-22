@@ -17,8 +17,12 @@ pub fn handle_migrate(repo: &Path, args: &MigrateArgs) -> Result<()> {
     let state_path = repo.join(STATE_FILE);
     let text = match std::fs::read_to_string(&state_path) {
         Ok(text) => Some(text),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            tracing::debug!(path = %state_path.display(), "no existing state document; starting from legacy detection");
+            None
+        }
         Err(error) => {
+            tracing::warn!(path = %state_path.display(), error = %error, "failed to read state document");
             return Err(error).context(format!("failed to read {}", state_path.display()));
         }
     };
@@ -82,15 +86,23 @@ pub fn handle_migrate(repo: &Path, args: &MigrateArgs) -> Result<()> {
     // migrating out of legacy state.
     let mut document = document;
     if current == SchemaVersion::new(1, 0) {
-        document.baseline.version = std::fs::read_to_string(repo.join("VERSION"))
-            .ok()
-            .map(|v| v.trim().to_string());
+        let version_path = repo.join("VERSION");
+        document.baseline.version = match std::fs::read_to_string(&version_path) {
+            Ok(v) => Some(v.trim().to_string()),
+            Err(error) => {
+                tracing::debug!(path = %version_path.display(), error = %error, "no VERSION file to bootstrap baseline from");
+                None
+            }
+        };
     }
 
     let (migrated, applied) = migrate_document(&document, target, args.allow_lossy)?;
     let digest_before = document.digest();
     let digest_after = migrated.digest();
 
+    // traci: allow -- state_path is repo.join(STATE_FILE) and STATE_FILE
+    // (".kaptaind/state.toml") always has a directory component, so
+    // .parent() is never None.
     std::fs::create_dir_all(state_path.parent().expect("state path has a parent"))
         .with_context(|| format!("failed to create {}", state_path.display()))?;
     std::fs::write(&state_path, migrated.to_canonical_toml())

@@ -1,0 +1,43 @@
+project = "kaptaind"
+
+[tools.kaptaind]
+enabled = true
+binary = "/home/sal/.local/bin/kaptaind"
+description = "Automated semantic-versioning daemon that watches a repository, clusters filesystem events, analyzes changes, and commits version bumps"
+commands = [
+  "status",
+  "log",
+  "analyze",
+  "dashboard",
+  "ci-hint",
+  "aoc",
+  "ship",
+  "init",
+  "trawl",
+  "trace",
+  "vacs",
+  "storage",
+]
+
+[tools.kaptaind-cli]
+enabled = true
+binary = "/home/sal/.local/bin/kaptaind-cli"
+description = "CLI companion for kaptaind: one-off analysis, session management, and release operations without starting the daemon"
+commands = [
+  "status",
+  "validate",
+  "log",
+  "analyze",
+  "explain",
+  "rollback",
+  "aoc",
+  "init",
+  "trawl",
+  "dashboard",
+  "ci-hint",
+  "trace",
+  "vacs",
+  "storage",
+  "ship",
+  "doctor",
+]

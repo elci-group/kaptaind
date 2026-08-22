@@ -60,6 +60,7 @@
 pub mod bait;
 pub mod config;
 pub mod git_hooks;
+pub mod orb_sanitize;
 pub mod selective;
 pub mod webhooks;
 

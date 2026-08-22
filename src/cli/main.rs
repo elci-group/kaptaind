@@ -79,7 +79,29 @@ Examples:
 
 Notes:
     Reads the daemon PID file and .kaptaind/status.json in the repository."#)]
-    Status,
+    Status {
+        /// Emit machine-readable lifecycle state.
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Govern the repository's typed branch lifecycle.
+    #[command(subcommand)]
+    Branch(BranchCommand),
+
+    /// Prepare, validate, issue, or roll back governed releases.
+    #[command(subcommand)]
+    Release(LifecycleReleaseCommand),
+
+    /// Resolve and check out a consumer channel (`stable` or `bleeding`).
+    Checkout {
+        #[arg(value_parser = ["stable", "bleeding"])]
+        channel: String,
+        #[arg(long, default_value = "desktop", value_parser = ["desktop", "mobile"])]
+        platform: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
 
     /// ⏸️ Suspend automated daemon commits
     #[command(long_about = r#"Purpose:
@@ -1149,6 +1171,78 @@ Relevant config section: [shark]."#
 }
 
 #[derive(Subcommand)]
+enum BranchCommand {
+    /// Report topology, versions, revisions, divergence, and promotion readiness.
+    Status {
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value = "desktop", value_parser = ["desktop", "mobile"])]
+        platform: String,
+    },
+    /// Create missing mandatory lifecycle branches without overwriting refs.
+    Init {
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Diagnose missing or unexpectedly divergent lifecycle branches.
+    Sync {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Perform a permitted, clean, fast-forward lifecycle transition.
+    Promote {
+        source: String,
+        target: String,
+        #[arg(long)]
+        dry_run: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum LifecycleReleaseCommand {
+    /// Create an immutable-identity release candidate from integration.
+    Prepare {
+        version: String,
+        #[arg(long, default_value = "integration")]
+        source: String,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run configured build/test and consistency gates for a candidate.
+    Validate {
+        version: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Atomically advance production and create v<version> after validation.
+    Issue {
+        version: String,
+        #[arg(long, default_value = "desktop", value_parser = ["desktop", "mobile"])]
+        platform: String,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Issue a new release whose tree restores an older released version.
+    Rollback {
+        version: String,
+        #[arg(long = "as", value_name = "NEW_VERSION")]
+        new_version: String,
+        #[arg(long, default_value = "desktop", value_parser = ["desktop", "mobile"])]
+        platform: String,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
 enum ShipCommand {
     /// 📋 Preview the ship plan without building or publishing
     #[command(long_about = r#"Purpose:
@@ -2055,8 +2149,232 @@ async fn main() -> anyhow::Result<()> {
     }
 
     match &cli.command {
-        Commands::Status => {
-            handle_status(&config)?;
+        Commands::Status { json } => {
+            if *json {
+                let report = kaptaind::lifecycle::status(
+                    &config.repo_path,
+                    kaptaind::lifecycle::Platform::Desktop,
+                )?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                handle_status(&config)?;
+            }
+        }
+        Commands::Branch(command) => match command {
+            BranchCommand::Status { json, platform } => {
+                let report =
+                    kaptaind::lifecycle::status(&config.repo_path, lifecycle_platform(platform)?)?;
+                if *json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!("Kaptaind branch status\n");
+                    println!(
+                        "Current: {} ({:?})",
+                        report.current_branch, report.semantic_branch_type
+                    );
+                    println!(
+                        "Version: {}",
+                        report.version.as_deref().unwrap_or("unknown")
+                    );
+                    println!("Commit: {}", report.current_commit);
+                    println!(
+                        "Production: {}",
+                        report.production_version.as_deref().unwrap_or("unreleased")
+                    );
+                    println!(
+                        "Development: {}",
+                        report.development_version.as_deref().unwrap_or("unknown")
+                    );
+                    println!("Pending changes: {}", report.changes_pending);
+                    println!(
+                        "Promotion: {}",
+                        if report.promotion_available {
+                            "AVAILABLE"
+                        } else {
+                            "BLOCKED"
+                        }
+                    );
+                }
+            }
+            BranchCommand::Init { dry_run, json } => {
+                let report = kaptaind::lifecycle::init(&config.repo_path, *dry_run)?;
+                if *json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!(
+                        "Created: {}\nExisting: {}",
+                        report.created.join(", "),
+                        report.existing.join(", ")
+                    );
+                }
+            }
+            BranchCommand::Sync { json } => {
+                let report = kaptaind::lifecycle::sync(&config.repo_path)?;
+                if *json {
+                    println!("{}", serde_json::to_string_pretty(&report)?);
+                } else {
+                    println!(
+                        "Missing: {}",
+                        if report.missing.is_empty() {
+                            "none".into()
+                        } else {
+                            report.missing.join(", ")
+                        }
+                    );
+                    for divergence in &report.divergences {
+                        println!(
+                            "DIVERGED: {} -> {} (ahead {}, behind {})",
+                            divergence.source,
+                            divergence.target,
+                            divergence.ahead,
+                            divergence.behind
+                        );
+                    }
+                }
+                if !report.divergences.is_empty() {
+                    anyhow::bail!("lifecycle branches have diverged; explicit resolution required");
+                }
+            }
+            BranchCommand::Promote {
+                source,
+                target,
+                dry_run,
+            } => {
+                kaptaind::lifecycle::validate_promotion(
+                    &config.repo_path,
+                    &kaptaind::lifecycle::ValidationConfig {
+                        build_command: config.build.command.clone(),
+                        test_command: config.test.command.clone(),
+                    },
+                )?;
+                kaptaind::lifecycle::promote(&config.repo_path, source, target, *dry_run)?;
+                println!(
+                    "{} {} -> {}",
+                    if *dry_run {
+                        "Would promote"
+                    } else {
+                        "Promoted"
+                    },
+                    source,
+                    target
+                );
+            }
+        },
+        Commands::Release(command) => match command {
+            LifecycleReleaseCommand::Prepare {
+                version,
+                source,
+                dry_run,
+                json,
+            } => {
+                let candidate = kaptaind::lifecycle::prepare_release(
+                    &config.repo_path,
+                    version,
+                    source,
+                    *dry_run,
+                )?;
+                if *json {
+                    println!("{}", serde_json::to_string_pretty(&candidate)?);
+                } else {
+                    println!(
+                        "{} {} @ {}",
+                        if *dry_run {
+                            "Would prepare"
+                        } else {
+                            "Prepared"
+                        },
+                        candidate.branch,
+                        candidate.source_commit
+                    );
+                }
+            }
+            LifecycleReleaseCommand::Validate { version, json } => {
+                let validation = kaptaind::lifecycle::validate_release(
+                    &config.repo_path,
+                    version,
+                    &kaptaind::lifecycle::ValidationConfig {
+                        build_command: config.build.command.clone(),
+                        test_command: config.test.command.clone(),
+                    },
+                )?;
+                if *json {
+                    println!("{}", serde_json::to_string_pretty(&validation)?);
+                } else {
+                    println!("Validated release {} @ {}", version, validation.commit);
+                }
+            }
+            LifecycleReleaseCommand::Issue {
+                version,
+                platform,
+                dry_run,
+                json,
+            } => {
+                let event = kaptaind::lifecycle::issue_release(
+                    &config.repo_path,
+                    version,
+                    lifecycle_platform(platform)?,
+                    "kaptaind-cli",
+                    *dry_run,
+                )?;
+                if *json {
+                    println!("{}", serde_json::to_string_pretty(&event)?);
+                } else {
+                    println!(
+                        "{} release {} -> {}",
+                        if *dry_run { "Would issue" } else { "Issued" },
+                        version,
+                        event.production_branch
+                    );
+                }
+            }
+            LifecycleReleaseCommand::Rollback {
+                version,
+                new_version,
+                platform,
+                dry_run,
+                json,
+            } => {
+                let event = kaptaind::lifecycle::rollback(
+                    &config.repo_path,
+                    version,
+                    new_version,
+                    lifecycle_platform(platform)?,
+                    "kaptaind-cli",
+                    *dry_run,
+                )?;
+                if *json {
+                    println!("{}", serde_json::to_string_pretty(&event)?);
+                } else {
+                    println!(
+                        "{} rollback release {} restoring {}",
+                        if *dry_run { "Would issue" } else { "Issued" },
+                        new_version,
+                        version
+                    );
+                }
+            }
+        },
+        Commands::Checkout {
+            channel,
+            platform,
+            dry_run,
+        } => {
+            let branch = kaptaind::lifecycle::checkout_channel(
+                &config.repo_path,
+                channel,
+                lifecycle_platform(platform)?,
+                *dry_run,
+            )?;
+            println!(
+                "{} {} -> {}",
+                if *dry_run {
+                    "Would resolve"
+                } else {
+                    "Checked out"
+                },
+                channel,
+                branch
+            );
         }
         Commands::Suspend { reason } => {
             handle_suspend(&config, reason.as_deref())?;
@@ -2325,6 +2643,14 @@ async fn main() -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn lifecycle_platform(value: &str) -> anyhow::Result<kaptaind::lifecycle::Platform> {
+    match value {
+        "desktop" => Ok(kaptaind::lifecycle::Platform::Desktop),
+        "mobile" => Ok(kaptaind::lifecycle::Platform::Mobile),
+        _ => anyhow::bail!("unknown lifecycle platform `{value}`"),
+    }
 }
 
 fn parse_project_types(type_strings: &[String]) -> Vec<kaptaind::trawler::ProjectType> {
