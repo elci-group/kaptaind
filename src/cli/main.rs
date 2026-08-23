@@ -89,6 +89,10 @@ Notes:
     #[command(subcommand)]
     Branch(BranchCommand),
 
+    /// Analyse a proposed branch integration with Hybreed and Emulsify.
+    #[command(subcommand)]
+    Integrate(IntegrateCommand),
+
     /// Prepare, validate, issue, or roll back governed releases.
     #[command(subcommand)]
     Release(LifecycleReleaseCommand),
@@ -941,6 +945,23 @@ enum SchemaCommand {
         /// Schema version to explain (e.g. 2.1).
         #[arg(value_name = "VERSION")]
         version: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum IntegrateCommand {
+    /// Run both tools and persist an advisory, machine-readable report.
+    Analyze {
+        /// Host/target branch or ref.
+        target: String,
+        /// Proposed source/fork branch or ref.
+        source: String,
+        /// Emit JSON instead of the concise summary.
+        #[arg(long)]
+        json: bool,
+        /// Do not write the report or audit event.
+        #[arg(long)]
+        no_persist: bool,
     },
 }
 
@@ -2260,6 +2281,29 @@ async fn main() -> anyhow::Result<()> {
                 );
             }
         },
+        Commands::Integrate(IntegrateCommand::Analyze {
+            target,
+            source,
+            json,
+            no_persist,
+        }) => {
+            let report = kaptaind::integration::analyse(
+                &config.repo_path,
+                target,
+                source,
+                &config.integrations,
+                !no_persist,
+            )?;
+            if *json {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                println!("Integration analysis: {} -> {}", source, target);
+                println!("{}", report.recommendation);
+                if let Some(path) = report.persisted {
+                    println!("Report: {}", path.display());
+                }
+            }
+        }
         Commands::Release(command) => match command {
             LifecycleReleaseCommand::Prepare {
                 version,

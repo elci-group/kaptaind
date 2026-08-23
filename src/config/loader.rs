@@ -1152,10 +1152,42 @@ impl Default for CapabilitiesConfig {
 
 /// `[integrations]` declares provider connectors without embedding provider
 /// secrets. Each connector identifies an externally managed secret reference.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct IntegrationsConfig {
     #[serde(default)]
     pub connectors: Vec<crate::integrations::ConnectorConfig>,
+    /// Executable used for branch-relationship analysis.
+    #[serde(default = "default_hybreed_command")]
+    pub hybreed_command: String,
+    /// Executable used for multi-tree consolidation analysis.
+    #[serde(default = "default_emulsify_command")]
+    pub emulsify_command: String,
+    /// Maximum time allotted to each external analysis command.
+    #[serde(default = "default_integration_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+impl Default for IntegrationsConfig {
+    fn default() -> Self {
+        Self {
+            connectors: Vec::new(),
+            hybreed_command: default_hybreed_command(),
+            emulsify_command: default_emulsify_command(),
+            timeout_secs: default_integration_timeout_secs(),
+        }
+    }
+}
+
+fn default_hybreed_command() -> String {
+    "hybreed".to_owned()
+}
+
+fn default_emulsify_command() -> String {
+    "emulsify".to_owned()
+}
+
+fn default_integration_timeout_secs() -> u64 {
+    120
 }
 
 // ---------------------------------------------------------------------------

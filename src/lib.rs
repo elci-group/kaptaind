@@ -15,6 +15,7 @@ pub mod git;
 pub mod icon;
 pub mod inference;
 pub mod installer;
+pub mod integration;
 pub mod integrations;
 pub mod lifecycle;
 pub mod monitor;

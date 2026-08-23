@@ -1561,3 +1561,26 @@ As `kaptaind` runs, it drops critical artifacts:
 ## License
 
 Standard open-source MIT License.
+## Branch integration analysis
+
+Kaptaind can use the optional `hybreed` and `emulsify` executables to assess a
+proposed branch integration without changing Git history:
+
+```bash
+kaptaind-cli integrate analyze main feature/auth
+kaptaind-cli integrate analyze main feature/auth --json --no-persist
+```
+
+Hybreed evaluates branch relationships and structural conflicts. Emulsify
+compares isolated snapshots of both refs and reports consolidation risk. The
+combined recommendation is advisory; promotion and release commands still
+require their existing explicit validation gates. Reports are persisted under
+`.kaptaind/integration/` and recorded in the append-only audit log. Executable
+names and the per-tool timeout can be overridden in `[integrations]`:
+
+```toml
+[integrations]
+hybreed_command = "hybreed"
+emulsify_command = "emulsify"
+timeout_secs = 120
+```
