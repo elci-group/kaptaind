@@ -106,6 +106,80 @@ pub fn analyse(
     Ok(report)
 }
 
+/// Select a deterministic pair of refs for an automatic commit/push check.
+/// The current branch is compared with its upstream, then `main`, then
+/// `integration`; missing or identical refs are skipped for compatibility with
+/// repositories that do not use Kaptaind's lifecycle topology.
+pub fn automatic_refs(repo: &Path) -> Result<Option<(String, String)>> {
+    let current = current_branch(repo)?;
+    if current.is_empty() {
+        return Ok(None);
+    }
+    let candidates = [
+        git_output(repo, &["rev-parse", "--abbrev-ref", "@{upstream}"]).ok(),
+        Some("main".to_owned()),
+        Some("integration".to_owned()),
+    ];
+    for candidate in candidates.into_iter().flatten() {
+        if candidate != current && ref_exists(repo, &candidate) {
+            return Ok(Some((candidate, current)));
+        }
+    }
+    Ok(None)
+}
+
+pub fn current_branch(repo: &Path) -> Result<String> {
+    git_output(repo, &["branch", "--show-current"])
+}
+
+/// Run the default integration check for callers (such as the push
+/// controller) that do not already hold a fully loaded `Config`.
+pub fn automatic_check(repo: &Path) -> Result<()> {
+    let config =
+        crate::config::loader::load_from_path(&repo.join("kaptaind.toml")).unwrap_or_else(|_| {
+            crate::config::Config {
+                repo_path: repo.to_path_buf(),
+                ..crate::config::Config::default()
+            }
+        });
+    if !config.integrations.enabled {
+        return Ok(());
+    }
+    let Some((target, source)) = automatic_refs(repo)? else {
+        return Ok(());
+    };
+    match analyse(repo, &target, &source, &config.integrations, true) {
+        Ok(_) => Ok(()),
+        Err(error) if config.integrations.required => Err(error),
+        Err(error) => {
+            tracing::warn!(error = %error, "integration analysis failed during push; continuing because it is advisory");
+            Ok(())
+        }
+    }
+}
+
+fn git_output(repo: &Path, args: &[&str]) -> Result<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!("git {} failed", args.join(" "));
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
+}
+
+fn ref_exists(repo: &Path, reference: &str) -> bool {
+    Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .args(["rev-parse", "--verify", reference])
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 fn recommendation(hybreed: &Value, emulsify: &Value) -> String {
     let decision = hybreed
         .get("decision")

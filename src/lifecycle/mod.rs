@@ -1103,6 +1103,25 @@ pub fn checkout_channel(
     Ok(branch.into())
 }
 
+/// Ensure automated commits never land directly on a production branch.
+/// Existing working-tree changes are carried by `git switch` when safe; if
+/// Git cannot preserve them, the caller must abort rather than commit to
+/// production or discard user work.
+pub fn migrate_production_commit(repo: &Path) -> anyhow::Result<Option<String>> {
+    let current = git_output(repo, &["branch", "--show-current"])?;
+    let development = match current.as_str() {
+        "desktop/production" => "desktop/development",
+        "mobile/production" => "mobile/development",
+        _ => return Ok(None),
+    };
+    if ref_commit(repo, development)?.is_none() {
+        git_output(repo, &["switch", "-c", development])?;
+    } else {
+        git_output(repo, &["switch", development])?;
+    }
+    Ok(Some(development.to_owned()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

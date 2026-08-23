@@ -1580,7 +1580,15 @@ names and the per-tool timeout can be overridden in `[integrations]`:
 
 ```toml
 [integrations]
+enabled = true
+required = false
 hybreed_command = "hybreed"
 emulsify_command = "emulsify"
 timeout_secs = 120
 ```
+
+When enabled (the default), daemon commits run both analyses before any
+configured push. Set `enabled = false` for a project-level opt-out. If the
+current branch is `desktop/production` or `mobile/production`, Kaptaind
+switches to the matching development branch before creating the commit and
+pushes that development branch instead.

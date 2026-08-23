@@ -1156,6 +1156,12 @@ impl Default for CapabilitiesConfig {
 pub struct IntegrationsConfig {
     #[serde(default)]
     pub connectors: Vec<crate::integrations::ConnectorConfig>,
+    /// Run Hybreed and Emulsify around daemon commit/push operations.
+    #[serde(default = "default_integrations_enabled")]
+    pub enabled: bool,
+    /// When enabled, an unavailable or failed analyzer blocks the push.
+    #[serde(default)]
+    pub required: bool,
     /// Executable used for branch-relationship analysis.
     #[serde(default = "default_hybreed_command")]
     pub hybreed_command: String,
@@ -1171,11 +1177,17 @@ impl Default for IntegrationsConfig {
     fn default() -> Self {
         Self {
             connectors: Vec::new(),
+            enabled: default_integrations_enabled(),
+            required: false,
             hybreed_command: default_hybreed_command(),
             emulsify_command: default_emulsify_command(),
             timeout_secs: default_integration_timeout_secs(),
         }
     }
+}
+
+fn default_integrations_enabled() -> bool {
+    true
 }
 
 fn default_hybreed_command() -> String {

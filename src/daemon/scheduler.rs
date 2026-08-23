@@ -1024,6 +1024,12 @@ async fn process_cluster(
         // same scoped machinery (RepoContext, secret denylist) as the
         // bumping path below.
         let msg = format_chore_commit(&cluster, &diff, &weight, &agent_event);
+        if let Err(error) = crate::lifecycle::migrate_production_commit(&config.repo_path) {
+            tracing::error!(error = %error, "refusing to commit on production branch");
+            status.set_failed(error.to_string());
+            write_status(&config.repo_path, status);
+            return;
+        }
         let msg = if policy.as_ref().map(|p| p.required_signoff).unwrap_or(false) {
             format!("{}\n\nSigned-off-by: kaptaind <kaptaind@localhost>", msg)
         } else {
@@ -1526,6 +1532,12 @@ async fn process_cluster(
         "Token usage and cost tracking"
     );
 
+    if let Err(error) = crate::lifecycle::migrate_production_commit(&config.repo_path) {
+        tracing::error!(error = %error, "refusing to commit on production branch");
+        status.set_failed(error.to_string());
+        write_status(&config.repo_path, status);
+        return;
+    }
     let repo_ctx = crate::git::repo::RepoContext::new(repo.root(), &config.repo_path);
     // Cluster staging adds VERSION/Cargo.toml/Cargo.lock itself; bumped
     // member manifests (W1) ride along so the bump lands in the same commit.
@@ -1680,13 +1692,53 @@ async fn process_cluster(
             .await;
     }
 
+    if config.integrations.enabled {
+        match crate::integration::automatic_refs(&config.repo_path) {
+            Ok(Some((target, source))) => {
+                match crate::integration::analyse(
+                    &config.repo_path,
+                    &target,
+                    &source,
+                    &config.integrations,
+                    true,
+                ) {
+                    Ok(report) => {
+                        tracing::info!(recommendation = %report.recommendation, "automatic integration analysis completed")
+                    }
+                    Err(error) if config.integrations.required => {
+                        tracing::error!(error = %error, "required integration analysis failed; push blocked");
+                        status.set_failed(error.to_string());
+                        write_status(&config.repo_path, status);
+                        return;
+                    }
+                    Err(error) => {
+                        tracing::warn!(error = %error, "integration analysis failed; continuing because it is advisory")
+                    }
+                }
+            }
+            Ok(None) => {
+                tracing::debug!("automatic integration analysis skipped: no comparison ref")
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "could not determine automatic integration refs")
+            }
+        }
+    }
+
     if config.push.enabled && config.capabilities.network_push {
+        // A production-branch commit may have been migrated to its matching
+        // development branch above; push the branch that actually received
+        // the commit rather than sending the old production ref.
+        let push_branch = crate::integration::current_branch(&config.repo_path)
+            .ok()
+            .filter(|branch| !branch.is_empty())
+            .unwrap_or_else(|| config.push.branch.clone());
         // Run pre-push hooks if configured
         if let Some(angler) = angler {
             let refs = vec![(
-                format!("refs/heads/{}", config.push.branch),
+                format!("refs/heads/{push_branch}"),
                 "HEAD".to_string(),
-                format!("refs/heads/{}", config.push.branch),
+                format!("refs/heads/{push_branch}"),
                 "origin/HEAD".to_string(),
             )];
             if let Some(hook_result) = angler
@@ -1730,7 +1782,7 @@ async fn process_cluster(
         let push_result = if !config.push.remotes.is_empty() {
             let multi_push_options = crate::push::MultiRemotePushOptions {
                 remotes: config.push.remotes.clone(),
-                branch: config.push.branch.clone(),
+                branch: push_branch.clone(),
                 dry_run: config.push.dry_run,
                 protect_branches: config.push.safety.protect_branches.clone(),
             };
@@ -1745,7 +1797,7 @@ async fn process_cluster(
         } else {
             let push_options = crate::push::PushOptions {
                 remote: config.push.remote.clone(),
-                branch: config.push.branch.clone(),
+                branch: push_branch.clone(),
                 dry_run: config.push.dry_run,
                 protect_branches: config.push.safety.protect_branches.clone(),
             };
@@ -1808,7 +1860,7 @@ async fn process_cluster(
             };
 
             let webhook_event = WebhookEvent::Push {
-                branch: config.push.branch.clone(),
+                branch: push_branch.clone(),
                 commits: 1,
                 remote: remote_names.join(", "),
             };
