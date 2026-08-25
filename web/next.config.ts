@@ -15,6 +15,9 @@ const CONTENT_SECURITY_POLICY =
 
 const nextConfig: NextConfig = {
   output: "standalone",
+  turbopack: {
+    root: process.cwd(),
+  },
   async headers() {
     return [
       {

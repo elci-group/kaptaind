@@ -13,6 +13,27 @@ All notable changes to kaptaind are documented here. The format follows
 > here. Per-commit detail for the `v0.1.44 → v9.x` range lives in `git log`;
 > the consolidated capability set is summarized under `[9.7.16]` below.
 
+## [10.3.2] — 2026-08-25
+
+### Added
+- A transactional pull engine that separates fetch, topology inspection,
+  strategy planning, integration, verification, and ref mutation instead of
+  delegating repository safety to `git pull`.
+- `kaptaind pull` and `kaptaind-cli pull` support for check-only and dry-run
+  assessment, JSON reports, explicit merge/rebase/Hybreed/Emulsify strategies,
+  autostash, abort/continue/recover flows, recovery refs, repository locks,
+  persistent journals, structured conflicts, risk scoring, and stable exit
+  codes.
+- Remote/upstream resolution, ahead/behind classification, protected-branch
+  policy, conflict prediction, and configurable post-integration build/test
+  verification.
+
+### Fixed
+- Autostash no longer passes an all-files pathspec that makes Git reject an
+  otherwise valid pull when `.kaptaind` transaction state is ignored.
+- Updated `h2` to 0.4.16 or newer to address RUSTSEC-2026-0258 (unbounded
+  empty DATA frames).
+
 ## [10.1.4] — 2026-07-18
 
 Patch release hardening automated commit and release boundaries identified by

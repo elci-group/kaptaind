@@ -10,7 +10,19 @@ mod harness;
 use harness::MonorepoFixture;
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
+
+/// These tests launch real daemons and exercise filesystem watcher timing.
+/// Concurrent fixtures contend for CPU and I/O and make their wall-clock
+/// assertions nondeterministic, so serialize this integration target.
+fn daemon_test_guard() -> MutexGuard<'static, ()> {
+    static GUARD: OnceLock<Mutex<()>> = OnceLock::new();
+    GUARD
+        .get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 /// A change substantial enough to clear the patch threshold (0.1): a trivial
 /// one-liner scores `Bump::None` and legitimately produces no commit.
@@ -39,6 +51,7 @@ fn substantial_edit(project: &Path) {
 /// stopped only by killing the daemon).
 #[test]
 fn daemon_does_not_cascade_on_version_writeback() {
+    let _guard = daemon_test_guard();
     let fixture = MonorepoFixture::new(19099);
     assert_eq!(fixture.kaptaind_commits(), 0);
 
@@ -129,6 +142,7 @@ fn daemon_does_not_cascade_on_version_writeback() {
 /// startup into exactly one catch-up commit through the normal pipeline.
 #[test]
 fn daemon_reconciles_pending_changes_on_startup() {
+    let _guard = daemon_test_guard();
     let fixture = MonorepoFixture::new(19101);
 
     // Edit while no daemon is running.
@@ -175,6 +189,7 @@ fn daemon_reconciles_pending_changes_on_startup() {
 /// behavior explicitly to keep covering the `require_bump = true` path.
 #[test]
 fn decisions_log_records_commit_and_skip() {
+    let _guard = daemon_test_guard();
     let fixture = MonorepoFixture::with_config(19103, "\n[commit]\nrequire_bump = true\n");
 
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
@@ -258,6 +273,7 @@ fn decisions_log_records_commit_and_skip() {
 /// of being left uncommitted forever (and resurfacing on every rescan).
 #[test]
 fn chore_commit_captures_docs() {
+    let _guard = daemon_test_guard();
     let fixture = MonorepoFixture::with_config(19109, "\n[commit]\nrequire_bump = false\n");
 
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
@@ -325,6 +341,7 @@ fn chore_commit_captures_docs() {
 /// triple stays unchanged at HEAD and clean in the worktree.
 #[test]
 fn docs_edit_does_not_bump_when_require_bump_off() {
+    let _guard = daemon_test_guard();
     let fixture = MonorepoFixture::with_config(19111, "\n[commit]\nrequire_bump = false\n");
 
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
@@ -393,6 +410,7 @@ fn docs_edit_does_not_bump_when_require_bump_off() {
 /// still commit.
 #[test]
 fn daemon_hot_reloads_ignore_file() {
+    let _guard = daemon_test_guard();
     let fixture = MonorepoFixture::new(19105);
 
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
@@ -453,6 +471,7 @@ fn daemon_hot_reloads_ignore_file() {
 /// it keeps the previous config and keeps committing.
 #[test]
 fn daemon_survives_invalid_config_edit() {
+    let _guard = daemon_test_guard();
     let fixture = MonorepoFixture::new(19107);
 
     let mut daemon = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
@@ -499,6 +518,7 @@ fn daemon_survives_invalid_config_edit() {
 /// natively.
 #[test]
 fn no_phantom_cluster_from_test_hook_target_dir() {
+    let _guard = daemon_test_guard();
     let fixture = MonorepoFixture::new(19115);
 
     let kaptaind_dir = fixture.project().join(".kaptaind");
@@ -572,6 +592,7 @@ fn no_phantom_cluster_from_test_hook_target_dir() {
 /// starts (e.g. on release trees) must not catch-up-commit in-flight work.
 #[test]
 fn startup_guard_refuses_dirty_worktree() {
+    let _guard = daemon_test_guard();
     let fixture = MonorepoFixture::with_config(19117, "[daemon]\nstartup_guard = true\n");
 
     // Dirty the tree after the fixture's clean initial commit.

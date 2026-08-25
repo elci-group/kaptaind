@@ -1140,9 +1140,6 @@ fn create_autostash(repo: &Path, id: &str) -> Result<Option<String>, PullError> 
             "--include-untracked",
             "-m",
             &format!("kaptaind-pull:{id}"),
-            "--",
-            ".",
-            ":(exclude).kaptaind",
         ],
     )?;
     let after = git_text(repo, &["rev-parse", "--verify", "refs/stash"]).ok();
@@ -1900,6 +1897,9 @@ mod tests {
     fn autostash_restores_untracked_work_after_fast_forward() {
         let fixture = PullFixture::new();
         fixture.remote_commit("remote.txt", "remote\n");
+        fs::write(fixture.local.join(".git/info/exclude"), ".kaptaind/\n").unwrap();
+        fs::create_dir_all(fixture.local.join(".kaptaind")).unwrap();
+        fs::write(fixture.local.join(".kaptaind/local-state.json"), "{}\n").unwrap();
         fs::write(fixture.local.join("draft.txt"), "draft\n").unwrap();
         let options = PullOptions {
             autostash: true,
@@ -1916,6 +1916,10 @@ mod tests {
         assert_eq!(
             fs::read_to_string(fixture.local.join("draft.txt")).unwrap(),
             "draft\n"
+        );
+        assert_eq!(
+            fs::read_to_string(fixture.local.join(".kaptaind/local-state.json")).unwrap(),
+            "{}\n"
         );
         assert!(fixture.local.join("remote.txt").exists());
     }

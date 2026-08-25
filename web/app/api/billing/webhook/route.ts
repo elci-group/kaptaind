@@ -4,12 +4,6 @@ import { getStripe } from "@/lib/stripe";
 import { prisma } from "@/lib/prisma";
 import type Stripe from "stripe";
 
-export const config = {
-  api: {
-    bodyParser: false,
-  },
-};
-
 function mapStripeStatus(status: string): string {
   switch (status) {
     case "active":

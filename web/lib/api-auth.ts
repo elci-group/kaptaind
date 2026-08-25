@@ -11,6 +11,19 @@ export class ApiAuthError extends Error {
   }
 }
 
+export type UserTier = "free" | "pro" | "team" | "enterprise";
+
+function normalizeUserTier(value: string): UserTier {
+  switch (value.toLowerCase()) {
+    case "pro":
+    case "team":
+    case "enterprise":
+      return value.toLowerCase() as UserTier;
+    default:
+      return "free";
+  }
+}
+
 export function isAuthError(
   error: unknown
 ): { status: number; message: string } | null {
@@ -77,13 +90,13 @@ export async function requireEntitlement(
   }
 }
 
-export async function getUserTier(userId: string): Promise<string> {
+export async function getUserTier(userId: string): Promise<UserTier> {
   const legacySub = await prisma.subscription.findUnique({
     where: { userId },
     select: { tier: true },
   });
   if (legacySub) {
-    return legacySub.tier.toLowerCase();
+    return normalizeUserTier(legacySub.tier);
   }
 
   const customer = await prisma.billingCustomer.findUnique({
@@ -96,7 +109,7 @@ export async function getUserTier(userId: string): Promise<string> {
     },
   });
   if (customer && customer.subscriptions.length > 0) {
-    return customer.subscriptions[0].plan.code.toLowerCase();
+    return normalizeUserTier(customer.subscriptions[0].plan.code);
   }
 
   return "free";

@@ -25,7 +25,7 @@ function isPublic(pathname: string): boolean {
   return PUBLIC_PATTERNS.some((pattern) => pattern.test(pathname));
 }
 
-export async function middleware(req: NextRequest) {
+export async function proxy(req: NextRequest) {
   const requestId = crypto.randomUUID();
   const { pathname } = req.nextUrl;
 

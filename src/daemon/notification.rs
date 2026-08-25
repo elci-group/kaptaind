@@ -228,12 +228,6 @@ fn is_rate_limited(limit_seconds: u64, event_name: &str) -> bool {
     false
 }
 
-#[cfg(test)]
-fn reset_rate_limiter() {
-    let mut guard = LAST_SENT.lock().unwrap_or_else(|e| e.into_inner());
-    *guard = None;
-}
-
 fn inject_env(command: &mut std::process::Command, event: &NotificationEvent<'_>) {
     command.env("KAPTAIND_EVENT", event.event_name());
     match event {
@@ -1147,20 +1141,17 @@ mod tests {
 
     #[test]
     fn rate_limiter_allows_first_event() {
-        reset_rate_limiter();
         assert!(!is_rate_limited(5, "allows_first"));
     }
 
     #[test]
     fn rate_limiter_blocks_duplicate_within_window() {
-        reset_rate_limiter();
         assert!(!is_rate_limited(5, "blocks_duplicate"));
         assert!(is_rate_limited(5, "blocks_duplicate"));
     }
 
     #[test]
     fn rate_limiter_disabled_when_zero() {
-        reset_rate_limiter();
         assert!(!is_rate_limited(0, "disabled"));
         assert!(!is_rate_limited(0, "disabled"));
     }
