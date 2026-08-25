@@ -66,6 +66,9 @@ health_port = {health_port}
 [trust]
 execution = "trusted"
 
+[operation]
+mode = "actuate"
+
 [watch]
 path = "."
 recursive = true
@@ -257,6 +260,9 @@ health_port = {health_port}
 
 [trust]
 execution = "trusted"
+
+[operation]
+mode = "actuate"
 
 [watch]
 path = "."

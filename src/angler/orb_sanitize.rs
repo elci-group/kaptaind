@@ -261,7 +261,12 @@ fn parse_github_owner_repo(url: &str) -> Option<(String, String)> {
 }
 
 fn git_output(repo_path: &Path, args: &[&str]) -> Option<String> {
-    let output = match Command::new("git").arg("-C").arg(repo_path).args(args).output() {
+    let output = match Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(args)
+        .output()
+    {
         Ok(output) => output,
         Err(error) => {
             tracing::debug!(error = %error, ?args, "git invocation failed; treating repo visibility as unknown");

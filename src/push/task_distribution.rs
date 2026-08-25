@@ -219,9 +219,7 @@ impl TaskDistributionEngine {
         match strategy {
             DistributionStrategy::BestFit => {
                 // Sort by fit score descending
-                scored.sort_by(|a, b| {
-                    b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                });
+                scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
             }
             DistributionStrategy::CostOptimization => {
                 // Sort by cost (lower is better) then by fit score
@@ -231,9 +229,7 @@ impl TaskDistributionEngine {
                     a_cost
                         .partial_cmp(&b_cost)
                         .unwrap_or(std::cmp::Ordering::Equal)
-                        .then_with(|| {
-                            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                        })
+                        .then_with(|| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
                 });
             }
             DistributionStrategy::AvailabilityOptimization => {
@@ -244,9 +240,7 @@ impl TaskDistributionEngine {
                     b_avail
                         .partial_cmp(&a_avail)
                         .unwrap_or(std::cmp::Ordering::Equal)
-                        .then_with(|| {
-                            b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                        })
+                        .then_with(|| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal))
                 });
             }
             DistributionStrategy::GeographicOptimization => {
@@ -263,9 +257,8 @@ impl TaskDistributionEngine {
                     });
                 } else {
                     // Fall back to best fit if no region preference
-                    scored.sort_by(|a, b| {
-                        b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal)
-                    });
+                    scored
+                        .sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
                 }
             }
             DistributionStrategy::Hybrid => {

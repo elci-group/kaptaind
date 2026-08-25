@@ -203,7 +203,10 @@ impl Collector for JeenomeCollector {
         }
 
         let Some(command) = &ctx.test_command else {
-            tracing::debug!(collector = "jeenome", "no test command configured, skipping collection");
+            tracing::debug!(
+                collector = "jeenome",
+                "no test command configured, skipping collection"
+            );
             return Ok(None);
         };
 

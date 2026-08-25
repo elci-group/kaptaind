@@ -1592,3 +1592,47 @@ configured push. Set `enabled = false` for a project-level opt-out. If the
 current branch is `desktop/production` or `mobile/production`, Kaptaind
 switches to the matching development branch before creating the commit and
 pushes that development branch instead.
+
+## Transactional pull engine
+
+`kaptaind pull` fetches and inspects upstream state before selecting or
+executing an integration. It never delegates to `git pull`. The same command
+surface remains available as `kaptaind-cli pull` for CLI-companion workflows.
+
+```bash
+kaptaind pull --check              # fetch + topology report only
+kaptaind pull --dry-run --json     # machine-readable plan, no integration
+kaptaind pull                      # automatic safe strategy
+kaptaind pull --strategy merge
+kaptaind pull --strategy rebase
+kaptaind pull --autostash
+kaptaind pull --status
+kaptaind pull --continue
+kaptaind pull --abort
+kaptaind pull --recover            # reclaim a stale lock, then recover
+```
+
+Remote and branch resolution follows CLI arguments, `[pull]` configuration,
+then the current branch's Git upstream. Kaptaind fails instead of guessing when
+no unambiguous target exists. Fetch updates only the selected remote-tracking
+ref. Every integration receives a recovery ref at
+`refs/kaptaind/recovery/<transaction-id>` and a redacted journal under
+`.kaptaind/transactions/<transaction-id>/`.
+
+```toml
+[pull]
+default_strategy = "merge"
+prune = true
+tags = "follow"                    # follow | all | none
+autostash = false
+protected_branches = ["main", "master", "production", "release/*"]
+critical_risk_threshold = 0.85
+# verify_build = "cargo build"
+# verify_tests = "cargo test"
+```
+
+Protected branches refuse implicit divergent reconciliation. Rebase is treated
+as history rewriting and always has a recovery ref. Explicit Hybreed and
+Emulsify strategies persist their advisory reconciliation report, then use
+Git's merge index; proposed resolutions are never silently accepted. Conflict
+journals retain stage-1/2/3 blob IDs and structural conflict kinds for review.

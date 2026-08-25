@@ -21,6 +21,8 @@ pub struct Config {
     #[serde(default)]
     pub push: PushConfig,
     #[serde(default)]
+    pub pull: PullConfig,
+    #[serde(default)]
     pub ratelimit: RateLimitConfig,
     #[serde(default)]
     pub test: TestConfig,
@@ -728,6 +730,75 @@ pub struct PushConfig {
     pub batch: BatchConfig,
     #[serde(default)]
     pub protection: PushProtectionConfig,
+}
+
+/// `[pull]` policy for transactional remote acquisition and integration.
+///
+/// `remote` and `branch` intentionally default to `None`: when CLI arguments
+/// are absent the pull engine resolves the current branch's Git upstream and
+/// fails safely if that relationship is ambiguous.
+#[derive(Debug, Clone, Deserialize)]
+pub struct PullConfig {
+    #[serde(default)]
+    pub remote: Option<String>,
+    #[serde(default)]
+    pub branch: Option<String>,
+    #[serde(default = "default_pull_strategy")]
+    pub default_strategy: String,
+    #[serde(default = "default_true")]
+    pub prune: bool,
+    #[serde(default = "default_fetch_tags")]
+    pub tags: String,
+    #[serde(default)]
+    pub autostash: bool,
+    #[serde(default = "default_pull_protected_branches")]
+    pub protected_branches: Vec<String>,
+    #[serde(default = "default_critical_risk_threshold")]
+    pub critical_risk_threshold: f32,
+    /// Optional project build command run after integration.
+    #[serde(default)]
+    pub verify_build: Option<String>,
+    /// Optional project test command run after integration.
+    #[serde(default)]
+    pub verify_tests: Option<String>,
+}
+
+impl Default for PullConfig {
+    fn default() -> Self {
+        Self {
+            remote: None,
+            branch: None,
+            default_strategy: default_pull_strategy(),
+            prune: true,
+            tags: default_fetch_tags(),
+            autostash: false,
+            protected_branches: default_pull_protected_branches(),
+            critical_risk_threshold: default_critical_risk_threshold(),
+            verify_build: None,
+            verify_tests: None,
+        }
+    }
+}
+
+fn default_pull_strategy() -> String {
+    "merge".to_owned()
+}
+
+fn default_fetch_tags() -> String {
+    "follow".to_owned()
+}
+
+fn default_pull_protected_branches() -> Vec<String> {
+    vec![
+        "main".to_owned(),
+        "master".to_owned(),
+        "production".to_owned(),
+        "release/*".to_owned(),
+    ]
+}
+
+fn default_critical_risk_threshold() -> f32 {
+    0.85
 }
 
 /// Remote configuration with purpose-based roles for Git-provider-saturated stack.
@@ -2433,6 +2504,20 @@ impl Config {
         if self.push.retry.attempt_timeout_secs == 0 {
             anyhow::bail!("push.retry.attempt_timeout_secs must be greater than 0");
         }
+        if !matches!(
+            self.pull.default_strategy.as_str(),
+            "auto" | "fast-forward" | "merge" | "rebase" | "hybreed" | "emulsify" | "manual"
+        ) {
+            anyhow::bail!(
+                "pull.default_strategy must be auto, fast-forward, merge, rebase, hybreed, emulsify, or manual"
+            );
+        }
+        if !matches!(self.pull.tags.as_str(), "follow" | "all" | "none") {
+            anyhow::bail!("pull.tags must be follow, all, or none");
+        }
+        if !(0.0..=1.0).contains(&self.pull.critical_risk_threshold) {
+            anyhow::bail!("pull.critical_risk_threshold must be between 0.0 and 1.0");
+        }
         if self.health_port == 0 {
             anyhow::bail!("health_port must be greater than 0");
         }
@@ -2557,6 +2642,7 @@ impl Default for Config {
             cluster: ClusterConfig::default(),
             weights: crate::weight::WeightConfig::default(),
             push: PushConfig::default(),
+            pull: PullConfig::default(),
             ratelimit: RateLimitConfig::default(),
             test: TestConfig::default(),
             jeenome: JeenomeConfig::default(),

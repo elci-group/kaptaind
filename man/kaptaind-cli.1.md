@@ -72,6 +72,29 @@ Example:
 
     kaptaind-cli analyze
 
+## pull
+
+**kaptaind-cli pull** [**--remote** *REMOTE*] [**--branch** *BRANCH*]
+[**--strategy** *STRATEGY*] [**--check**] [**--dry-run**] [**--force**]
+[**--autostash**] [**--verbose**] [**--json**]
+
+Fetch, inspect, plan, and transactionally integrate an upstream branch. The
+engine never invokes **git pull**. Strategies are **auto**, **fast-forward**,
+**merge**, **rebase**, **hybreed**, **emulsify**, and **manual**.
+
+**--check** and **--dry-run** may update the selected remote-tracking ref but
+do not modify the local branch, index, worktree, or commit history. Use
+**--status**, **--continue**, **--abort**, or **--recover** to inspect or resume
+a journaled transaction. **--autostash** explicitly permits Kaptaind to save
+and restore a dirty worktree; this is never the default.
+
+Examples:
+
+    kaptaind-cli pull --check
+    kaptaind-cli pull --dry-run --json
+    kaptaind-cli pull --strategy rebase
+    kaptaind-cli pull --abort
+
 ## dashboard
 
 **kaptaind-cli dashboard**
@@ -679,6 +702,12 @@ Examples:
 
 **1**
 :   General error, invalid configuration, permission failure, or command failure.
+
+Pull-specific stable exit statuses are **2** invalid invocation, **3** unsafe
+repository state, **4** remote unavailable, **5** authentication/authorization
+failure, **6** conflicts require intervention, **7** verification failure,
+**8** rollback failure, **9** operation already in progress, and **10** policy
+denied operation.
 
 # EXAMPLES
 

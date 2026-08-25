@@ -20,6 +20,7 @@ pub mod integrations;
 pub mod lifecycle;
 pub mod monitor;
 pub mod notify;
+pub mod pull;
 pub mod push;
 pub mod qualification;
 pub mod rbac;

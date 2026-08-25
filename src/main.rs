@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use kaptaind::util::style::*;
 
 #[derive(Parser)]
@@ -27,6 +27,7 @@ USAGE:\n  \
   kaptaind --dock       View watched projects\n  \
   kaptaind --radar      View active projects and event rates\n  \
   kaptaind --lanes      View service/model load breakdown\n  \
+  kaptaind pull         Fetch, inspect, plan, and integrate upstream state\n  \
   kaptaind --web        Start the WebUI dashboard (default port 8080)\n\n\
 ENVIRONMENT:\n  \
   RUST_LOG              Set logging level (debug, info, warn, error)\n  \
@@ -44,6 +45,9 @@ DOCUMENTATION:\n  \
   https://github.com/elci-group/kaptaind/blob/main/README.md"
 )]
 struct Cli {
+    #[command(subcommand)]
+    command: Option<Commands>,
+
     /// 🌙 Run kaptaind as a background daemon (non-blocking)
     ///
     /// Detaches from the terminal and runs in the background, writing logs to
@@ -131,6 +135,39 @@ struct Cli {
     force: bool,
 }
 
+#[derive(Subcommand)]
+enum Commands {
+    /// Safely fetch, inspect, plan, and integrate an upstream branch.
+    Pull {
+        #[arg(long)]
+        remote: Option<String>,
+        #[arg(long)]
+        branch: Option<String>,
+        #[arg(long, default_value = "auto", value_parser = ["auto", "fast-forward", "merge", "rebase", "hybreed", "emulsify", "manual"])]
+        strategy: String,
+        #[arg(long)]
+        check: bool,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        autostash: bool,
+        #[arg(long)]
+        abort: bool,
+        #[arg(long)]
+        r#continue: bool,
+        #[arg(long)]
+        status: bool,
+        #[arg(long)]
+        recover: bool,
+        #[arg(long)]
+        verbose: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
 fn main() -> anyhow::Result<()> {
     // Load optional `.env` file so provider API keys and other secrets can live
     // outside of `kaptaind.toml`.
@@ -153,6 +190,103 @@ fn main() -> anyhow::Result<()> {
         config.governance.tenant_id.clone(),
     );
     kaptaind::compliance::configure(config.clone());
+
+    if let Some(Commands::Pull {
+        remote,
+        branch,
+        strategy,
+        check,
+        dry_run,
+        force,
+        autostash,
+        abort,
+        r#continue,
+        status,
+        recover,
+        verbose,
+        json,
+    }) = cli.command
+    {
+        let controls = [abort, r#continue, status, recover]
+            .into_iter()
+            .filter(|enabled| *enabled)
+            .count();
+        if controls > 1 {
+            eprintln!("pull --abort, --continue, --status, and --recover are mutually exclusive");
+            std::process::exit(kaptaind::pull::ExitCode::InvalidInvocation as i32);
+        }
+        let result = if abort {
+            kaptaind::pull::abort(&config.repo_path).map(|()| None)
+        } else if recover {
+            kaptaind::pull::recover(&config.repo_path).map(|()| None)
+        } else if status {
+            match kaptaind::pull::status(&config.repo_path) {
+                Ok(value) => {
+                    if json || value.is_some() {
+                        println!("{}", serde_json::to_string_pretty(&value)?);
+                    } else {
+                        println!("No pull transactions found.");
+                    }
+                    Ok(None)
+                }
+                Err(error) => Err(error),
+            }
+        } else if r#continue {
+            kaptaind::pull::continue_operation(&config.repo_path, &config.pull).map(Some)
+        } else {
+            let parsed_result: Result<kaptaind::pull::IntegrationStrategy, _> = strategy.parse();
+            let parsed = match parsed_result {
+                Ok(strategy) => strategy,
+                Err(error) => {
+                    eprintln!("ERROR: {error}");
+                    std::process::exit(error.exit_code());
+                }
+            };
+            kaptaind::pull::run(
+                &config.repo_path,
+                &kaptaind::pull::PullOptions {
+                    remote,
+                    branch,
+                    strategy: parsed,
+                    check,
+                    dry_run,
+                    force,
+                    autostash,
+                    verbose,
+                    emit_assessment: !json,
+                },
+                &config.pull,
+                &config.integrations,
+            )
+            .map(Some)
+        };
+        match result {
+            Ok(Some(report)) if json => println!("{}", serde_json::to_string_pretty(&report)?),
+            Ok(Some(report)) => print!("{}", kaptaind::pull::render_text(&report, verbose)),
+            Ok(None) if abort || recover => {
+                println!("Kaptaind pull transaction restored to its recovery point.")
+            }
+            Ok(None) => {}
+            Err(error) => {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "schema": kaptaind::pull::JSON_SCHEMA,
+                            "operation": "pull",
+                            "status": "error",
+                            "exit_code": error.exit_code(),
+                            "error": error.to_string(),
+                        })
+                    );
+                } else {
+                    eprintln!("ERROR: {error}");
+                }
+                std::process::exit(error.exit_code());
+            }
+        }
+        return Ok(());
+    }
 
     // Track this project as active in the monitor registry.
     if let Err(error) = kaptaind::monitor::touch_last_active(&config.repo_path) {

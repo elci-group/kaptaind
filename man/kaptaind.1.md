@@ -14,6 +14,8 @@
 
 **kaptaind** **--dock** | **--radar** | **--lanes**
 
+**kaptaind pull** [*OPTIONS*]
+
 # DESCRIPTION
 
 **kaptaind** is a self-governing release companion that watches a repository for filesystem changes, clusters related events, analyzes the change set across structural, API, dependency, runtime, and bundle dimensions, computes a semantic-version bump, writes the **VERSION** file, persists analysis artifacts, creates a git commit, and optionally pushes.
@@ -21,6 +23,14 @@
 Run **kaptaind** in the foreground to see logs directly, or pass **--daemon** to detach and run under the project's **.kaptaind/** directory.
 
 The daemon's companion tool is **kaptaind-cli**(1).
+
+# COMMANDS
+
+## pull
+
+Fetch, inspect, plan, and transactionally integrate upstream Git state. The
+engine does not invoke **git pull**. See **kaptaind-cli**(1) for strategy,
+check/dry-run, autostash, recovery, JSON, and stable pull exit-code details.
 
 # OPTIONS
 
