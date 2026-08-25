@@ -1128,7 +1128,11 @@ mod tests {
         let recommendations =
             matrix.recommend_providers_with_fallback(&TaskType::SecurityScanning, true, 3);
 
-        assert_eq!(recommendations.len(), 3);
+        // Only "gitlab" registers a SecurityScanning capability at all, so a
+        // request for up to 3 correctly caps at however many actually
+        // exist (1), not the requested count — asserting 3 here was wrong
+        // regardless of the (correct) `.take(count)` fallback logic.
+        assert_eq!(recommendations.len(), 1);
         assert_eq!(recommendations[0], "gitlab");
     }
 

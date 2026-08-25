@@ -94,13 +94,36 @@ fn basic_regex_match(pattern: &str, text: &str) -> bool {
         return text.ends_with(pattern_suffix);
     }
 
-    // Exact match for simple patterns
+    // Exact match for simple patterns. `simple_glob_match` backslash-escapes
+    // regex metacharacters (e.g. `.` -> `\.`) when building this pseudo-regex,
+    // but this fallback compares raw text rather than interpreting regex
+    // syntax — so the escapes must be undone first, or a literal pattern like
+    // "README.md" (built as "^README\.md$") would never equal the real
+    // filename "README.md".
     if pattern.starts_with('^') && pattern.ends_with('$') {
-        let exact = &pattern[1..pattern.len() - 1];
+        let exact = unescape_regex_literal(&pattern[1..pattern.len() - 1]);
         return text == exact;
     }
 
     false
+}
+
+/// Undo the backslash-escaping `simple_glob_match` applies to regex
+/// metacharacters (`\.` -> `.`, etc.) — the inverse of its escape step, not
+/// a general regex-unescape.
+fn unescape_regex_literal(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(c) = chars.next() {
+        if c == '\\' {
+            if let Some(escaped) = chars.next() {
+                out.push(escaped);
+                continue;
+            }
+        }
+        out.push(c);
+    }
+    out
 }
 
 /// Select providers based on detected intent and provider capabilities.
