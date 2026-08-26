@@ -2690,7 +2690,24 @@ impl Default for Config {
     }
 }
 
+/// Loads configuration from, in order: an explicit `KAPTAIND_CONFIG` path (set
+/// by `--config` in both `kaptaind` and `kaptaind-cli`, or directly by the
+/// caller), or the discovered repo root's `kaptaind.toml`.
+///
+/// `--config`/`KAPTAIND_CONFIG` is documented in both binaries' `--help` text
+/// as the way to point at a non-default config path, but this function used
+/// to ignore it entirely and always resolve `<repo_root>/kaptaind.toml` from
+/// `cwd` — so `--config some/other.toml` silently loaded the repo's own
+/// `kaptaind.toml` instead. Surfaced while trying to run kaptaind against
+/// ferret with a temporary trust-and-actuate override, without touching
+/// ferret's tracked config.
 pub fn load() -> anyhow::Result<Config> {
+    if let Ok(explicit) = std::env::var("KAPTAIND_CONFIG") {
+        if !explicit.is_empty() {
+            return load_from_path(Path::new(&explicit));
+        }
+    }
+
     let cwd = std::env::current_dir()?;
     let repo_root = find_repo_root(&cwd);
     let path = repo_root.join("kaptaind.toml");
@@ -2960,6 +2977,46 @@ mod tests {
     use super::{finalize_config, CapabilitiesConfig, Config};
     use std::path::PathBuf;
     use std::time::Duration;
+
+    // Regression test: `--config <path>` (and `KAPTAIND_CONFIG` directly) set
+    // the env var but `load()` never read it, so it silently reloaded
+    // `<repo_root>/kaptaind.toml` from cwd instead of the requested path.
+    // Surfaced by running `kaptaind --config <temp-override>.toml` against
+    // ferret to trial a trust-and-actuate override without touching ferret's
+    // tracked config, and finding the override never took effect. Mutates
+    // the process-global `KAPTAIND_CONFIG` env var, so keep this the only
+    // test in this file that touches it, to avoid racing other tests.
+    #[test]
+    fn load_respects_kaptaind_config_env_var() {
+        let dir = std::env::temp_dir().join(format!(
+            "kaptaind-loader-test-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let repo_dir = dir.join("repo");
+        std::fs::create_dir_all(&repo_dir).unwrap();
+        let config_path = dir.join("override.toml");
+        std::fs::write(
+            &config_path,
+            format!(
+                "repo_path = \"{}\"\n[operation]\nmode = \"actuate\"\n",
+                repo_dir.display()
+            ),
+        )
+        .unwrap();
+
+        std::env::set_var("KAPTAIND_CONFIG", &config_path);
+        let loaded = super::load();
+        std::env::remove_var("KAPTAIND_CONFIG");
+
+        let loaded = loaded.expect("load() should honor KAPTAIND_CONFIG");
+        assert_eq!(loaded.repo_path, repo_dir);
+        assert_eq!(loaded.operation.mode, super::OperationMode::Actuate);
+    }
 
     #[test]
     fn operation_defaults_to_observe() {
