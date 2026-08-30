@@ -1,4 +1,40 @@
 use kaptaind::config::loader::Config;
+use std::path::Path;
+
+/// Validate that a file is a well-formed `bound-snapshot/v1` JSON document.
+pub fn validate_snapshot(path: &Path) -> anyhow::Result<bound_core::Snapshot> {
+    let bytes = std::fs::read(path)
+        .map_err(|error| anyhow::anyhow!("failed to read snapshot {}: {error}", path.display()))?;
+    let snapshot: bound_core::Snapshot = serde_json::from_slice(&bytes)
+        .map_err(|error| anyhow::anyhow!("invalid bound snapshot {}: {error}", path.display()))?;
+    if snapshot.schema != "bound-snapshot" {
+        anyhow::bail!(
+            "snapshot {} has unsupported schema '{}', expected 'bound-snapshot'",
+            path.display(),
+            snapshot.schema
+        );
+    }
+    if snapshot.schema_version != "1" {
+        anyhow::bail!(
+            "snapshot {} has unsupported schema version '{}', expected '1'",
+            path.display(),
+            snapshot.schema_version
+        );
+    }
+    Ok(snapshot)
+}
+
+/// Record a `bound-snapshot/v1` artifact as release evidence, validating the
+/// schema before hashing so kaptaind never attaches a malformed snapshot.
+pub fn record_snapshot(config: &Config, version: &str, file: &Path) -> anyhow::Result<()> {
+    let snapshot = validate_snapshot(file)?;
+    let source = format!(
+        "bound-snapshot/v1 {} files from {}",
+        snapshot.summary.file_count,
+        snapshot.target.display()
+    );
+    record(config, version, "bound-snapshot", &source, file)
+}
 
 /// Record externally produced evidence by digest and provenance only.
 pub fn record(

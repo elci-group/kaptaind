@@ -46,6 +46,19 @@ CONFIG FILE:
     Then start the daemon with:
         kaptaind --daemon
 
+REPOSITORY MUTATION:
+    A generated profile defaults to observe-only: `kaptaind-cli analyze` and
+    the daemon both score changes and record the decision, but nothing is
+    staged, committed, VERSION-written, pushed, or shipped. Add to
+    kaptaind.toml to allow real commits:
+        [operation]
+        mode = "actuate"
+    Pushing additionally needs [push] enabled = true and
+    [capabilities] network_push = true. `kaptaind-cli validate` does not
+    currently flag observe-only repos; check `kaptaind-cli explain` or
+    `.kaptaind/decisions.jsonl` for `"outcome":"observed"` if commits stop
+    appearing. See CHANGELOG.md [10.2.0] and [10.1.4].
+
 DOCUMENTATION:
     https://github.com/elci-group/kaptaind
     https://github.com/elci-group/kaptaind/blob/main/README.md
@@ -1719,7 +1732,7 @@ enum ServiceCommand {
     /// 🔧 Install the user or system service
     #[command(long_about = r#"Purpose:
     Install a systemd user service (Linux), LaunchAgent (macOS), or shell
-    autostart fallback that runs `kaptaind-cli monitor resume` on login.
+    autostart fallback that runs `kaptaind-supervisor run` on login.
     The system variant writes to /etc/systemd/system and requires root.
 
 Usage:
@@ -2069,6 +2082,13 @@ enum EvidenceCommand {
         kind: String,
         #[arg(long)]
         source: String,
+        #[arg(long)]
+        file: PathBuf,
+    },
+    /// Validate and record a bound-snapshot/v1 artifact as release evidence.
+    AttachSnapshot {
+        #[arg(long)]
+        version: String,
         #[arg(long)]
         file: PathBuf,
     },
@@ -2688,6 +2708,10 @@ async fn main() -> anyhow::Result<()> {
         }) => {
             kaptaind::rbac::check_permission(&config.rbac, "ship.run")?;
             commands::evidence::record(&config, version, kind, source, file)?;
+        }
+        Commands::Evidence(EvidenceCommand::AttachSnapshot { version, file }) => {
+            kaptaind::rbac::check_permission(&config.rbac, "ship.run")?;
+            commands::evidence::record_snapshot(&config, version, file)?;
         }
         Commands::Governance { format } => {
             commands::governance::handle_governance_assess(&config, format)?;

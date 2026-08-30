@@ -260,6 +260,22 @@ kaptaind --daemon
 kaptaind-cli status
 ```
 
+5. **Note:** the `kaptaind.toml` from step 2 defaults to observe-only — the
+   daemon will analyze and score your changes but won't commit or push
+   anything yet. `kaptaind-cli status` and `kaptaind-cli validate` won't tell
+   you this either. Add the following once you're ready for it to actually
+   commit:
+
+```toml
+[operation]
+mode = "actuate"
+```
+
+   Pushing needs `[push] enabled = true` and
+   `[capabilities] network_push = true` on top of that. See
+   [Repository mutation: observe vs. actuate](README.md#repository-mutation-observe-vs-actuate)
+   in the README for the full gate list.
+
 ---
 
 ## Man Pages

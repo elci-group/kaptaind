@@ -13,6 +13,26 @@ All notable changes to kaptaind are documented here. The format follows
 > here. Per-commit detail for the `v0.1.44 → v9.x` range lives in `git log`;
 > the consolidated capability set is summarized under `[9.7.16]` below.
 
+## [10.2.0] — 2026-08-01
+
+Minor release: an explicit observe/actuate gate around every repository
+mutation.
+
+### Added
+- **`[operation] mode`**: controls whether the daemon may perform repository
+  mutations at all. `"observe"` (the default) runs the full analysis and
+  scoring pipeline and records the decision to `.kaptaind/decisions.jsonl`,
+  but never stages, commits, writes `VERSION`, pushes, or ships. `"actuate"`
+  is required before any of those happen. `kaptaind-cli analyze` and
+  `kaptaind-cli validate` do not currently flag a repo left in observe mode —
+  check `kaptaind-cli explain` or `decisions.jsonl` for `"outcome":"observed"`
+  if commits unexpectedly stop appearing after upgrading.
+- This is additive to the `[trust]` and `[capabilities]` gates from
+  [10.1.4](#1014--2026-07-18): a repository profile now needs
+  `[trust] execution = "trusted"`, `[operation] mode = "actuate"`, and (for
+  pushing) `[capabilities] network_push = true` together before the daemon
+  will touch the working tree or the remote.
+
 ## [10.3.2] — 2026-08-25
 
 ### Added

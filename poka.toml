@@ -1,0 +1,10 @@
+[project]
+name = "kaptaind"
+
+[tools]
+lwoodz = true
+
+[rules]
+documentation = true
+security = true
+testing = true

@@ -145,7 +145,7 @@ fn read_live_pid(pid_file: &Path) -> Option<i32> {
     None
 }
 
-/// Install the systemd/launchd service that runs `monitor resume` on login.
+/// Install the systemd/launchd service that runs the resident supervisor.
 pub fn install_service(user: bool, system: bool) -> anyhow::Result<()> {
     if user && system {
         anyhow::bail!("Specify either --user or --system, not both.");
@@ -164,14 +164,15 @@ pub fn install_service(user: bool, system: bool) -> anyhow::Result<()> {
             std::fs::create_dir_all(&systemd_dir)?;
 
             let service_content = r#"[Unit]
-Description=Kaptaind - Automated Semantic Versioning Daemon
+Description=Kaptaind - Padagonia-backed Project Supervisor
 Documentation=https://github.com/elci-group/kaptaind
 After=network.target
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart=%h/.local/bin/kaptaind-cli monitor resume
+Type=simple
+ExecStart=%h/.local/bin/kaptaind-supervisor run
+Restart=on-failure
+RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=kaptaind
@@ -194,7 +195,8 @@ WantedBy=default.target
             println!(
                 "{} {}",
                 "✓".green(),
-                "User service installed. kaptaind will resume monitored projects on login.".green()
+                "User service installed. kaptaind supervisor will reconcile projects on login."
+                    .green()
             );
             println!("  Service file: {}", service_path);
             println!("  Start now: systemctl --user start kaptaind");
@@ -204,14 +206,15 @@ WantedBy=default.target
 
             let service_content = format!(
                 r#"[Unit]
-Description=Kaptaind - Automated Semantic Versioning Daemon
+Description=Kaptaind - Padagonia-backed Project Supervisor
 Documentation=https://github.com/elci-group/kaptaind
 After=network.target
 
 [Service]
-Type=oneshot
-RemainAfterExit=yes
-ExecStart={} monitor resume
+Type=simple
+ExecStart={} run
+Restart=on-failure
+RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=kaptaind
@@ -233,7 +236,7 @@ WantedBy=multi-user.target
                     println!(
                         "{} {}",
                         "✓".green(),
-                        "System service installed. kaptaind will resume monitored projects at boot."
+                        "System service installed. kaptaind supervisor will reconcile projects at boot."
                             .green()
                     );
                     println!("  Service file: {}", service_path);
@@ -269,9 +272,8 @@ WantedBy=multi-user.target
   <string>com.elcigroup.kaptaind</string>
   <key>ProgramArguments</key>
   <array>
-    <string>{}/.local/bin/kaptaind-cli</string>
-    <string>monitor</string>
-    <string>resume</string>
+    <string>{}/.local/bin/kaptaind-supervisor</string>
+    <string>run</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -296,7 +298,7 @@ WantedBy=multi-user.target
             println!(
                 "{} {}",
                 "✓".green(),
-                "User LaunchAgent installed. kaptaind will resume monitored projects on login."
+                "User LaunchAgent installed. kaptaind supervisor will reconcile projects on login."
                     .green()
             );
             println!("  Plist file: {}", plist_path);
@@ -313,8 +315,7 @@ WantedBy=multi-user.target
   <key>ProgramArguments</key>
   <array>
     <string>{}</string>
-    <string>monitor</string>
-    <string>resume</string>
+    <string>run</string>
   </array>
   <key>RunAtLoad</key>
   <true/>
@@ -338,7 +339,7 @@ WantedBy=multi-user.target
                     println!(
                         "{} {}",
                         "✓".green(),
-                        "System LaunchDaemon installed. kaptaind will resume monitored projects at boot."
+                        "System LaunchDaemon installed. kaptaind supervisor will reconcile projects at boot."
                             .green()
                     );
                     println!("  Plist file: {}", plist_path);
@@ -561,7 +562,7 @@ pub fn service_status(user: bool, system: bool) -> anyhow::Result<()> {
             let path = format!("{}/{}", home, rc);
             if Path::new(&path).exists() {
                 if let Ok(content) = std::fs::read_to_string(&path) {
-                    if content.contains("kaptaind-cli monitor resume") {
+                    if content.contains("kaptaind-supervisor run") {
                         installed = true;
                         println!("  Found in: {}", path);
                     }
@@ -579,7 +580,10 @@ pub fn service_status(user: bool, system: bool) -> anyhow::Result<()> {
 }
 
 fn resolve_system_binary() -> std::path::PathBuf {
-    let candidates = ["/usr/local/bin/kaptaind-cli", "/bin/kaptaind-cli"];
+    let candidates = [
+        "/usr/local/bin/kaptaind-supervisor",
+        "/bin/kaptaind-supervisor",
+    ];
     for c in &candidates {
         if Path::new(c).exists() {
             return Path::new(c).to_path_buf();
@@ -588,20 +592,21 @@ fn resolve_system_binary() -> std::path::PathBuf {
     eprintln!(
         "{} {}",
         "⚠️".yellow(),
-        "kaptaind-cli not found at /usr/local/bin/kaptaind-cli or /bin/kaptaind-cli.".yellow()
+        "kaptaind-supervisor not found at /usr/local/bin/kaptaind-supervisor or /bin/kaptaind-supervisor."
+            .yellow()
     );
     eprintln!(
-        "   Symlink your binary first, e.g.: sudo ln -s $(which kaptaind-cli) /usr/local/bin/kaptaind-cli"
+        "   Symlink your binary first, e.g.: sudo ln -s $(which kaptaind-supervisor) /usr/local/bin/kaptaind-supervisor"
     );
     // Return the default path anyway; the service will fail clearly if missing.
-    std::path::PathBuf::from("/usr/local/bin/kaptaind-cli")
+    std::path::PathBuf::from("/usr/local/bin/kaptaind-supervisor")
 }
 
 #[cfg(not(any(target_os = "linux", target_os = "macos")))]
 fn install_shell_autostart() -> anyhow::Result<()> {
     let home = std::env::var("HOME")?;
     let autostart_line =
-        "# Auto-start kaptaind\nexport PATH=\"$HOME/.local/bin:$PATH\"\nkaptaind-cli monitor resume > /dev/null 2>&1\n";
+        "# Auto-start kaptaind\nexport PATH=\"$HOME/.local/bin:$PATH\"\nkaptaind-supervisor run > /dev/null 2>&1 &\n";
 
     for rc_file in [".bashrc", ".zshrc"] {
         let rc_path = format!("{}/{}", home, rc_file);
@@ -609,7 +614,7 @@ fn install_shell_autostart() -> anyhow::Result<()> {
             continue;
         }
         let content = std::fs::read_to_string(&rc_path)?;
-        if !content.contains("kaptaind-cli monitor resume") {
+        if !content.contains("kaptaind-supervisor run") {
             use std::io::Write;
             let mut file = std::fs::OpenOptions::new().append(true).open(&rc_path)?;
             writeln!(file, "\n{}", autostart_line)?;
@@ -619,7 +624,8 @@ fn install_shell_autostart() -> anyhow::Result<()> {
     println!(
         "{} {}",
         "✓".green(),
-        "Shell autostart installed. kaptaind will resume monitored projects in new shells.".green()
+        "Shell autostart installed. kaptaind supervisor will reconcile projects in new shells."
+            .green()
     );
     Ok(())
 }
@@ -633,11 +639,11 @@ fn remove_shell_autostart() -> anyhow::Result<()> {
             continue;
         }
         let content = std::fs::read_to_string(&rc_path)?;
-        if content.contains("kaptaind-cli monitor resume") {
+        if content.contains("kaptaind-supervisor run") {
             let filtered: String = content
                 .lines()
                 .filter(|line| {
-                    !line.contains("kaptaind-cli monitor resume")
+                    !line.contains("kaptaind-supervisor run")
                         && !line.contains("# Auto-start kaptaind")
                 })
                 .map(|line| format!("{}\n", line))

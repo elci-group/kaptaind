@@ -35,6 +35,14 @@ ENVIRONMENT:\n  \
 CONFIG FILE:\n  \
   Default location: ./kaptaind.toml\n  \
   Generate with:   kaptaind-cli init\n\n\
+REPOSITORY MUTATION:\n  \
+  New profiles default to observe-only: the daemon scores every change and\n  \
+  records the decision, but never stages, commits, writes VERSION, pushes, or\n  \
+  ships. Opt a repo into real commits with:\n  \
+    [operation]\n  \
+    mode = \"actuate\"\n  \
+  Pushing additionally needs [push] enabled = true and\n  \
+  [capabilities] network_push = true. See CHANGELOG.md [10.2.0] and [10.1.4].\n\n\
 DAEMON MODE:\n  \
   Start:   kaptaind --daemon\n  \
   Check:   kaptaind-cli status\n  \

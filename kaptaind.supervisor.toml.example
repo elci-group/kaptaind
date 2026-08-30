@@ -1,0 +1,19 @@
+# Resident fleet supervisor. Relative paths resolve from this file's directory.
+state_path = "supervisor-state.json"
+legacy_registry_path = "monitored.json"
+listen_addr = "127.0.0.1:3213"
+reconcile_interval_secs = 30
+max_starts_per_cycle = 4
+worker_binary = "kaptaind"
+
+# Optional bearer protection for POST /api/v1/reconcile. The token itself is
+# read from the environment and must never be written to this file.
+api_token_env = "KAPTAIND_SUPERVISOR_TOKEN"
+
+[padagonia]
+enabled = true
+required = false
+endpoint = "http://127.0.0.1:7373"
+namespace = "kaptaind"
+token_env = "PADAGONIA_API_KEY"
+timeout_secs = 5

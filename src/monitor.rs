@@ -52,7 +52,10 @@ pub fn load_registry() -> Result<MonitorRegistry> {
 }
 
 pub fn save_registry(registry: &MonitorRegistry) -> Result<()> {
-    save_registry_at(&registry_path()?, registry)
+    save_registry_at(&registry_path()?, registry)?;
+    crate::supervisor::store::sync_default_from_legacy(registry)
+        .context("legacy monitor registry saved but supervisor snapshot synchronization failed")?;
+    Ok(())
 }
 
 pub fn load_registry_at(path: &Path) -> Result<MonitorRegistry> {

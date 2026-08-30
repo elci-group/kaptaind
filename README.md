@@ -148,6 +148,10 @@ kaptaind-cli init
 
 Supported project types: Rust, Node, Python, Go, Swift, Kotlin. The command auto-detects by looking for `Cargo.toml`, `package.json`, `Package.swift`, `build.gradle.kts`, etc.
 
+A generated `kaptaind.toml` is **observe-only** until you opt in — see
+[Repository mutation: observe vs. actuate](#repository-mutation-observe-vs-actuate)
+below before expecting `kaptaind` to actually commit anything.
+
 ### CLI Inspection (`kaptaind-cli`)
 
 Kaptaind comes with a secondary binary to inspect the daemon's state:
@@ -315,13 +319,17 @@ You can also use special `kaptaind` flags to see system indices:
 
 ![Kaptaind System Indices](views.gif)
 
-## Monitor & Auto-Start
+## Padagonia Supervisor, Monitor Registry & Auto-Start
 
 Kaptaind keeps a JSON registry at `~/.config/kaptaind/monitored.json` of every
 project you want to watch across logins. Each entry stores the absolute project
 path, the absolute config path, an `enabled` flag, a dedicated `health_port`, and
-the `last_active` timestamp. Using a per-project health port means you can run
-multiple daemons on the same host without port collisions.
+the `last_active` timestamp. Monitor changes are compatibility-dual-written into
+the versioned `kaptaind.supervisor/v1` continuity snapshot. The resident
+`kaptaind-supervisor` reconciles this desired state, projects versioned control
+records into Padagonia, and starts a separate `kaptaind --daemon` process for
+each active repository. Tests, credentials, Git changes, and releases remain
+isolated inside those project workers.
 
 Register the current project:
 
@@ -341,7 +349,26 @@ List registered projects:
 kaptaind-cli monitor list
 ```
 
-Resume all enabled projects that are not already running:
+Preview the resident supervisor plan without starting workers:
+
+```bash
+kaptaind-supervisor plan
+```
+
+Run one dry reconciliation:
+
+```bash
+kaptaind-supervisor once --dry-run
+```
+
+Run the resident supervisor and its loopback API (default `127.0.0.1:3213`):
+
+```bash
+kaptaind-supervisor run
+```
+
+The previous one-shot launcher remains available as a rollback and
+compatibility path:
 
 ```bash
 kaptaind-cli monitor resume
@@ -354,7 +381,7 @@ kaptaind-cli monitor disable ~/projects/my-app
 kaptaind-cli monitor enable ~/projects/my-app
 ```
 
-Install a user systemd service that resumes monitored projects on login:
+Install a user systemd/launchd service that runs the resident supervisor:
 
 ```bash
 kaptaind-cli service install --user
@@ -366,10 +393,15 @@ A system-wide service is also available (requires root):
 sudo kaptaind-cli service install --system
 ```
 
-When the daemon starts successfully, it updates the registry entry's
-`last_active` timestamp. On the next login, the installed service runs
-`kaptaind-cli monitor resume`, which starts a `kaptaind --daemon` instance for
-each enabled project, using each project's stored config and health port.
+Copy `kaptaind.supervisor.toml.example` to
+`~/.config/kaptaind/supervisor.toml`, set `PADAGONIA_API_KEY` outside the file,
+and enable Padagonia when its local server is ready. Plaintext Padagonia HTTP
+is accepted only on loopback; remote endpoints require HTTPS. Padagonia can be
+optional (local snapshot continuity) or required for supervisor readiness.
+Existing running workers are adopted rather than restarted, and disabling a
+project never implicitly kills its worker. See
+[`docs/ENTERPRISE_PADAGONIA_SUPERVISOR_DIRECTIVE.md`](docs/ENTERPRISE_PADAGONIA_SUPERVISOR_DIRECTIVE.md)
+for authority boundaries, migration gates, failure semantics, and rollback.
 
 ### Background Architecture & Daemon Lifecycle
 
@@ -461,6 +493,41 @@ Open `http://localhost:8080/` to view the dashboard.
 ## Configuration
 
 `kaptaind` looks for an optional configuration file `kaptaind.toml` in the repository root, or at the path supplied via `--config`. If the file is missing, sensible defaults are used.
+
+### Repository mutation: observe vs. actuate
+
+By default — including a freshly generated `kaptaind-cli init`/`trawl` profile
+— the daemon runs **observe-only**: it watches, clusters, scores, and records
+every decision to `.kaptaind/decisions.jsonl`, but never stages, commits,
+writes `VERSION`, pushes, or ships. Nothing else in the CLI calls this out:
+`kaptaind-cli validate` reports the config as valid either way, and
+`kaptaind-cli analyze` prints the projected bump without noting that it won't
+actually happen. If commits stop appearing, check
+`kaptaind-cli explain` or grep `decisions.jsonl` for `"outcome":"observed"`
+before assuming something is broken.
+
+To let the daemon actually mutate the repository, opt in explicitly:
+
+```toml
+[operation]
+mode = "actuate"   # default is "observe"
+```
+
+Three independent gates must all be satisfied before the daemon will touch
+anything, each an explicit opt-in (see [10.1.4] and [10.2.0] in
+[CHANGELOG.md](CHANGELOG.md)):
+
+| Gate | Config | Unlocks |
+|---|---|---|
+| `[trust] execution = "trusted"` | required for a repo profile that runs `[test].command` or other configured shell commands | running the pre-commit test hook at all |
+| `[operation] mode = "actuate"` | default `"observe"` | staging, committing, writing `VERSION` |
+| `[push] enabled = true` **and** `[capabilities] network_push = true` | both default `false` | pushing the commit to the remote |
+
+The bundled preset profiles (`kaptaind.safe-default.toml`,
+`kaptaind.enterprise.toml`, `kaptaind.dogfood.toml`, `kaptaind.airgapped.toml`,
+`kaptaind.demo-unsafe.toml`) all ship `mode = "observe"` deliberately —
+actuation is meant to be a conscious, per-repository decision, not a preset
+you inherit.
 
 ### Core
 
