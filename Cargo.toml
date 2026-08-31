@@ -4,7 +4,7 @@ resolver = "2"
 
 [package]
 name = "kaptaind"
-version = "10.3.2"
+version = "10.3.3"
 edition = "2021"
 license = "MIT"
 default-run = "kaptaind"
@@ -46,7 +46,7 @@ cron = "0.15"
 petgraph = "0.6"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-rusqlite = { version = "0.31", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
 semver = { version = "1", features = ["serde"] }
 globset = "0.4"
 glob = "0.3"
