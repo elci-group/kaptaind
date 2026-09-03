@@ -1630,18 +1630,23 @@ As `kaptaind` runs, it drops critical artifacts:
 Standard open-source MIT License.
 ## Branch integration analysis
 
-Kaptaind can use the optional `hybreed` and `emulsify` executables to assess a
-proposed branch integration without changing Git history:
+Kaptaind can use the optional `hybreed`, `scrawny`, and `emulsify`
+executables to assess a proposed branch integration without changing Git
+history:
 
 ```bash
 kaptaind-cli integrate analyze main feature/auth
 kaptaind-cli integrate analyze main feature/auth --json --no-persist
 ```
 
-Hybreed evaluates branch relationships and structural conflicts. Emulsify
-compares isolated snapshots of both refs and reports consolidation risk. The
-combined recommendation is advisory; promotion and release commands still
-require their existing explicit validation gates. Reports are persisted under
+Hybreed evaluates branch relationships and structural conflicts. Scrawny
+scores how review-hostile `feature/auth`'s own changes are since it diverged
+from `main` — review load, cohesion, and concern mix — against that
+repository's `.scrawny.toml` policy; a policy failure is surfaced in the
+recommendation, not treated as a tool crash. Emulsify compares isolated
+snapshots of both refs and reports consolidation risk. The combined
+recommendation is advisory; promotion and release commands still require
+their existing explicit validation gates. Reports are persisted under
 `.kaptaind/integration/` and recorded in the append-only audit log. Executable
 names and the per-tool timeout can be overridden in `[integrations]`:
 
@@ -1650,11 +1655,12 @@ names and the per-tool timeout can be overridden in `[integrations]`:
 enabled = true
 required = false
 hybreed_command = "hybreed"
+scrawny_command = "scrawny"
 emulsify_command = "emulsify"
 timeout_secs = 120
 ```
 
-When enabled (the default), daemon commits run both analyses before any
+When enabled (the default), daemon commits run all three analyses before any
 configured push. Set `enabled = false` for a project-level opt-out. If the
 current branch is `desktop/production` or `mobile/production`, Kaptaind
 switches to the matching development branch before creating the commit and

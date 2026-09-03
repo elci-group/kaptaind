@@ -1227,7 +1227,7 @@ impl Default for CapabilitiesConfig {
 pub struct IntegrationsConfig {
     #[serde(default)]
     pub connectors: Vec<crate::integrations::ConnectorConfig>,
-    /// Run Hybreed and Emulsify around daemon commit/push operations.
+    /// Run Hybreed, Scrawny, and Emulsify around daemon commit/push operations.
     #[serde(default = "default_integrations_enabled")]
     pub enabled: bool,
     /// When enabled, an unavailable or failed analyzer blocks the push.
@@ -1239,6 +1239,9 @@ pub struct IntegrationsConfig {
     /// Executable used for multi-tree consolidation analysis.
     #[serde(default = "default_emulsify_command")]
     pub emulsify_command: String,
+    /// Executable used for review-load / change-decomposition analysis.
+    #[serde(default = "default_scrawny_command")]
+    pub scrawny_command: String,
     /// Maximum time allotted to each external analysis command.
     #[serde(default = "default_integration_timeout_secs")]
     pub timeout_secs: u64,
@@ -1252,6 +1255,7 @@ impl Default for IntegrationsConfig {
             required: false,
             hybreed_command: default_hybreed_command(),
             emulsify_command: default_emulsify_command(),
+            scrawny_command: default_scrawny_command(),
             timeout_secs: default_integration_timeout_secs(),
         }
     }
@@ -1267,6 +1271,10 @@ fn default_hybreed_command() -> String {
 
 fn default_emulsify_command() -> String {
     "emulsify".to_owned()
+}
+
+fn default_scrawny_command() -> String {
+    "scrawny".to_owned()
 }
 
 fn default_integration_timeout_secs() -> u64 {

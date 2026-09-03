@@ -95,7 +95,7 @@ async fn push_with_audit(
     actor: &str,
 ) -> anyhow::Result<()> {
     crate::integration::automatic_check(repo_path)
-        .context("automatic Hybreed/Emulsify integration check failed")?;
+        .context("automatic Hybreed/Scrawny/Emulsify integration check failed")?;
     if options
         .protect_branches
         .iter()

@@ -1,7 +1,12 @@
-//! External merge/consolidation analysis through Hybreed and Emulsify.
+//! External merge/consolidation/review-load analysis through Hybreed,
+//! Scrawny, and Emulsify.
 //!
 //! The integration is deliberately advisory: it records deterministic tool
-//! output and never merges, resets, or rewrites a repository branch.
+//! output and never merges, resets, or rewrites a repository branch. Hybreed
+//! judges branch relationships, Scrawny judges how hard the *content* of
+//! `source` since it diverged from `target` will be to review, and Emulsify
+//! judges multi-tree consolidation risk. A Scrawny policy failure is a
+//! verdict, not a tool crash — see `run_scrawny_check`.
 
 use crate::config::loader::IntegrationsConfig;
 use anyhow::{Context, Result};
@@ -20,6 +25,7 @@ pub struct IntegrationReport {
     pub target: String,
     pub source: String,
     pub hybreed: Value,
+    pub scrawny: Value,
     pub emulsify: Value,
     pub recommendation: String,
     pub persisted: Option<PathBuf>,
@@ -44,6 +50,11 @@ pub fn analyse(
     } else {
         config.emulsify_command.as_str()
     };
+    let scrawny_program = if config.scrawny_command.trim().is_empty() {
+        "scrawny"
+    } else {
+        config.scrawny_command.as_str()
+    };
     let hybreed = run_json(
         hybreed_program,
         &[
@@ -59,6 +70,17 @@ pub fn analyse(
     )
     .with_context(|| format!("running Hybreed for {target} and {source}"))?;
 
+    // Only `source`'s own changes since it diverged from `target` — the unit
+    // a reviewer would actually be asked to approve, not the union of both
+    // branches' history.
+    let range_diff = diff_range(repo, target, source)?;
+    let scrawny = run_scrawny_check(
+        scrawny_program,
+        &["--path", path_arg(repo), "--format", "json", "check", "--stdin"],
+        range_diff.as_bytes(),
+    )
+    .with_context(|| format!("running Scrawny for {target} and {source}"))?;
+
     let work = TempTrees::new(repo, target, source)?;
     let emulsify = run_json(
         emulsify_program,
@@ -73,13 +95,14 @@ pub fn analyse(
     .with_context(|| format!("running Emulsify for {target} and {source}"))?;
     drop(work);
 
-    let recommendation = recommendation(&hybreed, &emulsify);
+    let recommendation = recommendation(&hybreed, &scrawny, &emulsify);
     let mut report = IntegrationReport {
         generated_at: Utc::now(),
         repository: repo.to_path_buf(),
         target: target.to_owned(),
         source: source.to_owned(),
         hybreed,
+        scrawny,
         emulsify,
         recommendation,
         persisted: None,
@@ -180,7 +203,7 @@ fn ref_exists(repo: &Path, reference: &str) -> bool {
         .unwrap_or(false)
 }
 
-fn recommendation(hybreed: &Value, emulsify: &Value) -> String {
+fn recommendation(hybreed: &Value, scrawny: &Value, emulsify: &Value) -> String {
     let decision = hybreed
         .get("decision")
         .and_then(Value::as_str)
@@ -193,7 +216,16 @@ fn recommendation(hybreed: &Value, emulsify: &Value) -> String {
         .and_then(|step| step.get("action"))
         .and_then(Value::as_str)
         .unwrap_or("review");
-    format!("Hybreed: {decision}; Emulsify: {action}; explicit validation required")
+    let review = match scrawny.get("passed").and_then(Value::as_bool) {
+        Some(true) => "review-ready".to_owned(),
+        Some(false) => {
+            let load = scrawny.get("review_load").and_then(Value::as_u64).unwrap_or(0);
+            let max = scrawny.get("max_review_load").and_then(Value::as_u64).unwrap_or(0);
+            format!("review load {load}/100 exceeds policy ({max})")
+        }
+        None => "unavailable".to_owned(),
+    };
+    format!("Hybreed: {decision}; Scrawny: {review}; Emulsify: {action}; explicit validation required")
 }
 
 fn run_json(program: &str, args: &[&str], _timeout_secs: u64) -> Result<Value> {
@@ -210,6 +242,69 @@ fn run_json(program: &str, args: &[&str], _timeout_secs: u64) -> Result<Value> {
     }
     let text = String::from_utf8(output.stdout).context("tool output was not UTF-8")?;
     serde_json::from_str(&text).with_context(|| format!("{program} did not return JSON"))
+}
+
+/// `source`'s own changes since it diverged from `target` (three-dot diff
+/// against the merge base) — the unit Scrawny should score, not the union of
+/// both branches' unrelated history.
+fn diff_range(repo: &Path, target: &str, source: &str) -> Result<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(repo)
+        .arg("diff")
+        .arg(format!("{target}...{source}"))
+        .output()
+        .with_context(|| format!("running git diff {target}...{source}"))?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git diff {target}...{source} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+}
+
+/// Run `scrawny check --stdin` with `stdin_data` piped in.
+///
+/// Unlike `run_json`, a non-zero exit here is not necessarily a tool
+/// failure: `scrawny check` exits non-zero specifically to signal a policy
+/// FAIL, with a valid JSON verdict still on stdout (`{"passed": false, ...}`).
+/// That is data for the report, not an execution error — only bail when
+/// stdout doesn't carry a recognisable verdict at all.
+fn run_scrawny_check(program: &str, args: &[&str], stdin_data: &[u8]) -> Result<Value> {
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| format!("could not execute {program}"))?;
+    child
+        .stdin
+        .take()
+        .expect("stdin was requested via Stdio::piped()")
+        .write_all(stdin_data)
+        .with_context(|| format!("writing diff to {program} stdin"))?;
+    let output = child
+        .wait_with_output()
+        .with_context(|| format!("waiting for {program}"))?;
+
+    let text = String::from_utf8(output.stdout).context("tool output was not UTF-8")?;
+    let value: Value = serde_json::from_str(&text)
+        .with_context(|| format!("{program} did not return JSON ({}): {}", output.status, String::from_utf8_lossy(&output.stderr).trim()))?;
+
+    if !output.status.success() && value.get("passed").is_none() {
+        anyhow::bail!(
+            "{program} failed ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+
+    Ok(value)
 }
 
 fn path_arg(path: &Path) -> &str {
@@ -283,12 +378,31 @@ mod tests {
     use serde_json::json;
 
     #[test]
-    fn recommendation_combines_both_tools() {
+    fn recommendation_combines_all_three_tools() {
         let result = recommendation(
             &json!({"decision":"Merge"}),
+            &json!({"passed": true}),
             &json!({"plan":{"steps":[{"action":"emulsify"}]}}),
         );
         assert!(result.contains("Merge"));
+        assert!(result.contains("review-ready"));
         assert!(result.contains("emulsify"));
+    }
+
+    #[test]
+    fn recommendation_surfaces_a_scrawny_policy_failure() {
+        let result = recommendation(
+            &json!({"decision":"Merge"}),
+            &json!({"passed": false, "review_load": 81, "max_review_load": 70}),
+            &json!({"plan":{"steps":[{"action":"emulsify"}]}}),
+        );
+        assert!(result.contains("81/100"));
+        assert!(result.contains("exceeds policy (70)"));
+    }
+
+    #[test]
+    fn recommendation_reports_scrawny_unavailable_without_failing() {
+        let result = recommendation(&json!({}), &json!(null), &json!({}));
+        assert!(result.contains("Scrawny: unavailable"));
     }
 }
