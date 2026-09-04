@@ -1,6 +1,6 @@
-% KAPTAIND-CLI(1) kaptaind 9.6.3
+% KAPTAIND-CLI(1) kaptaind 10.3.3
 % Elci Group
-% July 2026
+% September 2026
 
 # NAME
 
@@ -39,6 +39,64 @@ Example:
 
     kaptaind-cli status
 
+## branch
+
+**kaptaind-cli branch** *SUBCOMMAND*
+
+Govern the repository's typed branch lifecycle.
+
+### branch status
+
+**kaptaind-cli branch status** [**--json**] [**--platform** *desktop*|*mobile*]
+
+Report branch topology, versions, revisions, divergence, and promotion readiness.
+
+### branch init
+
+**kaptaind-cli branch init** [**--dry-run**] [**--json**]
+
+Create missing mandatory lifecycle branches without overwriting existing refs.
+
+### branch sync
+
+**kaptaind-cli branch sync** [**--json**]
+
+Diagnose missing or unexpectedly divergent lifecycle branches.
+
+### branch promote
+
+**kaptaind-cli branch promote** *SOURCE* *TARGET* [**--dry-run**]
+
+Perform a permitted, clean, fast-forward lifecycle transition from *SOURCE* to *TARGET*.
+
+Examples:
+
+    kaptaind-cli branch status --json
+    kaptaind-cli branch init --dry-run
+    kaptaind-cli branch promote integration release/1.0
+
+## integrate
+
+**kaptaind-cli integrate analyze** *TARGET* *SOURCE* [**--json**] [**--no-persist**]
+
+Analyse a proposed branch integration with Hybreed and Emulsify. Runs both tools and persists an advisory, machine-readable report.
+
+*TARGET*
+:   Host/target branch or ref.
+
+*SOURCE*
+:   Proposed source/fork branch or ref.
+
+**--json**
+:   Emit JSON instead of the concise summary.
+
+**--no-persist**
+:   Do not write the report or audit event.
+
+Example:
+
+    kaptaind-cli integrate analyze main feature/api
+
 ## validate
 
 **kaptaind-cli validate**
@@ -72,6 +130,43 @@ Example:
 
     kaptaind-cli analyze
 
+## explain
+
+**kaptaind-cli explain** [**--last** *N*]
+
+Show the last *N* cluster decisions recorded in *.kaptaind/decisions.jsonl* — commits and skips alike. Skip decisions name the exact threshold that was not met and the achieved score.
+
+**--last**=*N*
+:   Number of decisions to display. Default: 10.
+
+Examples:
+
+    kaptaind-cli explain
+    kaptaind-cli explain --last 25
+
+## rollback
+
+**kaptaind-cli rollback** [*COMMIT*] [**-n** | **--dry-run**] [**-y** | **--yes**]
+
+Safely undo the most recent automated commit (or a specific one) by creating a **git revert** commit. Never rewrites history. Targets commits whose subject starts with the daemon's **kaptaind:** prefix.
+
+*COMMIT*
+:   Specific commit to revert. Default: the latest kaptaind commit.
+
+**-n**, **--dry-run**
+:   Print the target and the equivalent git command only.
+
+**-y**, **--yes**
+:   Execute the revert. Omit to preview.
+
+Examples:
+
+    kaptaind-cli rollback
+    kaptaind-cli rollback --yes
+    kaptaind-cli rollback abc1234 --yes
+
+If the revert conflicts, resolve it or run **git revert --abort** and retry.
+
 ## pull
 
 **kaptaind-cli pull** [**--remote** *REMOTE*] [**--branch** *BRANCH*]
@@ -94,6 +189,89 @@ Examples:
     kaptaind-cli pull --dry-run --json
     kaptaind-cli pull --strategy rebase
     kaptaind-cli pull --abort
+
+## release
+
+**kaptaind-cli release** *SUBCOMMAND*
+
+Prepare, validate, issue, or roll back governed releases.
+
+### release prepare
+
+**kaptaind-cli release prepare** *VERSION* [**--source** *BRANCH*] [**--dry-run**] [**--json**]
+
+Create an immutable-identity release candidate from the integration branch.
+
+**--source**=*BRANCH*
+:   Source branch or ref. Default: **integration**.
+
+### release validate
+
+**kaptaind-cli release validate** *VERSION* [**--json**]
+
+Run the configured build/test and consistency gates for a candidate.
+
+### release issue
+
+**kaptaind-cli release issue** *VERSION* [**--platform** *desktop*|*mobile*] [**--dry-run**] [**--json**]
+
+Atomically advance production and create the **v*VERSION*** tag after validation.
+
+### release rollback
+
+**kaptaind-cli release rollback** *VERSION* **--as** *NEW_VERSION* [**--platform** *desktop*|*mobile*] [**--dry-run**] [**--json**]
+
+Issue a new release whose tree restores an older released version.
+
+Examples:
+
+    kaptaind-cli release prepare 10.4.0 --dry-run
+    kaptaind-cli release validate 10.4.0
+    kaptaind-cli release issue 10.4.0
+    kaptaind-cli release rollback 10.2.0 --as 10.3.4
+
+## checkout
+
+**kaptaind-cli checkout** (**stable** | **bleeding**) [**--platform** *desktop*|*mobile*] [**--dry-run**]
+
+Resolve and check out a consumer channel.
+
+*CHANNEL*
+:   **stable** or **bleeding**.
+
+**--platform**=*PLATFORM*
+:   **desktop** (default) or **mobile**.
+
+**--dry-run**
+:   Print the resolution without checking out.
+
+Example:
+
+    kaptaind-cli checkout stable --platform desktop
+
+## suspend
+
+**kaptaind-cli suspend** [**--reason** *TEXT*]
+
+Temporarily suspend the daemon so it will not automatically process clusters, run tests, or create commits. Writes *.kaptaind/suspend.json* and updates *.kaptaind/status.json* to Suspended; the daemon checks this gate at the start of every cluster.
+
+**--reason**=*TEXT*
+:   Optional human-readable reason.
+
+Examples:
+
+    kaptaind-cli suspend
+    kaptaind-cli suspend --reason "manual hold"
+
+## resume
+
+**kaptaind-cli resume**
+
+Resume a daemon suspended via **kaptaind-cli suspend** or an Aim-of-Change session. Removes *.kaptaind/suspend.json* and sets *.kaptaind/status.json* to Idle.
+
+Example:
+
+    kaptaind-cli resume
 
 ## dashboard
 
@@ -672,6 +850,316 @@ Report whether the service file is installed and enabled.
 Examples:
 
     kaptaind-cli service status --user
+
+## doctor
+
+**kaptaind-cli doctor** [**-f** *FORMAT*]
+
+Capture the host's hardware/OS profile, check inotify watch limits against the repo-size tier table, verify tool availability, and recommend a tier (T0–T4). Writes a machine-readable artifact to *.kaptaind/doctor/*; the JSON artifact includes the git revision and dirty flag and feeds the **report** qualification bundle.
+
+**-f**, **--format**=*FORMAT*
+:   Output format: **text** (default) or **json**.
+
+Examples:
+
+    kaptaind-cli doctor
+    kaptaind-cli doctor --format json
+
+## stress
+
+**kaptaind-cli stress run** [OPTIONS]
+
+Generate a reproducible synthetic repo into a temp dir and run the real cluster → diff → weight → version pipeline (no commit, no daemon) over *N* change batches, asserting the version never decreases. Writes *.kaptaind/stress/<run-id>.json* with per-stage latency and the bump distribution.
+
+**--files**=*N*
+:   Number of synthetic source files. Default: 50.
+
+**--batches**=*N*
+:   Number of change batches. Default: 5.
+
+**--seed**=*N*
+:   Deterministic RNG seed. Default: 1.
+
+**--langs**=*LIST*
+:   Comma-separated languages. Default: **rust,ts,py,go**.
+
+**-f**, **--format**=*FORMAT*
+:   Output format: **text** (default) or **json**.
+
+Examples:
+
+    kaptaind-cli stress run --files 100 --batches 10
+    kaptaind-cli stress run --files 20 --batches 3 --format json
+
+## report
+
+**kaptaind-cli report** [OPTIONS]
+
+Aggregate the latest doctor/bench/stress artifacts plus optional external logs into a **kaptaind.qualification.v1** JSON and a human markdown report. A section is PASS only with real evidence; missing evidence is PASS-WITH-NOTES ("not run in-session"); any FAIL marker makes it FAIL.
+
+**-v**, **--version**=*V*
+:   Version to report. Default: read **VERSION**.
+
+**-o**, **--out**=*DIR*
+:   Output directory. Default: *.kaptaind/report*.
+
+**--cargo-test**=*PATH*
+:   Text log whose last line carries **TEST_EXIT=<n>**.
+
+**--clippy**=*PATH*
+:   Text log whose last line carries **CLIPPY_EXIT=<n>**.
+
+**--deny**=*PATH*
+:   Text log whose last line carries **DENY_EXIT=<n>**.
+
+**--container**=*PATH*
+:   Text log whose last line carries **CONTAINER_EXIT=<n>**.
+
+**-f**, **--format**=*FORMAT*
+:   Output format: **text** (default) or **json**.
+
+Examples:
+
+    kaptaind-cli report --version 10.3.3 --format json
+    kaptaind-cli report --cargo-test target/test.log --clippy target/clippy.log
+
+## logs
+
+**kaptaind-cli logs** *SUBCOMMAND*
+
+Tail, filter errors, or grep the daemon's text logs (*.kaptaind/daemon.out*, *.kaptaind/daemon.err*).
+
+### logs tail
+
+**kaptaind-cli logs tail** [**-n** *N*] [**-f** *FORMAT*]
+
+Show the last *N* log lines. Default: 50.
+
+### logs errors
+
+**kaptaind-cli logs errors** [**-f** *FORMAT*]
+
+Show ERROR/WARN log lines.
+
+### logs grep
+
+**kaptaind-cli logs grep** *REGEX* [**-f** *FORMAT*]
+
+Filter log lines by a regular expression.
+
+Examples:
+
+    kaptaind-cli logs tail -n 50
+    kaptaind-cli logs errors
+    kaptaind-cli logs grep "commit" --format json
+
+## audit
+
+**kaptaind-cli audit** *SUBCOMMAND*
+
+Tail, summarize, or verify the append-only compliance audit trail (*.kaptaind/audit.jsonl*). **verify** checks timestamp ordering and (when present) the per-entry **prev_hash** chain.
+
+### audit tail
+
+**kaptaind-cli audit tail** [**-n** *N*] [**-f** *FORMAT*]
+
+Show the last *N* audit entries. Default: 50.
+
+### audit stats
+
+**kaptaind-cli audit stats** [**-f** *FORMAT*]
+
+Summarize counts by event_type/result and the failure rate.
+
+### audit verify
+
+**kaptaind-cli audit verify** [**-f** *FORMAT*]
+
+Verify append-only ordering and the optional hash chain.
+
+### audit export-verify
+
+**kaptaind-cli audit export-verify** [**-f** *FORMAT*]
+
+Verify the configured audit-export mirror against the local chain.
+
+Examples:
+
+    kaptaind-cli audit tail -n 20
+    kaptaind-cli audit stats
+    kaptaind-cli audit verify
+    kaptaind-cli audit export-verify
+
+## evidence
+
+**kaptaind-cli evidence** *SUBCOMMAND*
+
+Record hashed CI, scanner, ITSM, or domain evidence for a release.
+
+### evidence record
+
+**kaptaind-cli evidence record** **--version** *V* **--kind** *K* **--source** *S* **--file** *PATH*
+
+Record a local exported artifact as release evidence.
+
+### evidence attach-snapshot
+
+**kaptaind-cli evidence attach-snapshot** **--version** *V* **--file** *PATH*
+
+Validate and record a **bound-snapshot/v1** artifact as release evidence.
+
+## governance
+
+**kaptaind-cli governance** [**-f** *FORMAT*]
+
+Assess enforced enterprise governance controls.
+
+**-f**, **--format**=*FORMAT*
+:   Output format: **text** (default) or **json**.
+
+## integrations
+
+**kaptaind-cli integrations** [**-f** *FORMAT*]
+
+List the governed enterprise connector catalogue and active configuration.
+
+**-f**, **--format**=*FORMAT*
+:   Output format: **text** (default) or **json**.
+
+## environment
+
+**kaptaind-cli environment** *SUBCOMMAND*
+
+Observe environment lifecycle evidence: rollout, health, rollback, and drift records. Never performs deployments — **record**, **promote**, and **rollback** only record externally performed events.
+
+### environment status
+
+**kaptaind-cli environment status** [**-f** *FORMAT*]
+
+Show the latest known release fact for each environment.
+
+### environment risk
+
+**kaptaind-cli environment risk** [**-f** *FORMAT*]
+
+Explain risk from recorded rollout, health, rollback, and drift evidence.
+
+### environment history
+
+**kaptaind-cli environment history** *ENVIRONMENT* [**-f** *FORMAT*]
+
+Show immutable lifecycle records for one environment.
+
+### environment diff
+
+**kaptaind-cli environment diff** *FROM* *TO* [**-f** *FORMAT*]
+
+Compare the latest recorded version and configuration digest between two environments.
+
+### environment record
+
+**kaptaind-cli environment record** *ENVIRONMENT* **--version** *V* [**--health** *H*] [**--rollout-percent** *N*] [**--config-sha256** *S*] [**--note** *TEXT*]
+
+Record an externally performed deployment or health observation.
+
+### environment promote
+
+**kaptaind-cli environment promote** *FROM* *TO* **--version** *V* [**--adr** *A*]
+
+Record a promotion request; deployment remains external.
+
+### environment rollback
+
+**kaptaind-cli environment rollback** *ENVIRONMENT* **--version** *V* [**--adr** *A*]
+
+Record a rollback decision; deployment remains external.
+
+Examples:
+
+    kaptaind-cli environment status
+    kaptaind-cli environment record staging --version 10.3.3 --health pass
+    kaptaind-cli environment promote staging production --version 10.3.3
+
+## probe
+
+**kaptaind-cli probe** *SUBCOMMAND*
+
+Scrape the daemon's HTTP endpoints without hand-curling: **/health**, **/metrics**, **/metrics/prometheus**, and **/events** (SSE). Uses a minimal HTTP/1.1 client; if the daemon is not running, prints a clear message. Reads the health port from config (default 9090).
+
+### probe health
+
+**kaptaind-cli probe health** [**-f** *FORMAT*]
+
+GET **/health**.
+
+### probe metrics
+
+**kaptaind-cli probe metrics** [**--prometheus**] [**-f** *FORMAT*]
+
+GET **/metrics** (JSON) or, with **--prometheus**, the Prometheus text exposition endpoint.
+
+### probe events
+
+**kaptaind-cli probe events** [**--follow**] [**-f** *FORMAT*]
+
+GET **/events**, optionally following the SSE stream until interrupted.
+
+Examples:
+
+    kaptaind-cli probe health
+    kaptaind-cli probe metrics --prometheus
+    kaptaind-cli probe events --follow
+
+## migrate
+
+**kaptaind-cli migrate** [OPTIONS]
+
+Deterministically migrate the repository's *.kaptaind/state.toml* semantic-state document to a newer (or older) schema version, one discrete step at a time. Normal analysis never rewrites the document — **migrate** is the only mutation path, and every run is recorded in *.kaptaind/migrations/*.
+
+**--check**
+:   Report whether migration is needed (no changes).
+
+**--strict**
+:   With **--check**: exit non-zero when the document is outdated (CI).
+
+**--to**=*VERSION*
+:   Target schema version. Default: latest supported.
+
+**--allow-lossy**
+:   Permit migrations that discard information.
+
+**-f**, **--format**=*FORMAT*
+:   Output format: **text** (default) or **json**.
+
+Examples:
+
+    kaptaind-cli migrate
+    kaptaind-cli migrate --check --strict
+    kaptaind-cli migrate --to 2.0 --allow-lossy
+    kaptaind-cli migrate --check --format json
+
+## schema
+
+**kaptaind-cli schema** *SUBCOMMAND*
+
+Show which *.kaptaind* schema versions this kaptaind knows about.
+
+### schema list
+
+**kaptaind-cli schema list**
+
+List installed schema versions.
+
+### schema explain
+
+**kaptaind-cli schema explain** *VERSION*
+
+Describe a schema version (e.g. **2.1**).
+
+Examples:
+
+    kaptaind-cli schema list
+    kaptaind-cli schema explain 2.1
 
 # FILES
 
