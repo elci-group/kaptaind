@@ -15,6 +15,8 @@ All notable changes to kaptaind are documented here. The format follows
 
 ## [Unreleased]
 
+## [10.4.0] — 2026-09-18
+
 ### Changed
 - **BREAKING: `kaptaind` and `kaptaind-cli` are merged into a single `kaptaind`
   binary.** Every subcommand formerly under `kaptaind-cli` (`status`, `log`,
