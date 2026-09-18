@@ -20,8 +20,6 @@ NestedInstallerType: portable
 NestedInstallerFiles:
   - RelativeFilePath: kaptaind.exe
     PortableCommandAlias: kaptaind
-  - RelativeFilePath: kaptaind-cli.exe
-    PortableCommandAlias: kaptaind-cli
 Installers:
   - Architecture: x64
     InstallerUrl: https://github.com/elci-group/kaptaind/releases/download/v<VERSION>/kaptaind-<VERSION>-x86_64-pc-windows-msvc.zip

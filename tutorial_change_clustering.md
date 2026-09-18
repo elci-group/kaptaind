@@ -204,7 +204,7 @@ window = 15  # Scripts often dump many files at once
 
 ```bash
 # In your CI script:
-kaptaind-cli analyze | tee analysis.json
+kaptaind analyze | tee analysis.json
 git add VERSION .kaptaind/analysis/
 git commit -m "chore: auto-version"
 ```
@@ -316,9 +316,9 @@ kaptaind --daemon
 
 **Option B: Use Aim of Change (AoC) Sessions**
 ```bash
-kaptaind-cli aoc start "feature: authentication redesign"
+kaptaind aoc start "feature: authentication redesign"
 # ...make changes...
-kaptaind-cli aoc ship
+kaptaind aoc ship
 
 # Each AoC cluster is its own logical unit, regardless of timing
 ```
@@ -360,7 +360,7 @@ window = 10  # Increase from 5 to 10 seconds
 **Fix Option 3: Ignore rapid changes**
 ```bash
 # Temporarily disable daemon during heavy editing
-kaptaind-cli stop
+kaptaind stop
 # ...work...
 kaptaind --daemon  # Restart when done
 ```
@@ -379,7 +379,7 @@ kaptaind --daemon  # Restart when done
 **Debug:**
 ```bash
 # Check daemon status
-kaptaind-cli status
+kaptaind status
 
 # Check if watcher is active
 ps aux | grep -i kaptaind | grep -v grep
@@ -388,7 +388,7 @@ ps aux | grep -i kaptaind | grep -v grep
 tail -50 .kaptaind/daemon.err
 
 # Try a dry-run analysis
-kaptaind-cli analyze
+kaptaind analyze
 ```
 
 **Fix:**
@@ -406,7 +406,7 @@ kaptaind-cli analyze
 
 **Fix Option 1: Use AoC Sessions**
 ```bash
-kaptaind-cli aoc start "feature: authentication"
+kaptaind aoc start "feature: authentication"
 # ... make feature changes ...
 
 # Separate feature automatically tagged, even if timing overlaps
@@ -451,7 +451,7 @@ kaptaind --daemon
 
 **Fix Option 3: Disable daemon during intensive testing**
 ```bash
-kaptaind-cli stop
+kaptaind stop
 
 # ... run tests, develop ...
 
@@ -511,7 +511,7 @@ Result: 1 clean commit despite multiple saves
 
 - 📖 Read the [main README](./README.md) for clustering details
 - ⚙️ Choose a `window` value for your workflow
-- 🔍 Monitor clustering behavior: `kaptaind-cli log`
+- 🔍 Monitor clustering behavior: `kaptaind log`
 - 📊 Adjust based on your commit frequency
 
 ---

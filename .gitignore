@@ -22,6 +22,7 @@ daemon.pid
 .dumdum/
 .skillastic/
 .vox/
+.uni/
 
 # Prebuilt daemon binaries must never be committed (build via release.yml).
 deploy/daemon/

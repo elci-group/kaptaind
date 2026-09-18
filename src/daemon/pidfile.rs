@@ -3,7 +3,7 @@
 //! The daemon writes its pid on startup (see `daemon::process::daemonize` for
 //! `--daemon` mode). If the daemon is killed -9 the file is left behind; on the
 //! next start `validate_and_clean` detects the stale entry via a liveness
-//! check and removes it so operators and `kaptaind-cli monitor resume` don't
+//! check and removes it so operators and `kaptaind monitor resume` don't
 //! mistake a corpse for a running daemon.
 
 use std::path::Path;

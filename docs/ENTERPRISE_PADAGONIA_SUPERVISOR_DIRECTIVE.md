@@ -251,7 +251,7 @@ Deliverables:
 Exit gate: one project failure cannot prevent another project action; workers
 are separate processes; supervisor shutdown does not terminate workers.
 
-Rollback: invoke existing `kaptaind-cli monitor resume`.
+Rollback: invoke existing `kaptaind monitor resume`.
 
 ### Phase 3 — CLI and service integration
 

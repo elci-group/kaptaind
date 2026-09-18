@@ -41,11 +41,9 @@ class Kaptaind < Formula
 
   def install
     bin.install "kaptaind"
-    bin.install "kaptaind-cli"
   end
 
   test do
     assert_predicate bin/"kaptaind", :exist?
-    assert_predicate bin/"kaptaind-cli", :exist?
   end
 end

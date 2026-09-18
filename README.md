@@ -60,7 +60,7 @@ It eliminates manual version bumping and subjective commit messages by replacing
 - **Visual Asset Channel Saturation (VACS):** A capacity-aware background generation system that converts surplus inference capacity into high-value visual/documentation assets (like diagrams and architecture maps) linked directly to code changes. VACS operates opportunistically and surfaces assets in the CLI.
 - **Multi-Provider Inference Routing:** Intelligently routes commit message generation to the best available inference provider. Automatically detects and prioritizes: **Anthropic Claude** → **OpenAI GPT-4o** → **Local Ollama** fallback. No API keys needed; works offline with Ollama.
 - **Commit Validation Modes:** Choose between **Fast Mode** (single provider, lowest latency) or **Consensus Mode** (multiple local models with semantic cross-comparison, lowest hallucination risk). Developer-selected via config.
-- **Nautical Notifications:** Real-time commit, push, start/stop, and error alerts through native desktop notifications, configurable shell hooks, and Discord/Slack webhooks. The kaptaind logo is embedded and displayed automatically; install it system-wide with `kaptaind-cli service install-icon --user`. Optional nautical theme renders maritime emoji titles like "⚓ Ahoy!" and "🚢 Ship's log updated".
+- **Nautical Notifications:** Real-time commit, push, start/stop, and error alerts through native desktop notifications, configurable shell hooks, and Discord/Slack webhooks. The kaptaind logo is embedded and displayed automatically; install it system-wide with `kaptaind service install-icon --user`. Optional nautical theme renders maritime emoji titles like "⚓ Ahoy!" and "🚢 Ship's log updated".
 - **🎣 Angler Hook & Selective Capture System:** A comprehensive four-part system for advanced automation:
   - *Git Hooks Integration:* Manage client-side git hooks (pre-commit, post-commit, pre-push, etc.) with configurable commands, timeouts, and file pattern matching.
   - *Enhanced Webhooks:* Send HTTP webhooks with HMAC signature verification, exponential backoff retries, rate limiting, and event filtering.
@@ -116,7 +116,7 @@ git clone https://github.com/elci-group/kaptaind.git
 cd kaptaind
 cargo build --release
 mkdir -p ~/.local/bin
-cp target/release/{kaptaind,kaptaind-cli} ~/.local/bin/
+cp target/release/kaptaind ~/.local/bin/
 chmod +x ~/.local/bin/kaptaind*
 ```
 
@@ -143,7 +143,7 @@ kaptaind --daemon
 Generate a `kaptaind.toml` and `.kaptainignore` tuned to your project type:
 
 ```bash
-kaptaind-cli init
+kaptaind init
 ```
 
 Supported project types: Rust, Node, Python, Go, Swift, Kotlin. The command auto-detects by looking for `Cargo.toml`, `package.json`, `Package.swift`, `build.gradle.kts`, etc.
@@ -152,79 +152,79 @@ A generated `kaptaind.toml` is **observe-only** until you opt in — see
 [Repository mutation: observe vs. actuate](#repository-mutation-observe-vs-actuate)
 below before expecting `kaptaind` to actually commit anything.
 
-### CLI Inspection (`kaptaind-cli`)
+### CLI Inspection
 
 Kaptaind comes with a secondary binary to inspect the daemon's state:
 
 ```bash
 # Bulk discover codebases (99% accuracy across 19 languages)
-kaptaind-cli trawl                       # Discover all projects in current directory
-kaptaind-cli trawl --path ~/projects     # Trawl specific directory
-kaptaind-cli trawl --max-depth 3         # Limit recursion depth
-kaptaind-cli trawl --type rust,node      # Only Rust and Node.js projects
-kaptaind-cli trawl --require-git         # Only git repositories
+kaptaind trawl                       # Discover all projects in current directory
+kaptaind trawl --path ~/projects     # Trawl specific directory
+kaptaind trawl --max-depth 3         # Limit recursion depth
+kaptaind trawl --type rust,node      # Only Rust and Node.js projects
+kaptaind trawl --require-git         # Only git repositories
 
 # View live daemon health and current version
-kaptaind-cli status
+kaptaind status
 
 # View recent automated commits, scores, and bump reasons
-kaptaind-cli log
+kaptaind log
 
 # Dry-run an analysis on the current uncommitted working tree
-kaptaind-cli analyze
+kaptaind analyze
 
 # Manage Aim of Change sessions
-kaptaind-cli aoc start "feature: auth flow"
-kaptaind-cli aoc status
-kaptaind-cli aoc ship
-kaptaind-cli aoc cancel
+kaptaind aoc start "feature: auth flow"
+kaptaind aoc status
+kaptaind aoc ship
+kaptaind aoc cancel
 
 # Suspend and resume automated daemon commits
-kaptaind-cli suspend --reason "manual hold"
-kaptaind-cli resume
+kaptaind suspend --reason "manual hold"
+kaptaind resume
 
 # Intercept agent operations for contextual tracing
-kaptaind-cli aoc intercept --model claude-3-5-sonnet --intent "refactor auth" -- npm test
+kaptaind aoc intercept --model claude-3-5-sonnet --intent "refactor auth" -- npm test
 
 # View and manage Visual Asset Channel Saturation (VACS) assets
-kaptaind-cli vacs show
-kaptaind-cli vacs generate --asset-type diagram
+kaptaind vacs show
+kaptaind vacs generate --asset-type diagram
 
 # Live dashboard: version, daemon state, stability bar, releases, recent analyses
-kaptaind-cli dashboard
+kaptaind dashboard
 
 # CI/CD hint: release or hold recommendation based on stability and qualification
-kaptaind-cli ci-hint                  # plain text
-kaptaind-cli ci-hint --format json    # machine-readable JSON
-kaptaind-cli ci-hint --format github  # GitHub Actions annotations + GITHUB_OUTPUT
+kaptaind ci-hint                  # plain text
+kaptaind ci-hint --format json    # machine-readable JSON
+kaptaind ci-hint --format github  # GitHub Actions annotations + GITHUB_OUTPUT
 
 # Ship release binaries, installers, and distribution channels
-kaptaind-cli ship plan                # Preview what would ship
-kaptaind-cli ship plan --format json  # Machine-readable dry-run plan
-kaptaind-cli ship run                 # Execute the ship pipeline
-kaptaind-cli ship run --force         # Skip qualification gates
-kaptaind-cli ship stable              # Ship a stable release from VERSION
-kaptaind-cli ship stable --force      # Skip qualification gates
-kaptaind-cli ship stable --dry-run    # Preview the stable release
-kaptaind-cli ship nightly             # Ship a nightly prerelease
-kaptaind-cli ship nightly --no-force  # Enforce qualification gates
-kaptaind-cli ship nightly --dry-run   # Preview the nightly version
-kaptaind-cli ship status              # Show the last ship run
-kaptaind-cli ship status --auto       # Show last run + next auto-ship fires
-kaptaind-cli ship status --format json
+kaptaind ship plan                # Preview what would ship
+kaptaind ship plan --format json  # Machine-readable dry-run plan
+kaptaind ship run                 # Execute the ship pipeline
+kaptaind ship run --force         # Skip qualification gates
+kaptaind ship stable              # Ship a stable release from VERSION
+kaptaind ship stable --force      # Skip qualification gates
+kaptaind ship stable --dry-run    # Preview the stable release
+kaptaind ship nightly             # Ship a nightly prerelease
+kaptaind ship nightly --no-force  # Enforce qualification gates
+kaptaind ship nightly --dry-run   # Preview the nightly version
+kaptaind ship status              # Show the last ship run
+kaptaind ship status --auto       # Show last run + next auto-ship fires
+kaptaind ship status --format json
 
 # Govern development, integration, staging, and production explicitly
-kaptaind-cli branch init --dry-run
-kaptaind-cli branch init
-kaptaind-cli branch status --json
-kaptaind-cli branch sync
-kaptaind-cli branch promote desktop/development integration --dry-run
-kaptaind-cli release prepare 1.5.0
-kaptaind-cli release validate 1.5.0
-kaptaind-cli release issue 1.5.0 --dry-run
-kaptaind-cli release issue 1.5.0
-kaptaind-cli checkout stable
-kaptaind-cli checkout bleeding
+kaptaind branch init --dry-run
+kaptaind branch init
+kaptaind branch status --json
+kaptaind branch sync
+kaptaind branch promote desktop/development integration --dry-run
+kaptaind release prepare 1.5.0
+kaptaind release validate 1.5.0
+kaptaind release issue 1.5.0 --dry-run
+kaptaind release issue 1.5.0
+kaptaind checkout stable
+kaptaind checkout bleeding
 ```
 
 ## Quick Reference
@@ -233,35 +233,36 @@ kaptaind-cli checkout bleeding
 |---------|---------|----------------|
 | `kaptaind` | Run daemon in foreground | — |
 | `kaptaind --daemon` | Run daemon detached | `[watch]`, `[cluster]`, `[ratelimit]` |
-| `kaptaind-cli init` | Generate `kaptaind.toml` and `.kaptainignore` | — |
-| `kaptaind-cli status` | Daemon health and version | — |
-| `kaptaind-cli validate` | Validate `kaptaind.toml` | — |
-| `kaptaind-cli log` | Recent automated commits | — |
-| `kaptaind-cli analyze` | Dry-run diff analysis | `[weights]`, `[inference]` |
-| `kaptaind-cli dashboard` | Live terminal dashboard | — |
-| `kaptaind-cli aoc start` | Start Aim-of-Change session | `[aoc]`, `[daemon]` |
-| `kaptaind-cli aoc cancel` | Cancel Aim-of-Change session | `[aoc]`, `[daemon]` |
-| `kaptaind-cli suspend` | Suspend automated commits | `[daemon]` |
-| `kaptaind-cli resume` | Resume automated commits | `[daemon]` |
-| `kaptaind-cli ship plan` | Preview release | `[ship]` |
-| `kaptaind-cli ship run` | Build and publish release | `[ship]`, `[distribution]` |
-| `kaptaind-cli ci-hint` | Release/hold recommendation | `[qualification]` |
-| `kaptaind-cli shark status` | HA leadership state | `[shark]` |
-| `kaptaind-cli rollback` | Revert the last kaptaind commit | — |
-| `kaptaind-cli migrate` | Migrate the `.kaptaind/state.toml` schema document | — |
-| `kaptaind-cli migrate --check --strict` | CI gate: fail when the document is outdated | — |
-| `kaptaind-cli schema list` | List installed `.kaptaind` schema versions | — |
-| `kaptaind-cli branch status` | Typed lifecycle and promotion status | `.kaptaind/state.toml` |
-| `kaptaind-cli branch init` | Safely create missing lifecycle branches | `.kaptaind/state.toml` |
-| `kaptaind-cli branch sync` | Detect missing/divergent lifecycle refs | `.kaptaind/state.toml` |
-| `kaptaind-cli release prepare/validate/issue` | Explicit release governance | `[test]`, `[build]` |
-| `kaptaind-cli checkout stable/bleeding` | Deterministic consumer channel checkout | `.kaptaind/state.toml` |
+| `kaptaind init` | Generate `kaptaind.toml` and `.kaptainignore` | — |
+| `kaptaind status` | Daemon health and version | — |
+| `kaptaind validate` | Validate `kaptaind.toml` | — |
+| `kaptaind log` | Recent automated commits | — |
+| `kaptaind analyze` | Dry-run diff analysis | `[weights]`, `[inference]` |
+| `kaptaind dashboard` | Live terminal dashboard | — |
+| `kaptaind aoc start` | Start Aim-of-Change session | `[aoc]`, `[daemon]` |
+| `kaptaind aoc cancel` | Cancel Aim-of-Change session | `[aoc]`, `[daemon]` |
+| `kaptaind suspend` | Suspend automated commits | `[daemon]` |
+| `kaptaind resume` | Resume automated commits | `[daemon]` |
+| `kaptaind ship plan` | Preview release | `[ship]` |
+| `kaptaind ship run` | Build and publish release | `[ship]`, `[distribution]` |
+| `kaptaind push` | Push the current branch on demand | `[push]`, `[capabilities]` |
+| `kaptaind ci-hint` | Release/hold recommendation | `[qualification]` |
+| `kaptaind shark status` | HA leadership state | `[shark]` |
+| `kaptaind rollback` | Revert the last kaptaind commit | — |
+| `kaptaind migrate` | Migrate the `.kaptaind/state.toml` schema document | — |
+| `kaptaind migrate --check --strict` | CI gate: fail when the document is outdated | — |
+| `kaptaind schema list` | List installed `.kaptaind` schema versions | — |
+| `kaptaind branch status` | Typed lifecycle and promotion status | `.kaptaind/state.toml` |
+| `kaptaind branch init` | Safely create missing lifecycle branches | `.kaptaind/state.toml` |
+| `kaptaind branch sync` | Detect missing/divergent lifecycle refs | `.kaptaind/state.toml` |
+| `kaptaind release prepare/validate/issue` | Explicit release governance | `[test]`, `[build]` |
+| `kaptaind checkout stable/bleeding` | Deterministic consumer channel checkout | `.kaptaind/state.toml` |
 
 | File / Directory | Purpose |
 |------------------|---------|
 | `kaptaind.toml` | Main configuration |
 | `.kaptainignore` | Paths ignored by the watcher |
-| `.kaptaind/state.toml` | Versioned semantic-state document (schema-format header, surfaces, invariants, exceptions, versioning policy, baseline); migrate explicitly with `kaptaind-cli migrate` — the daemon never rewrites it |
+| `.kaptaind/state.toml` | Versioned semantic-state document (schema-format header, surfaces, invariants, exceptions, versioning policy, baseline); migrate explicitly with `kaptaind migrate` — the daemon never rewrites it |
 | `.kaptaind/migrations/` | Append-only migration ledger recording each schema migration with before/after digests |
 | `.kaptaind/lifecycle.json` | Versioned candidates, validation evidence, staging revisions, and issued release events |
 | `.kaptaind/status.json` | Daemon state |
@@ -285,7 +286,7 @@ branch. `bleeding` resolves to the selected development branch. Thus an
 unreleased default-branch commit can never become stable by implication.
 
 Schema format 2.2 declares the canonical topology and channel mapping in
-`.kaptaind/state.toml`. Run `kaptaind-cli migrate` to upgrade older semantic
+`.kaptaind/state.toml`. Run `kaptaind migrate` to upgrade older semantic
 documents; migration remains explicit, deterministic, and ledgered.
 
 The `ship stable` and `ship nightly` commands automate release versioning and
@@ -300,7 +301,7 @@ builds via `retain_count` in `[ship.nightly]`.
 The daemon can also run these releases automatically on a cron schedule via
 `[ship.auto_nightly]` and `[ship.auto_stable]`. When enabled, the scheduler
 computes the next fire time, runs the ship pipeline, logs to the audit log, and
-sends nautical release notifications. Use `kaptaind-cli ship status --auto` to
+sends nautical release notifications. Use `kaptaind ship status --auto` to
 preview the next scheduled fires.
 
 Release artifacts can be hardened with GPG-signed SHA256 checksums and signed
@@ -334,19 +335,19 @@ isolated inside those project workers.
 Register the current project:
 
 ```bash
-kaptaind-cli monitor add
+kaptaind monitor add
 ```
 
 Register a specific project and assign its health port explicitly:
 
 ```bash
-kaptaind-cli monitor add ~/projects/my-app --port 3001
+kaptaind monitor add ~/projects/my-app --port 3001
 ```
 
 List registered projects:
 
 ```bash
-kaptaind-cli monitor list
+kaptaind monitor list
 ```
 
 Preview the resident supervisor plan without starting workers:
@@ -371,26 +372,26 @@ The previous one-shot launcher remains available as a rollback and
 compatibility path:
 
 ```bash
-kaptaind-cli monitor resume
+kaptaind monitor resume
 ```
 
 Disable or re-enable a project:
 
 ```bash
-kaptaind-cli monitor disable ~/projects/my-app
-kaptaind-cli monitor enable ~/projects/my-app
+kaptaind monitor disable ~/projects/my-app
+kaptaind monitor enable ~/projects/my-app
 ```
 
 Install a user systemd/launchd service that runs the resident supervisor:
 
 ```bash
-kaptaind-cli service install --user
+kaptaind service install --user
 ```
 
 A system-wide service is also available (requires root):
 
 ```bash
-sudo kaptaind-cli service install --system
+sudo kaptaind service install --system
 ```
 
 Copy `kaptaind.supervisor.toml.example` to
@@ -496,14 +497,14 @@ Open `http://localhost:8080/` to view the dashboard.
 
 ### Repository mutation: observe vs. actuate
 
-By default — including a freshly generated `kaptaind-cli init`/`trawl` profile
+By default — including a freshly generated `kaptaind init`/`trawl` profile
 — the daemon runs **observe-only**: it watches, clusters, scores, and records
 every decision to `.kaptaind/decisions.jsonl`, but never stages, commits,
 writes `VERSION`, pushes, or ships. Nothing else in the CLI calls this out:
-`kaptaind-cli validate` reports the config as valid either way, and
-`kaptaind-cli analyze` prints the projected bump without noting that it won't
+`kaptaind validate` reports the config as valid either way, and
+`kaptaind analyze` prints the projected bump without noting that it won't
 actually happen. If commits stop appearing, check
-`kaptaind-cli explain` or grep `decisions.jsonl` for `"outcome":"observed"`
+`kaptaind explain` or grep `decisions.jsonl` for `"outcome":"observed"`
 before assuming something is broken.
 
 To let the daemon actually mutate the repository, opt in explicitly:
@@ -602,8 +603,8 @@ rate_limit_seconds = 5
 When kaptaind is built with the `notifications` feature, the logo is embedded in the binary and automatically extracted to `~/.cache/kaptaind/kaptaind-logo-notification.png` for each native notification. To install the icon into the Freedesktop theme so other launchers can reference it by name:
 
 ```bash
-kaptaind-cli service install-icon --user      # ~/.local/share/icons
-sudo kaptaind-cli service install-icon --system # /usr/share/icons
+kaptaind service install-icon --user      # ~/.local/share/icons
+sudo kaptaind service install-icon --system # /usr/share/icons
 ```
 
 ### Staging
@@ -735,8 +736,8 @@ not replace enterprise identity or change-management integration.
 `KAPTAIND_APPROVAL_HMAC_KEY` secret and fails closed if the secret or signature
 is unavailable. `require_approval_commit_binding` records the Git commit at
 request time and rejects the approval when `HEAD` has changed. Request and
-approve records through `kaptaind-cli ship request-approval --ticket CHG-123`
-and `kaptaind-cli ship approve`; grant `ship.approve` only to independent
+approve records through `kaptaind ship request-approval --ticket CHG-123`
+and `kaptaind ship approve`; grant `ship.approve` only to independent
 release approvers. Store the HMAC key in a secret manager or CI secret—not in
 `kaptaind.toml` or the repository.
 `approval_validity_hours` adds an HMAC-protected expiry to every new request;
@@ -754,15 +755,15 @@ Policies can require provider-neutral evidence categories before shipping, for
 example `"required_evidence": ["ci_attestation", "sarif", "change_ticket"]`.
 Store metadata under `.kaptaind/evidence/<version>/<kind>.json`; Kaptaind logs
 the source and digest, not raw CI, scanner, or ticket payloads.
-Use `kaptaind-cli evidence record --version <version> --kind sarif --source
+Use `kaptaind evidence record --version <version> --kind sarif --source
 ci --file results.sarif` to create the metadata from an externally produced
 artifact. Domain gates can additionally require `terraform_plan`,
 `kubernetes_validation`, `database_migration_review`, `openapi_compatibility`,
 or `protobuf_compatibility` only when the matching repository assets exist.
 
-For audit evidence, `kaptaind-cli audit verify` validates the local
+For audit evidence, `kaptaind audit verify` validates the local
 system-of-record chain. When `[audit.export]` is configured,
-`kaptaind-cli audit export-verify` proves that every collector-facing record
+`kaptaind audit export-verify` proves that every collector-facing record
 has the matching event, sequence, predecessor hash, and entry digest. Forward
 that JSONL file with a customer-managed collector to the organisation's SIEM
 or immutable archive; Kaptaind does not claim that a writable local mirror is
@@ -850,7 +851,7 @@ consumes each assertion ID in `replay_dir`. The assertion is an approval
 identity boundary, while local OS RBAC remains a separate execution-access
 control.
 
-Run `kaptaind-cli governance assess --format json` in CI or before a protected
+Run `kaptaind governance assess --format json` in CI or before a protected
 release to attest the active enterprise posture. It fails closed unless the
 configuration, signed release policy, audit chain, and collector mirror all
 verify; its output is designed to be retained as audit evidence.
@@ -910,7 +911,7 @@ auto_suspend_on_aoc_start = true  # Suspend daemon when an AoC session starts
 auto_resume_on_aoc_end = true     # Resume daemon when an AoC session ships/cancels
 ```
 
-When `auto_suspend_on_aoc_start` is true, `kaptaind-cli aoc start` writes `.kaptaind/suspend.json` and the daemon stops processing clusters. `kaptaind-cli aoc ship` and `kaptaind-cli aoc cancel` remove it when `auto_resume_on_aoc_end` is true. Manual `kaptaind-cli suspend`/`resume` work independently.
+When `auto_suspend_on_aoc_start` is true, `kaptaind aoc start` writes `.kaptaind/suspend.json` and the daemon stops processing clusters. `kaptaind aoc ship` and `kaptaind aoc cancel` remove it when `auto_resume_on_aoc_end` is true. Manual `kaptaind suspend`/`resume` work independently.
 
 ### Other Features
 
@@ -1082,7 +1083,7 @@ A release can be blocked by a qualification gate:
 - **Cooldown**: last release was too recent; adjust `[qualification].cooldown_hours`.
 - **Diff spike**: API or structural score exceeded `[qualification].max_diff_score`.
 
-Run `cargo run --bin kaptaind-cli -- ship plan` to see which gate is failing.
+Run `cargo run --bin kaptaind -- ship plan` to see which gate is failing.
 
 ### Stale AST cache
 
@@ -1245,7 +1246,7 @@ Aim of Change sessions group related changes into named, intent-driven clusters 
 ### Starting a Session
 
 ```bash
-kaptaind-cli aoc start "feature: authentication flow"
+kaptaind aoc start "feature: authentication flow"
 ```
 
 From this point forward, all commits will be tagged with this session and linked in `.kaptaind/aoc/active.json`.
@@ -1253,7 +1254,7 @@ From this point forward, all commits will be tagged with this session and linked
 ### Checking Status
 
 ```bash
-kaptaind-cli aoc status
+kaptaind aoc status
 ```
 
 Shows the active session name and commit count so far.
@@ -1261,7 +1262,7 @@ Shows the active session name and commit count so far.
 ### Shipping the Session
 
 ```bash
-kaptaind-cli aoc ship
+kaptaind aoc ship
 ```
 
 Finalizes the session and moves the summary to `.kaptaind/aoc/manifests/<id>.json`. Useful for generating release notes or linking to deploy events.
@@ -1271,14 +1272,14 @@ Finalizes the session and moves the summary to `.kaptaind/aoc/manifests/<id>.jso
 For enhanced observability, pair AoC with agent-assisted change validation:
 
 ```bash
-kaptaind-cli aoc intercept --model claude-3-5-sonnet --intent "refactor auth" -- npm test
+kaptaind aoc intercept --model claude-3-5-sonnet --intent "refactor auth" -- npm test
 ```
 
 This runs `npm test`, captures the output, and stores it alongside the AoC trace. Useful for audit trails in regulated environments.
 
 ## Dashboard
 
-`kaptaind-cli dashboard` renders a live, color-coded terminal view of the entire system at a glance:
+`kaptaind dashboard` renders a live, color-coded terminal view of the entire system at a glance:
 
 ```
 ╔══════════════════════════════════════════════╗
@@ -1308,14 +1309,14 @@ No flags required — reads all `.kaptaind/` state files and renders them in one
 
 ## CI/CD Integration
 
-`kaptaind-cli ci-hint` emits a release/hold recommendation based on the current stability score and qualification policy. Designed to be called from a CI pipeline step:
+`kaptaind ci-hint` emits a release/hold recommendation based on the current stability score and qualification policy. Designed to be called from a CI pipeline step:
 
 ```bash
 # Text (human-readable, default)
-kaptaind-cli ci-hint
+kaptaind ci-hint
 
 # Machine-readable JSON
-kaptaind-cli ci-hint --format json
+kaptaind ci-hint --format json
 # {
 #   "qualified": true,
 #   "stability_score": 0.871,
@@ -1326,7 +1327,7 @@ kaptaind-cli ci-hint --format json
 # }
 
 # GitHub Actions (annotations + GITHUB_OUTPUT)
-kaptaind-cli ci-hint --format github
+kaptaind ci-hint --format github
 # ::notice title=kaptaind::Release qualified — v9.2.587 (stability=0.871, streak=5)
 # Writes qualified=true and version=9.2.587 to $GITHUB_OUTPUT
 ```
@@ -1336,11 +1337,11 @@ kaptaind-cli ci-hint --format github
 ```yaml
 - name: kaptaind CI hint
   id: kaptaind
-  run: kaptaind-cli ci-hint --format github
+  run: kaptaind ci-hint --format github
 
 - name: Release
   if: steps.kaptaind.outputs.qualified == 'true'
-  run: kaptaind-cli ship stable
+  run: kaptaind ship stable
   # Artifacts, checksums, SBOMs, and the signed tag are produced by the
   # repository's GitHub release workflow (see .github/workflows/release.yml).
 ```
@@ -1451,7 +1452,7 @@ If your repo already has a version history (even irregular), you can safely adop
 
 ```bash
 cd /path/to/existing/repo
-kaptaind-cli init
+kaptaind init
 ```
 
 This creates `kaptaind.toml` and `.kaptainignore` based on your project type.
@@ -1483,7 +1484,7 @@ Existing commits won't be re-analyzed, but kaptaind will start producing analysi
 Test the configuration without committing:
 
 ```bash
-kaptaind-cli analyze
+kaptaind analyze
 ```
 
 Review the output. If the score seems off, adjust weights in `kaptaind.toml`.
@@ -1535,7 +1536,7 @@ ps aux | grep kaptaind
 cargo test  # or your configured test command
 
 # Check status
-kaptaind-cli status
+kaptaind status
 ```
 
 ### "Test hook is blocking every commit"
@@ -1635,8 +1636,8 @@ executables to assess a proposed branch integration without changing Git
 history:
 
 ```bash
-kaptaind-cli integrate analyze main feature/auth
-kaptaind-cli integrate analyze main feature/auth --json --no-persist
+kaptaind integrate analyze main feature/auth
+kaptaind integrate analyze main feature/auth --json --no-persist
 ```
 
 Hybreed evaluates branch relationships and structural conflicts. Scrawny
@@ -1669,8 +1670,7 @@ pushes that development branch instead.
 ## Transactional pull engine
 
 `kaptaind pull` fetches and inspects upstream state before selecting or
-executing an integration. It never delegates to `git pull`. The same command
-surface remains available as `kaptaind-cli pull` for CLI-companion workflows.
+executing an integration. It never delegates to `git pull`.
 
 ```bash
 kaptaind pull --check              # fetch + topology report only
@@ -1691,6 +1691,21 @@ no unambiguous target exists. Fetch updates only the selected remote-tracking
 ref. Every integration receives a recovery ref at
 `refs/kaptaind/recovery/<transaction-id>` and a redacted journal under
 `.kaptaind/transactions/<transaction-id>/`.
+
+## Manual push
+
+`kaptaind push` triggers a push on demand, using the same protected-branch
+checks, pre-push hooks, and retry/backoff as the daemon's automatic
+post-commit push. It requires `[push] enabled = true` and
+`[capabilities] network_push = true` in `kaptaind.toml` — without both, it
+refuses to run rather than silently doing nothing.
+
+```bash
+kaptaind push                              # push using configured remote/branch
+kaptaind push --remote upstream --branch main
+kaptaind push --dry-run                    # pass --dry-run to git; nothing pushed
+kaptaind push --force                      # bypass protect_branches for this run
+```
 
 ```toml
 [pull]

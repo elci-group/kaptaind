@@ -1,7 +1,7 @@
 //! Decision transparency: every cluster decision — commit or skip — appends
 //! one JSON line to `.kaptaind/decisions.jsonl` (C4).
 //!
-//! `kaptaind-cli explain` renders the tail of that log in human form; skip
+//! `kaptaind explain` renders the tail of that log in human form; skip
 //! decisions name the exact threshold that was not met and the achieved score.
 
 use chrono::{DateTime, Utc};
@@ -104,7 +104,7 @@ pub fn tail_decisions(repo_path: &Path, n: usize) -> std::io::Result<Vec<Decisio
     Ok(records.into_iter().rev().take(n).rev().collect())
 }
 
-/// Render decisions in human form for `kaptaind-cli explain`.
+/// Render decisions in human form for `kaptaind explain`.
 ///
 /// Skip decisions name the exact threshold that was not met and the achieved
 /// score, e.g. `skip: no_bump — score 0.042 below patch threshold 0.100`.

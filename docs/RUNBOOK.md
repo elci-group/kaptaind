@@ -45,7 +45,7 @@ and atomic status writes are the recovery path.
 
 | Symptom | Cause | Action |
 |---|---|---|
-| Daemon won't start, "pid in use" | live daemon already running | `kaptaind-cli status` to find it; stop it first |
+| Daemon won't start, "pid in use" | live daemon already running | `kaptaind status` to find it; stop it first |
 | Stale `daemon.pid` after crash | kill -9 / power loss | nothing — startup removes it automatically |
 | Frozen `status.json` ("Testing" for hours) | crashed mid-cluster | nothing — startup overwrites with `Idle` before processing |
 | Missed commits while daemon was down | offline edits | automatic: startup catch-up cluster (disable with `rescan_on_start = false`) |
@@ -58,8 +58,8 @@ Every cluster decision — commit **or skip** — is one JSON line in
 and paths.
 
 ```sh
-kaptaind-cli explain            # last 10 decisions, human form
-kaptaind-cli explain --last 50
+kaptaind explain            # last 10 decisions, human form
+kaptaind explain --last 50
 kaptaind --dry-run              # full pipeline minus staging/commit:
                                 # prints bump, next version, exact message
 ```

@@ -36,7 +36,7 @@ export default async function ChangelogPage() {
           <p className="text-sm text-zinc-500">
             No shipped AoC sessions yet. Use{" "}
             <code className="rounded bg-zinc-100 px-1.5 py-0.5 text-xs dark:bg-zinc-800">
-              kaptaind-cli aoc start &lt;label&gt;
+              kaptaind aoc start &lt;label&gt;
             </code>{" "}
             to begin tracking.
           </p>

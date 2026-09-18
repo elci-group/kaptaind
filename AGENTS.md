@@ -7,14 +7,14 @@
 `kaptaind` is a Rust application (`Cargo.toml`, edition 2021) that watches a repository for filesystem changes, clusters events, analyzes the change set, computes a semantic-version bump, writes `VERSION`, persists analysis artifacts, creates a git commit, and optionally pushes.
 
 - Entry point: `src/main.rs` initializes tracing, loads config, then starts the daemon runtime.
-- CLI entry point: `src/cli/main.rs` runs `kaptaind-cli` subcommands.
+- CLI entry point: `src/cli/main.rs` runs `kaptaind` subcommands.
 
 ## Essential commands
 
 - `cargo run` — run the daemon from the repository root.
 - `cargo test` — run the unit and async tests embedded in module files.
 - `cargo build` — build the binary.
-- `cargo run --bin kaptaind-cli -- ship plan` — preview a manual release without side effects.
+- `cargo run --bin kaptaind -- ship plan` — preview a manual release without side effects.
 - `cargo fmt && cargo clippy --all-targets -- -D warnings` — required before committing.
 
 ## Repository layout
@@ -22,7 +22,7 @@
 | Path | Responsibility |
 |------|----------------|
 | `src/main.rs` | Daemon startup wiring, `--config` handling, tracing init. |
-| `src/cli/main.rs` | CLI binary (`kaptaind-cli`): argument parsing, `Commands` enum, and dispatch. |
+| `src/cli/main.rs` | CLI binary (`kaptaind`): argument parsing, `Commands` enum, and dispatch. |
 | `src/cli/commands/` | Per-command handler modules (`status`, `log`, `analyze`, `init`, `aoc`, `ship`, `trawl`, etc.). |
 | `src/config/` | Config loading, path normalization, defaults, structs for staging/bundle/notify/etc. |
 | `src/watcher/` | Filesystem event types and notify-based watcher thread. |
@@ -54,7 +54,7 @@
 3. **Event ingestion**: `watcher::fs::start()` converts `notify` events into `FsEvent` values and sends them across the channel. The scheduler receives them on the async runtime.
 4. **Clustering**: `daemon::scheduler::run()` batches events with `ClusterEngine`. Events are grouped while the time delta is strictly less than the configured window.
 5. **Filtering & rate limits**: ignored paths are dropped, and commits are rate-limited by `min_commit_interval`.
-6. **Suspend gate**: if `.kaptaind/suspend.json` marks the daemon as suspended, the cluster is skipped and a `SUSPENDED` decision is recorded. Manual `kaptaind-cli suspend`/`resume` or AoC start/ship/cancel read/write this file.
+6. **Suspend gate**: if `.kaptaind/suspend.json` marks the daemon as suspended, the cluster is skipped and a `SUSPENDED` decision is recorded. Manual `kaptaind suspend`/`resume` or AoC start/ship/cancel read/write this file.
 7. **Validation**: the configured test hook runs. A passing hook reduces runtime weight to `0.1`; a failing hook forces it to `1.0`.
 7. **Diff analysis**: structural + API + dependency + runtime + optional bundle scoring are computed.
 8. **Versioning**: `weight::calculator` combines scores, then `version::semver` decides `Major`/`Minor`/`Patch`/`None` and writes `VERSION` (+ updates `Cargo.toml` if present).
@@ -143,15 +143,15 @@
 ### Ship a release manually
 
 ```bash
-cargo run --bin kaptaind-cli -- ship plan   # dry run
-cargo run --bin kaptaind-cli -- ship run    # execute
+cargo run --bin kaptaind -- ship plan   # dry run
+cargo run --bin kaptaind -- ship run    # execute
 ```
 
 ### Suspend and resume the daemon
 
 ```bash
-kaptaind-cli suspend --reason "manual hold"
-kaptaind-cli resume
+kaptaind suspend --reason "manual hold"
+kaptaind resume
 ```
 
 - Starting an AoC session auto-suspends the daemon when `[daemon].auto_suspend_on_aoc_start = true` (default).

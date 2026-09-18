@@ -49,7 +49,7 @@ bash install.sh --debug
 # Build but don't install
 bash install.sh --build-only
 
-# Skip running kaptaind-cli init after install
+# Skip running kaptaind init after install
 bash install.sh --no-init
 
 # View all options
@@ -78,12 +78,12 @@ bash install.sh --autostart
 
 **After Installation:**
 ```bash
-kaptaind-cli enable-autostart
+kaptaind enable-autostart
 ```
 
 **To Disable Auto-Start:**
 ```bash
-kaptaind-cli disable-autostart
+kaptaind disable-autostart
 ```
 
 **How Auto-Start Works:**
@@ -172,13 +172,12 @@ cd kaptaind
 cargo build --release
 ```
 
-3. Install binaries:
+3. Install the binary:
 
 ```bash
 mkdir -p ~/.local/bin
 cp target/release/kaptaind ~/.local/bin/
-cp target/release/kaptaind-cli ~/.local/bin/
-chmod +x ~/.local/bin/kaptaind*
+chmod +x ~/.local/bin/kaptaind
 ```
 
 4. Create configuration directory:
@@ -199,14 +198,13 @@ export PATH="$HOME/.local/bin:$PATH"
 
 ```bash
 kaptaind --version
-kaptaind-cli --version
 ```
 
 7. Initialize a project:
 
 ```bash
 cd /path/to/your/repo
-kaptaind-cli init
+kaptaind init
 ```
 
 ---
@@ -223,7 +221,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 # Optional: shell aliases for convenience
 alias kd='kaptaind'
-alias kdcli='kaptaind-cli'
+alias kdcli='kaptaind'
 ```
 
 Then reload your shell:
@@ -243,7 +241,7 @@ cd /path/to/your/project
 2. Initialize kaptaind:
 
 ```bash
-kaptaind-cli init
+kaptaind init
 ```
 
 This creates a `kaptaind.toml` configuration file tailored to your project type.
@@ -257,12 +255,12 @@ kaptaind --daemon
 4. Check status:
 
 ```bash
-kaptaind-cli status
+kaptaind status
 ```
 
 5. **Note:** the `kaptaind.toml` from step 2 defaults to observe-only — the
    daemon will analyze and score your changes but won't commit or push
-   anything yet. `kaptaind-cli status` and `kaptaind-cli validate` won't tell
+   anything yet. `kaptaind status` and `kaptaind validate` won't tell
    you this either. Add the following once you're ready for it to actually
    commit:
 
@@ -284,11 +282,10 @@ Man-page sources are included in the repository as Markdown. You can install the
 
 ### With pandoc
 
-Render the man pages for **kaptaind** and **kaptaind-cli**:
+Render the man page for **kaptaind**:
 
 ```bash
 pandoc man/kaptaind.1.md -s -t man -o /usr/local/share/man/man1/kaptaind.1
-pandoc man/kaptaind-cli.1.md -s -t man -o /usr/local/share/man/man1/kaptaind-cli.1
 ```
 
 After installing, refresh the man database:
@@ -305,7 +302,6 @@ If you do not have **pandoc** installed, you can copy the Markdown sources direc
 
 ```bash
 cp man/kaptaind.1.md /usr/local/share/man/man1/kaptaind.1.md
-cp man/kaptaind-cli.1.md /usr/local/share/man/man1/kaptaind-cli.1.md
 ```
 
 ### Using the Makefile
@@ -330,14 +326,12 @@ make install-man MANDIR=~/.local/share/man
 
 ```bash
 rm ~/.local/bin/kaptaind
-rm ~/.local/bin/kaptaind-cli
 ```
 
 Or if installed system-wide:
 
 ```bash
 sudo rm /usr/local/bin/kaptaind
-sudo rm /usr/local/bin/kaptaind-cli
 ```
 
 ### Remove Configuration (Optional)

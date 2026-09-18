@@ -364,16 +364,16 @@ Add kimi-specific commands to the CLI:
 
 ```bash
 # Analyze current changes with Kimi
-kaptaind-cli analyze --provider kimi --thinking
+kaptaind analyze --provider kimi --thinking
 
 # Start an AoC session with Kimi
-kaptaind-cli aoc start --label "Feature X" --provider kimi
+kaptaind aoc start --label "Feature X" --provider kimi
 
 # Request Kimi code review
-kaptaind-cli review --provider kimi --diff HEAD~5
+kaptaind review --provider kimi --diff HEAD~5
 
 # Generate release notes
-kaptaind-cli release-notes --provider kimi --since v1.0.0
+kaptaind release-notes --provider kimi --since v1.0.0
 ```
 
 **Implementation in `src/cli/main.rs`:**

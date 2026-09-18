@@ -5,7 +5,7 @@ pub fn handle_enable_autostart() -> anyhow::Result<()> {
         "{} {} {}",
         "⚠️".yellow(),
         "enable-autostart is deprecated.".yellow().bold(),
-        "Use: kaptaind-cli service install --user".cyan()
+        "Use: kaptaind service install --user".cyan()
     );
 
     crate::monitor::install_service(true, false)
@@ -16,7 +16,7 @@ pub fn handle_disable_autostart() -> anyhow::Result<()> {
         "{} {} {}",
         "⚠️".yellow(),
         "disable-autostart is deprecated.".yellow().bold(),
-        "Use: kaptaind-cli service uninstall --user".cyan()
+        "Use: kaptaind service uninstall --user".cyan()
     );
 
     crate::monitor::uninstall_service(true, false)

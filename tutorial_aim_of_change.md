@@ -58,11 +58,11 @@ An AoC session captures:
 ```
 START ("feature: oauth2")
   ↓
-ACTIVE (automatic tagging of commits)
+ACTIVE (daemon suspended; clusters traced while you work)
   ↓
-SHIP (finalize & export manifest)
+SHIP (finalize & export manifest, with commit linkage)
   ↓
-MANIFESTED (.kaptaind/aoc/manifests/<id>.json)
+MANIFESTED (.kaptaind/aoc/<id>.json)
 ```
 
 ---
@@ -74,7 +74,7 @@ MANIFESTED (.kaptaind/aoc/manifests/<id>.json)
 Begin work on a feature with a clear intent:
 
 ```bash
-kaptaind-cli aoc start "feature: oauth2 authentication"
+kaptaind aoc start "feature: oauth2 authentication"
 ```
 
 **Output:**
@@ -86,7 +86,10 @@ kaptaind-cli aoc start "feature: oauth2 authentication"
 
 ### Step 2️⃣: Work Normally
 
-Make your changes and commit as usual. Kaptaind automatically tags each commit:
+Make your changes and commit as usual. By default the daemon suspends its
+auto-commits for the duration of the session (`[daemon]
+auto_suspend_on_aoc_start`); if it runs, each realised cluster is traced
+with its commit recorded in `.kaptaind/traces.db`.
 
 ```bash
 # Your work...
@@ -97,15 +100,13 @@ git commit -m "Add OAuth2 provider class"
 # {
 #   "id": "8c4e2d19-a0b3-4c2e-9d7e-1a5f3b8c2d0e",
 #   "label": "feature: oauth2 authentication",
-#   "started_at": "2026-04-05T10:30:00Z",
-#   "commits": [
-#     {
-#       "hash": "abc1234",
-#       "kaptaind_version": "v0.2.1",
-#       "timestamp": "2026-04-05T10:35:22Z"
-#     }
-#   ]
+#   "created_at": "2026-04-05T10:30:00Z",
+#   "initial_version": "0.1.2"
 # }
+#
+# Commits are not tracked live in active.json — the manifest links them at
+# ship time (daemon commit bodies embed `cluster=<uuid>`, and `aoc ship`
+# collects the matching SHAs).
 ```
 
 ### Step 3️⃣: Check Progress
@@ -113,7 +114,7 @@ git commit -m "Add OAuth2 provider class"
 See how many commits have been grouped:
 
 ```bash
-kaptaind-cli aoc status
+kaptaind aoc status
 ```
 
 **Output:**
@@ -131,19 +132,20 @@ kaptaind-cli aoc status
 When your feature is complete, finalize the session:
 
 ```bash
-kaptaind-cli aoc ship
+kaptaind aoc ship
 ```
 
 **Output:**
 ```
 ✓ Session shipped
   Manifest ID: 8c4e2d19-a0b3-4c2e-9d7e-1a5f3b8c2d0e
-  Manifest path: .kaptaind/aoc/manifests/8c4e2d19-a0b3-4c2e-9d7e-1a5f3b8c2d0e.json
+  Manifest path: .kaptaind/aoc/8c4e2d19-a0b3-4c2e-9d7e-1a5f3b8c2d0e.json
   
   Ready for:
   - Release notes generation
   - Deployment tracking
   - Audit logging
+  - Post-hoc review analysis (e.g. `scrawny analyse --aoc <id>`)
 ```
 
 ---
@@ -158,13 +160,10 @@ After starting and shipping a session, you'll have:
 .kaptaind/
 ├── aoc/
 │   ├── active.json                    # Current active session (if any)
-│   └── manifests/
-│       ├── 8c4e2d19-...json          # Shipped session manifest
-│       ├── a1b2c3d4-...json
-│       └── ...
-└── traces/
-    ├── 8c4e2d19-...json              # Trace records (linked to AoC)
-    └── ...
+│   └── <session-id>.json              # Shipped session manifests (one per session)
+├── traces.db                          # Cluster trace records (SQLite, linked by aoc_id)
+└── analysis/
+    └── <cluster-id>.json              # Per-cluster analysis artifacts
 ```
 
 ### Understanding the Manifest
@@ -175,33 +174,28 @@ A shipped manifest looks like:
 {
   "id": "8c4e2d19-a0b3-4c2e-9d7e-1a5f3b8c2d0e",
   "label": "feature: oauth2 authentication",
-  "cluster": "oauth2-cluster-a7f3",
-  "trace_ids": [
-    "abc1234",
-    "def5678",
-    "ghi9012"
-  ],
+  "created_at": "2026-04-05T10:30:00Z",
+  "shipped_at": "2026-04-05T12:45:30Z",
   "initial_version": "0.1.2",
   "final_version": "0.2.0",
+  "cluster_count": 3,
   "commit_count": 4,
   "test_failures": 0,
-  "cluster_count": 3,
-  "started_at": "2026-04-05T10:30:00Z",
-  "shipped_at": "2026-04-05T12:45:30Z",
+  "trace_ids": [
+    "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+    "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+    "cccccccc-cccc-cccc-cccc-cccccccccccc"
+  ],
   "commits": [
-    {
-      "hash": "abc1234def5678",
-      "subject": "feat: add oauth2 provider interface",
-      "kaptaind_version": "v0.1.3"
-    },
-    {
-      "hash": "ghi9012jkl3456",
-      "subject": "feat: wire up redirect and token validation",
-      "kaptaind_version": "v0.2.0"
-    }
+    "abc1234def5678901234567890abcdef12345678",
+    "ghi9012jkl345678901234567890abcdefabcdef12"
   ]
 }
 ```
+
+`commits` (oldest first) records the session's realised commit SHAs, so
+tools like scrawny can reconstruct exactly what a shipped aim changed
+(`scrawny analyse --aoc <id>`) from the manifest alone.
 
 ### Query Shipped Sessions
 
@@ -212,7 +206,7 @@ Generate release notes from any shipped manifest:
 # GET /api/kaptaind/aoc?id=8c4e2d19-a0b3-4c2e-9d7e-1a5f3b8c2d0e
 
 # Or read the JSON directly
-cat .kaptaind/aoc/manifests/8c4e2d19-a0b3-4c2e-9d7e-1a5f3b8c2d0e.json | jq .
+cat .kaptaind/aoc/8c4e2d19-a0b3-4c2e-9d7e-1a5f3b8c2d0e.json | jq .
 ```
 
 ### Cancel a Session
@@ -220,7 +214,7 @@ cat .kaptaind/aoc/manifests/8c4e2d19-a0b3-4c2e-9d7e-1a5f3b8c2d0e.json | jq .
 If you want to discard an active session without shipping:
 
 ```bash
-kaptaind-cli aoc cancel
+kaptaind aoc cancel
 ```
 
 **Effect:**
@@ -241,7 +235,7 @@ Agent Interception captures structured observability data (test results, build l
 Run a command and capture its output linked to the current AoC session:
 
 ```bash
-kaptaind-cli aoc intercept -- npm test
+kaptaind aoc intercept -- npm test
 ```
 
 **What Happens:**
@@ -255,7 +249,7 @@ kaptaind-cli aoc intercept -- npm test
 Analyze the captured output with an AI model:
 
 ```bash
-kaptaind-cli aoc intercept \
+kaptaind aoc intercept \
   --model claude-3-5-sonnet \
   --intent "refactor auth middleware" \
   -- npm test
@@ -298,22 +292,22 @@ Coordinate a multi-team release across services:
 
 **Service A (Backend):**
 ```bash
-kaptaind-cli aoc start "release: v2.0.0 backend"
+kaptaind aoc start "release: v2.0.0 backend"
 # ... make changes ...
-kaptaind-cli aoc ship
+kaptaind aoc ship
 ```
 
 **Service B (Frontend):**
 ```bash
-kaptaind-cli aoc start "release: v2.0.0 frontend"
+kaptaind aoc start "release: v2.0.0 frontend"
 # ... make changes ...
-kaptaind-cli aoc ship
+kaptaind aoc ship
 ```
 
 **Release Manifest:**
 ```bash
 # Query both manifests to track release across repos
-cat .kaptaind/aoc/manifests/*.json | jq 'select(.label | contains("v2.0.0"))'
+cat .kaptaind/aoc/*.json | jq 'select(.label | contains("v2.0.0"))'
 ```
 
 ### 🔍 Audit & Compliance
@@ -322,17 +316,17 @@ Build an audit trail for regulated environments:
 
 ```bash
 # Start session with explicit audit intent
-kaptaind-cli aoc start "audit: HIPAA compliance for patient data handling"
+kaptaind aoc start "audit: HIPAA compliance for patient data handling"
 
 # Intercept all changes with evidence
-kaptaind-cli aoc intercept --model claude-opus-4-6 --intent "HIPAA compliance" -- npm test
-kaptaind-cli aoc intercept --intent "security review" -- cargo audit
+kaptaind aoc intercept --model claude-opus-4-6 --intent "HIPAA compliance" -- npm test
+kaptaind aoc intercept --intent "security review" -- cargo audit
 
 # Ship and archive
-kaptaind-cli aoc ship
+kaptaind aoc ship
 
 # Exported manifest is immutable proof of work
-cat .kaptaind/aoc/manifests/*.json | jq '.label, .commits, .analysis'
+cat .kaptaind/aoc/*.json | jq '.label, .commits, .analysis'
 ```
 
 ### 🚀 Continuous Deployment
@@ -355,25 +349,25 @@ jobs:
 
       - name: Check active AoC session
         run: |
-          SESSION=$(kaptaind-cli aoc status --json)
+          SESSION=$(kaptaind aoc status --json)
           if [ -z "$SESSION" ]; then
             echo "No active AoC session; skipping release"
             exit 0
           fi
 
       - name: Run tests (captured in AoC trace)
-        run: kaptaind-cli aoc intercept -- npm test
+        run: kaptaind aoc intercept -- npm test
 
       - name: Deploy
         run: npm run deploy
 
       - name: Ship AoC session
-        run: kaptaind-cli aoc ship
+        run: kaptaind aoc ship
 
       - name: Generate release notes
         run: |
-          MANIFEST=$(kaptaind-cli aoc manifest --latest)
-          kaptaind-cli changelog --manifest "$MANIFEST" > RELEASE_NOTES.md
+          MANIFEST=$(kaptaind aoc manifest --latest)
+          kaptaind changelog --manifest "$MANIFEST" > RELEASE_NOTES.md
 
       - name: Create GitHub Release
         uses: actions/create-release@v1
@@ -387,10 +381,10 @@ Analyze multiple shipped sessions for trend data:
 
 ```bash
 # Get all shipped sessions
-ls .kaptaind/aoc/manifests/*.json | xargs -I {} jq '{
+ls .kaptaind/aoc/*.json | xargs -I {} jq '{
   label: .label,
   commits: (.commits | length),
-  duration_hours: ((.shipped_at - .started_at) / 3600),
+  duration_hours: ((.shipped_at - .created_at) / 3600),
   version_bump: (.final_version - .initial_version)
 }' {} | jq -s 'group_by(.label) | map({
   feature: .[0].label,
@@ -406,11 +400,11 @@ ls .kaptaind/aoc/manifests/*.json | xargs -I {} jq '{
 
 ### ❌ "No active session"
 
-**Symptom:** Running `kaptaind-cli aoc status` returns error.
+**Symptom:** Running `kaptaind aoc status` returns error.
 
 **Fix:**
 ```bash
-kaptaind-cli aoc start "your feature name"
+kaptaind aoc start "your feature name"
 ```
 
 ---
@@ -437,7 +431,7 @@ cat .kaptaind/aoc/active.json
 
 ### ❌ "Intercept command failed"
 
-**Symptom:** `kaptaind-cli aoc intercept -- npm test` returns error.
+**Symptom:** `kaptaind aoc intercept -- npm test` returns error.
 
 **Debug:**
 ```bash
@@ -445,14 +439,14 @@ cat .kaptaind/aoc/active.json
 npm test
 
 # If that succeeds, check kaptaind logs
-kaptaind-cli status
+kaptaind status
 ```
 
 ---
 
 ### ❌ "Cannot ship, session is corrupted"
 
-**Symptom:** `kaptaind-cli aoc ship` fails with parse error.
+**Symptom:** `kaptaind aoc ship` fails with parse error.
 
 **Fix:**
 ```bash
@@ -460,10 +454,10 @@ kaptaind-cli status
 cat .kaptaind/aoc/active.json | jq .
 
 # If corrupted, manually repair or cancel
-kaptaind-cli aoc cancel
+kaptaind aoc cancel
 
 # Restart session
-kaptaind-cli aoc start "your feature"
+kaptaind aoc start "your feature"
 ```
 
 ---

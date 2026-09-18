@@ -333,7 +333,7 @@ pub struct SecurityDistConfig {
 
 /// `[ship]` block in `kaptaind.toml`.
 ///
-/// Configures the `kaptaind-cli ship` command: which targets to build,
+/// Configures the `kaptaind ship` command: which targets to build,
 /// which installers to produce, and which package managers / app stores
 /// to publish to.
 #[derive(Debug, Clone, Deserialize)]
@@ -446,8 +446,8 @@ impl Default for ShipProvenanceConfig {
     }
 }
 
-/// Per-release-kind overrides for `kaptaind-cli ship stable` and
-/// `kaptaind-cli ship nightly`.
+/// Per-release-kind overrides for `kaptaind ship stable` and
+/// `kaptaind ship nightly`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ShipKindConfig {
     /// Override target triples for this release kind.
@@ -1702,7 +1702,7 @@ impl Default for VacsConfig {
 // ---------------------------------------------------------------------------
 
 /// `[trawl]` block in `kaptaind.toml`.
-/// Configures codebase discovery and initialization for `kaptaind-cli trawl`.
+/// Configures codebase discovery and initialization for `kaptaind trawl`.
 #[derive(Debug, Clone, Deserialize)]
 pub struct TrawlConfig {
     /// Root directory to trawl from (default: parent of repo_path)
@@ -2699,7 +2699,7 @@ impl Default for Config {
 }
 
 /// Loads configuration from, in order: an explicit `KAPTAIND_CONFIG` path (set
-/// by `--config` in both `kaptaind` and `kaptaind-cli`, or directly by the
+/// by `--config` in both `kaptaind` and `kaptaind`, or directly by the
 /// caller), or the discovered repo root's `kaptaind.toml`.
 ///
 /// `--config`/`KAPTAIND_CONFIG` is documented in both binaries' `--help` text
@@ -2733,7 +2733,7 @@ pub fn load_from_path(path: &Path) -> anyhow::Result<Config> {
         anyhow::bail!(
             "[versioning].mode = {:?} is not implemented yet — only \"root\" (a single \
              VERSION at the repository root) is supported. For per-member versioning today, \
-             run `kaptaind-cli trawl --expand-workspaces` so each member crate gets its own \
+             run `kaptaind trawl --expand-workspaces` so each member crate gets its own \
              kaptaind.toml and VERSION lifecycle.",
             cfg.versioning.mode
         );
@@ -2848,7 +2848,7 @@ pub struct VersioningConfig {
     /// Only `Root` is implemented: a single `VERSION` at the repo root, with
     /// the root `Cargo.toml`/`Cargo.lock` kept in sync. `Members`/`Hybrid`
     /// parse but are rejected at load time; use
-    /// `kaptaind-cli trawl --expand-workspaces` for per-member versioning.
+    /// `kaptaind trawl --expand-workspaces` for per-member versioning.
     #[serde(default)]
     pub mode: VersioningMode,
     /// How to react when `VERSION` and root `Cargo.toml [package].version`

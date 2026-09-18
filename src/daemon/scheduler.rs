@@ -1726,118 +1726,66 @@ async fn process_cluster(
     }
 
     if config.push.enabled && config.capabilities.network_push {
-        // A production-branch commit may have been migrated to its matching
-        // development branch above; push the branch that actually received
-        // the commit rather than sending the old production ref.
-        let push_branch = crate::integration::current_branch(&config.repo_path)
-            .ok()
-            .filter(|branch| !branch.is_empty())
-            .unwrap_or_else(|| config.push.branch.clone());
-        // Run pre-push hooks if configured
-        if let Some(angler) = angler {
-            let refs = vec![(
-                format!("refs/heads/{push_branch}"),
-                "HEAD".to_string(),
-                format!("refs/heads/{push_branch}"),
-                "origin/HEAD".to_string(),
-            )];
-            if let Some(hook_result) = angler
-                .run_pre_push(&config.push.remote, "origin", &refs)
-                .await
-            {
-                if !hook_result.success {
-                    tracing::warn!(stderr = %hook_result.stderr, "pre-push hook failed");
-                    if config
-                        .angler
-                        .git_hooks
-                        .pre_push
-                        .as_ref()
-                        .map(|c| c.required)
-                        .unwrap_or(false)
-                    {
-                        let err = format!("Pre-push hook failed: {}", hook_result.stderr);
-                        status.set_failed(err.clone());
-                        write_status(&config.repo_path, status);
-                        crate::daemon::notification::notify_warning(
-                            &config.notify,
-                            &err,
-                            "Pre-push hook",
-                            config.capabilities.network_webhooks,
-                        );
-                        broadcast_event(
-                            &event_tx,
-                            "warning",
-                            serde_json::json!({
-                                "title": err,
-                                "source": "Pre-push hook",
-                            }),
-                        );
-                        return;
-                    }
+        let push_result = crate::push::run_configured(
+            &config.repo_path,
+            config,
+            angler,
+            &crate::push::PushOverrides::default(),
+        )
+        .await;
+        let push_summary = match push_result {
+            Ok(summary) => summary,
+            Err(err) => {
+                if err.downcast_ref::<crate::push::PrePushHookFailed>().is_some() {
+                    let msg = err.to_string();
+                    status.set_failed(msg.clone());
+                    write_status(&config.repo_path, status);
+                    crate::daemon::notification::notify_warning(
+                        &config.notify,
+                        &msg,
+                        "Pre-push hook",
+                        config.capabilities.network_webhooks,
+                    );
+                    broadcast_event(
+                        &event_tx,
+                        "warning",
+                        serde_json::json!({
+                            "title": msg,
+                            "source": "Pre-push hook",
+                        }),
+                    );
+                    return;
                 }
+                tracing::warn!(error = %err, "push failed");
+                write_trace_if_active(
+                    &config.repo_path,
+                    &cluster,
+                    tracer::TraceResult::Skipped {
+                        reason: "push_failed".to_string(),
+                    },
+                    test_outcome.trace_test(),
+                    agent_event.clone(),
+                );
+                status.set_failed(format!("push failed: {err}"));
+                write_status(&config.repo_path, status);
+                crate::daemon::notification::notify_warning(
+                    &config.notify,
+                    &err.to_string(),
+                    "Push failed",
+                    config.capabilities.network_webhooks,
+                );
+                broadcast_event(
+                    &event_tx,
+                    "warning",
+                    serde_json::json!({
+                        "title": err.to_string(),
+                        "source": "Push failed",
+                    }),
+                );
+                return;
             }
-        }
-
-        // Use multi-remote push if configured, otherwise fall back to single remote
-        let push_result = if !config.push.remotes.is_empty() {
-            let multi_push_options = crate::push::MultiRemotePushOptions {
-                remotes: config.push.remotes.clone(),
-                branch: push_branch.clone(),
-                dry_run: config.push.dry_run,
-                protect_branches: config.push.safety.protect_branches.clone(),
-            };
-            crate::push::push_multi_remote(
-                &config.repo_path,
-                &multi_push_options,
-                &config.push.retry,
-                &config.push.protection,
-            )
-            .await
-            .map(|_| ())
-        } else {
-            let push_options = crate::push::PushOptions {
-                remote: config.push.remote.clone(),
-                branch: push_branch.clone(),
-                dry_run: config.push.dry_run,
-                protect_branches: config.push.safety.protect_branches.clone(),
-            };
-            crate::push::push(
-                &config.repo_path,
-                &push_options,
-                &config.push.retry,
-                &config.push.protection,
-            )
-            .await
         };
-        if let Err(err) = push_result {
-            tracing::warn!(error = %err, "push failed");
-            write_trace_if_active(
-                &config.repo_path,
-                &cluster,
-                tracer::TraceResult::Skipped {
-                    reason: "push_failed".to_string(),
-                },
-                test_outcome.trace_test(),
-                agent_event.clone(),
-            );
-            status.set_failed(format!("push failed: {err}"));
-            write_status(&config.repo_path, status);
-            crate::daemon::notification::notify_warning(
-                &config.notify,
-                &err.to_string(),
-                "Push failed",
-                config.capabilities.network_webhooks,
-            );
-            broadcast_event(
-                &event_tx,
-                "warning",
-                serde_json::json!({
-                    "title": err.to_string(),
-                    "source": "Push failed",
-                }),
-            );
-            return;
-        }
+        let push_branch = push_summary.branch;
 
         // Send push webhook event
         if let Some(angler) = angler {
@@ -2075,6 +2023,11 @@ async fn auto_ship_aoc(repo_path: &Path, session: &crate::aoc::AocSession) -> an
 
     let test_failures = traces.iter().filter(|t| t.test.outcome == "failed").count();
 
+    let commit_hashes = crate::aoc::session::session_commit_hashes(
+        repo_path,
+        &traces.iter().map(|t| t.cluster_id.clone()).collect::<Vec<_>>(),
+    )?;
+
     let manifest = crate::aoc::AocManifest {
         id: session.id.clone(),
         label: format!("{} (auto-reaped)", session.label),
@@ -2086,6 +2039,7 @@ async fn auto_ship_aoc(repo_path: &Path, session: &crate::aoc::AocSession) -> an
         commit_count,
         test_failures,
         trace_ids: traces.iter().map(|t| t.cluster_id.clone()).collect(),
+        commits: commit_hashes,
     };
 
     crate::aoc::session::save_manifest(repo_path, &manifest)?;

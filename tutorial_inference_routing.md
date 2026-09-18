@@ -107,7 +107,7 @@ Start `kaptaind` and check the logs:
 
 ```bash
 # In daemon mode, check status
-kaptaind-cli status
+kaptaind status
 
 # Look for output like:
 # inference provider selected: anthropic, model=claude-haiku-4-5-20251001
@@ -467,7 +467,7 @@ enabled = true
 env | grep -E "ANTHROPIC_API_KEY|OPENAI_API_KEY"
 
 # Check kaptaind logs
-kaptaind-cli status  # Look for "inference provider selected: ..."
+kaptaind status  # Look for "inference provider selected: ..."
 ```
 
 **Fix (Option 1: Set the keys):**
@@ -497,7 +497,7 @@ ps aux | grep kaptaind
 **Fix:**
 ```bash
 # Kill daemon and restart with correct env
-kaptaind-cli stop
+kaptaind stop
 export ANTHROPIC_API_KEY="sk-ant-..."
 kaptaind --daemon
 ```

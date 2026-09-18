@@ -8,7 +8,7 @@ and must be paired with the existing release policy, approval and audit gates.
 See [the production integration runbook](INTEGRATION_RUNBOOK.md) for the
 preflight, provisioning, governance, and incident-handling sequence.
 
-Run `kaptaind-cli integrations --format json` to inspect the catalogue and
+Run `kaptaind integrations --format json` to inspect the catalogue and
 the configured connector count for each provider.
 
 ## Configuration

@@ -17,7 +17,7 @@
 #   --ref TAG               Release tag to install (default: latest), e.g. v9.7.16
 #   --build-from-source     Clone and build from source instead of downloading a
 #                           signed release (skips artifact signature checks)
-#   --no-init               Skip kaptaind-cli init after installation
+#   --no-init               Skip kaptaind init after installation
 #   --autostart             Enable auto-start on login (systemd/launchd/shell)
 #   --build-only            (build-from-source) Build but don't install
 #   --debug                 (build-from-source) Build debug binary instead of release
@@ -412,7 +412,7 @@ install_binaries() {
     fi
 
     # Copy binaries
-    for binary in kaptaind kaptaind-cli; do
+    for binary in kaptaind; do
         local src="$SRC_DIR/$binary"
         [[ "$(detect_os)" == "windows" ]] && src="$SRC_DIR/${binary}.exe"
         if [[ -f "$src" ]]; then
@@ -452,11 +452,6 @@ verify_installation() {
         print_warning "Could not verify kaptaind (may need PATH update)"
     fi
 
-    if kaptaind-cli --version >/dev/null 2>&1; then
-        print_success "kaptaind-cli executable verified"
-    else
-        print_warning "Could not verify kaptaind-cli (may need PATH update)"
-    fi
 }
 
 # Setup shell integration
@@ -513,7 +508,7 @@ After=network.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-ExecStart=$INSTALL_DIR/kaptaind-cli autostart
+ExecStart=$INSTALL_DIR/kaptaind autostart
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=kaptaind
@@ -547,7 +542,7 @@ setup_autostart_launchd() {
   <string>com.elcigroup.kaptaind</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$INSTALL_DIR/kaptaind-cli</string>
+    <string>$INSTALL_DIR/kaptaind</string>
     <string>autostart</string>
   </array>
   <key>RunAtLoad</key>
@@ -572,7 +567,7 @@ EOF
 }
 
 setup_autostart_shell() {
-    local autostart_line="$INSTALL_DIR/kaptaind-cli autostart > /dev/null 2>&1"
+    local autostart_line="$INSTALL_DIR/kaptaind autostart > /dev/null 2>&1"
 
     for rc_file in "$HOME/.bashrc" "$HOME/.zshrc"; do
         [[ ! -f "$rc_file" ]] && continue
@@ -599,7 +594,7 @@ setup_kaptaind_dir() {
     print_success "Created $HOME/.kaptaind"
 }
 
-# Run kaptaind-cli init (optional)
+# Run kaptaind init (optional)
 run_init() {
     if [[ "$RUN_INIT" == false ]]; then
         return
@@ -608,7 +603,7 @@ run_init() {
     print_header "Initialize Project (Optional)"
 
     echo "Would you like to initialize kaptaind for a project now?"
-    echo "Run: kaptaind-cli init"
+    echo "Run: kaptaind init"
     echo ""
 }
 
@@ -644,11 +639,11 @@ main() {
     print_header "Installation Complete ✓"
     echo "Next steps:"
     echo "  1. Update your PATH (if needed)"
-    echo "  2. Run: kaptaind-cli init"
+    echo "  2. Run: kaptaind init"
     if [[ "$ENABLE_AUTOSTART" == false ]]; then
         echo "  3. Run: kaptaind --daemon"
         echo ""
-        echo "To enable auto-start: kaptaind-cli enable-autostart"
+        echo "To enable auto-start: kaptaind enable-autostart"
     else
         echo "  3. kaptaind will start automatically on next login"
     fi

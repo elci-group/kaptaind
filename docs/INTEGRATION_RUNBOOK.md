@@ -8,7 +8,7 @@ connector as a governed data boundary, not as a generic API token.
 Run this from the repository root before enabling any connector:
 
 ```bash
-kaptaind-cli integrations --format json
+kaptaind integrations --format json
 cargo test --test integration_connectors
 ```
 

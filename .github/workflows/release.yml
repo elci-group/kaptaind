@@ -121,8 +121,7 @@ jobs:
           rm -rf "$STAGE"
           mkdir -p "$STAGE"
           cp "target/${TARGET}/release/kaptaind" "$STAGE/kaptaind"
-          cp "target/${TARGET}/release/kaptaind-cli" "$STAGE/kaptaind-cli"
-          tar -czf "kaptaind-${VERSION}-${TARGET}.tar.gz" -C "$STAGE" kaptaind kaptaind-cli
+          tar -czf "kaptaind-${VERSION}-${TARGET}.tar.gz" -C "$STAGE" kaptaind
 
       - name: Package (windows)
         if: runner.os == 'Windows'
@@ -135,8 +134,7 @@ jobs:
           Remove-Item -Recurse -Force $STAGE -ErrorAction SilentlyContinue
           New-Item -ItemType Directory -Force $STAGE | Out-Null
           Copy-Item "target/$TARGET/release/kaptaind.exe" "$STAGE/kaptaind.exe"
-          Copy-Item "target/$TARGET/release/kaptaind-cli.exe" "$STAGE/kaptaind-cli.exe"
-          Compress-Archive -Path "$STAGE/kaptaind.exe", "$STAGE/kaptaind-cli.exe" `
+          Compress-Archive -Path "$STAGE/kaptaind.exe" `
             -DestinationPath "kaptaind-$VERSION-$TARGET.zip" -Force
 
       - name: Upload package artifact

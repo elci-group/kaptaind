@@ -248,7 +248,7 @@ WantedBy=multi-user.target
                         "❌".red(),
                         "Permission denied writing system service file.".red()
                     );
-                    eprintln!("   Run: sudo kaptaind-cli service install --system");
+                    eprintln!("   Run: sudo kaptaind service install --system");
                     anyhow::bail!("Permission denied");
                 }
                 Err(err) => return Err(err.into()),
@@ -350,7 +350,7 @@ WantedBy=multi-user.target
                         "❌".red(),
                         "Permission denied writing system LaunchDaemon.".red()
                     );
-                    eprintln!("   Run: sudo kaptaind-cli service install --system");
+                    eprintln!("   Run: sudo kaptaind service install --system");
                     anyhow::bail!("Permission denied");
                 }
                 Err(err) => return Err(err.into()),
@@ -411,7 +411,7 @@ pub fn uninstall_service(user: bool, system: bool) -> anyhow::Result<()> {
                             "❌".red(),
                             "Permission denied removing system service file.".red()
                         );
-                        eprintln!("   Run: sudo kaptaind-cli service uninstall --system");
+                        eprintln!("   Run: sudo kaptaind service uninstall --system");
                         anyhow::bail!("Permission denied");
                     }
                     Err(err) => return Err(err.into()),
@@ -451,7 +451,7 @@ pub fn uninstall_service(user: bool, system: bool) -> anyhow::Result<()> {
                             "❌".red(),
                             "Permission denied removing system LaunchDaemon.".red()
                         );
-                        eprintln!("   Run: sudo kaptaind-cli service uninstall --system");
+                        eprintln!("   Run: sudo kaptaind service uninstall --system");
                         anyhow::bail!("Permission denied");
                     }
                     Err(err) => return Err(err.into()),

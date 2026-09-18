@@ -113,9 +113,9 @@ You can reconstruct **exactly why** each version bump happened by inspecting the
 If using Aim of Change sessions:
 
 ```bash
-kaptaind-cli aoc start "feature: auth"
+kaptaind aoc start "feature: auth"
 # ... make changes ...
-kaptaind-cli aoc ship
+kaptaind aoc ship
 ```
 
 Session traces are stored in `.kaptaind/aoc/manifests/<id>.json` and link all commits to the declared intent. This is useful for:
@@ -128,7 +128,7 @@ Session traces are stored in `.kaptaind/aoc/manifests/<id>.json` and link all co
 For enhanced auditability, use agent interception:
 
 ```bash
-kaptaind-cli aoc intercept \
+kaptaind aoc intercept \
   --model claude-3-5-sonnet \
   --intent "refactor auth middleware" \
   -- npm test

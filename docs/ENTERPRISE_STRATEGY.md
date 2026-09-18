@@ -41,7 +41,7 @@ to close those gaps.
 - Added `[ship.auto_nightly]` and `[ship.auto_stable]` cron configuration.
 - Added `src/schedule/cron.rs` using the `cron` crate for robust 5-field expression parsing.
 - Wired the daemon scheduler to evaluate ship schedules every 60 seconds, spawn `run_nightly` / `run_stable`, and prevent overlapping ship runs.
-- Added `kaptaind-cli ship status --auto` to preview next fire times.
+- Added `kaptaind ship status --auto` to preview next fire times.
 
 ### 2. Nautical Real-Time Monitoring (Executed)
 - Extended `src/daemon/notification.rs` with `ReleaseSuccess`, `ReleaseFailure`, `Qualification`, and `Pulse` events.
@@ -144,5 +144,5 @@ require_qualification = true
 Preview the schedule:
 
 ```bash
-kaptaind-cli ship status --auto
+kaptaind ship status --auto
 ```

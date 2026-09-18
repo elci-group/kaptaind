@@ -377,8 +377,8 @@ impl GitHookManager {
 # KAPTAIND MANAGED HOOK - {}
 # This hook is managed by kaptaind. Manual changes will be overwritten.
 
-# Delegate to kaptaind-cli
-exec kaptaind-cli angler exec-hook {} "$@"
+# Delegate to kaptaind
+exec kaptaind angler exec-hook {} "$@"
 "##,
             name, name
         );
@@ -655,7 +655,7 @@ mod tests {
 
         let script = manager.generate_hook_script("pre-commit").unwrap();
         assert!(script.contains("KAPTAIND MANAGED HOOK"));
-        assert!(script.contains("kaptaind-cli angler exec-hook"));
+        assert!(script.contains("kaptaind angler exec-hook"));
         assert!(script.contains("pre-commit"));
     }
 

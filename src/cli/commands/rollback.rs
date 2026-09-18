@@ -41,7 +41,7 @@ pub fn handle_rollback(
     if dry_run || !yes {
         println!(
             "\nDry run. To execute, run:\n  {} {} --yes",
-            "kaptaind-cli rollback".green(),
+            "kaptaind rollback".green(),
             commit.unwrap_or("")
         );
         println!(

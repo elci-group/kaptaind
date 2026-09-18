@@ -5,6 +5,7 @@ use kaptaind::util::style::*;
 mod analyze;
 mod autostart;
 mod commands;
+mod help;
 mod monitor;
 mod table;
 use analyze::handle_analyze;
@@ -15,50 +16,76 @@ use std::path::PathBuf;
 
 #[derive(Parser)]
 #[command(
-    name = "kaptaind-cli",
+    name = "kaptaind",
     version = env!("CARGO_PKG_VERSION"),
     author = "Elci Group <kaptaind@example.com>",
-    about = "Kaptaind CLI companion for the automated versioning daemon",
-    long_about = r#"Kaptaind CLI companion for the automated versioning daemon.
+    about = "Automated semantic versioning daemon, with a CLI for inspection and one-off operations",
+    long_about = r#"+-------------------+
+|    .-=====-.      |
+|   /  .---.  \     |
+|  |--< </> >--|    |
+|   \  '---'  /     |
+|    '---|---'      |
+|    ___/ \___      |
+|   /_KAPTAIND_\    |
++-------------------+
 
-Kaptaind is an automated semantic-versioning daemon that watches a repository,
-clusters filesystem events, analyzes the change set, computes a semantic-version
-bump, and commits the result. This CLI provides visibility into the daemon's
-state and offers one-off analysis, session management, and release operations
-without starting the daemon.
+kaptaind watches your repository for changes, analyzes them across multiple
+dimensions (API, dependencies, runtime), computes semantic version bumps, and
+automatically commits with rich, AI-generated commit messages. This same
+binary also provides one-off analysis, session management, and release
+operations without starting the daemon.
+
+USAGE:
+    kaptaind              Run in foreground (interactive, with logs)
+    kaptaind --daemon     Run as background daemon
+    kaptaind --dock       View watched projects
+    kaptaind --radar      View active projects and event rates
+    kaptaind --lanes      View service/model load breakdown
+    kaptaind --web        Start the WebUI dashboard (default port 8080)
+    kaptaind <subcommand> Run a one-off CLI operation (see EXAMPLES)
 
 EXAMPLES:
-    kaptaind-cli status
-    kaptaind-cli log --limit 20
-    kaptaind-cli analyze
-    kaptaind-cli dashboard
-    kaptaind-cli ci-hint --format json
-    kaptaind-cli aoc start "feature: auth"
-    kaptaind-cli ship plan
-    kaptaind-cli init
+    kaptaind status
+    kaptaind log --limit 20
+    kaptaind analyze
+    kaptaind dashboard
+    kaptaind ci-hint --format json
+    kaptaind aoc start "feature: auth"
+    kaptaind ship plan
+    kaptaind init
+    kaptaind pull
+    kaptaind push
 
 ENVIRONMENT:
+    RUST_LOG             Set logging level (debug, info, warn, error)
     KAPTAIND_CONFIG      Path to kaptaind.toml (default: ./kaptaind.toml)
 
 CONFIG FILE:
     Location: ./kaptaind.toml or ~/.kaptaind/config.toml
     Generate one with:
-        kaptaind-cli init
+        kaptaind init
     Then start the daemon with:
         kaptaind --daemon
 
 REPOSITORY MUTATION:
-    A generated profile defaults to observe-only: `kaptaind-cli analyze` and
+    A generated profile defaults to observe-only: `kaptaind analyze` and
     the daemon both score changes and record the decision, but nothing is
     staged, committed, VERSION-written, pushed, or shipped. Add to
     kaptaind.toml to allow real commits:
         [operation]
         mode = "actuate"
     Pushing additionally needs [push] enabled = true and
-    [capabilities] network_push = true. `kaptaind-cli validate` does not
-    currently flag observe-only repos; check `kaptaind-cli explain` or
+    [capabilities] network_push = true. `kaptaind validate` does not
+    currently flag observe-only repos; check `kaptaind explain` or
     `.kaptaind/decisions.jsonl` for `"outcome":"observed"` if commits stop
     appearing. See CHANGELOG.md [10.2.0] and [10.1.4].
+
+DAEMON MODE:
+    Start:   kaptaind --daemon
+    Check:   kaptaind status
+    Stop:    pkill -f 'kaptaind.*daemon'
+    Logs:    tail -f .kaptaind/daemon.out
 
 DOCUMENTATION:
     https://github.com/elci-group/kaptaind
@@ -67,11 +94,97 @@ DOCUMENTATION:
 )]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 
     /// Repository path to operate on (overrides kaptaind.toml).
     #[arg(short, long, value_name = "PATH", global = true)]
     repo: Option<PathBuf>,
+
+    /// 🌙 Run kaptaind as a background daemon (non-blocking)
+    ///
+    /// Detaches from the terminal and runs in the background, writing logs to
+    /// .kaptaind/daemon.out and .kaptaind/daemon.err. PID is stored in
+    /// .kaptaind/daemon.pid for later termination.
+    #[arg(short, long)]
+    daemon: bool,
+
+    /// 🏗️ Show watched static projects (Dock view)
+    ///
+    /// Lists all projects being watched with their status. Useful for debugging
+    /// which repositories kaptaind is monitoring.
+    #[arg(long)]
+    dock: bool,
+
+    /// 📡 Show active projects and event rates (Radar view)
+    ///
+    /// Displays real-time project activity: event frequency, last action time,
+    /// and current load. Great for monitoring cluster formation.
+    #[arg(long)]
+    radar: bool,
+
+    /// 🛣️ Show service/model load breakdown (Lanes view)
+    ///
+    /// Internal view of which components are under heavy load (diff engine,
+    /// dependency grapher, version heuristics, LLM inference). Useful for
+    /// performance profiling.
+    #[arg(long)]
+    lanes: bool,
+
+    /// 🦈 Set Shark Stating mode for this instance
+    ///
+    /// Determines how this instance participates in high-availability:
+    /// auto (default), leader, standby, observer.
+    #[arg(long, value_name = "MODE")]
+    shark_mode: Option<String>,
+
+    /// 🦈 Override the Shark Stating arbiter path
+    ///
+    /// Shared directory used for leadership leases. Required when running
+    /// multiple instances against the same repository.
+    #[arg(long, value_name = "PATH")]
+    shark_arbiter: Option<std::path::PathBuf>,
+
+    /// 🏥 Override the health server port
+    ///
+    /// Useful when running multiple kaptaind instances on the same host,
+    /// e.g. during a zero-downtime upgrade.
+    #[arg(long, value_name = "PORT")]
+    health_port: Option<u16>,
+
+    /// 🌐 Start the WebUI server alongside the daemon runtime
+    ///
+    /// Serves a single-page dashboard on the configured web port (default 8080)
+    /// with real-time telemetry, commit timelines, 3D graphs, and config editing.
+    #[arg(short = 'w', long)]
+    web: bool,
+
+    /// 🌐 Override the WebUI server port
+    ///
+    /// Must be different from the health server port.
+    #[arg(long, value_name = "PORT")]
+    web_port: Option<u16>,
+
+    /// 🧪 Dry run: show the decision the daemon would make for pending changes
+    ///
+    /// Runs the full analysis pipeline over the current uncommitted changes
+    /// without staging or committing, printing the bump, next version, and the
+    /// exact deterministic commit message.
+    #[arg(long)]
+    dry_run: bool,
+
+    /// 📁 Path to the kaptaind configuration file
+    ///
+    /// Overrides the default search path (./kaptaind.toml) and the
+    /// KAPTAIND_CONFIG environment variable.
+    #[arg(short, long, value_name = "PATH")]
+    config: Option<std::path::PathBuf>,
+
+    /// ⚠️ Start even when the worktree has uncommitted changes
+    ///
+    /// Overrides `[daemon] startup_guard = true` in kaptaind.toml, which
+    /// otherwise refuses to start on a dirty tree.
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Subcommand)]
@@ -82,14 +195,14 @@ enum Commands {
     any recent error messages.
 
 Usage:
-    kaptaind-cli status [OPTIONS]
+    kaptaind status [OPTIONS]
 
 Options:
     -r, --repo <PATH>    Operate on the specified repository
 
 Examples:
-    kaptaind-cli status
-    kaptaind-cli status --repo /path/to/project
+    kaptaind status
+    kaptaind status --repo /path/to/project
 
 Notes:
     Reads the daemon PID file and .kaptaind/status.json in the repository."#)]
@@ -142,6 +255,48 @@ changing the local branch, index, worktree, or commit history."#)]
         json: bool,
     },
 
+    /// Manually push the current branch (bypassing the daemon's automatic push).
+    #[command(long_about = r#"Purpose:
+    Push the local branch to a configured remote on demand, using the same
+    safety machinery (protected-branch checks, pre-push hooks, CI-status
+    gating, retry/backoff) as the daemon's automatic post-commit push.
+
+Usage:
+    kaptaind push [OPTIONS]
+
+Options:
+    --remote <NAME>      Push to this remote instead of the configured default.
+    --branch <NAME>      Push this branch instead of the current one.
+    --dry-run            Pass --dry-run to git; nothing is actually pushed.
+    --force              Bypass the configured protect_branches list for this
+                          invocation only.
+    -v, --verbose        Print additional detail.
+    --json               Emit a machine-readable JSON summary.
+
+Examples:
+    kaptaind push
+    kaptaind push --remote upstream --branch main
+    kaptaind push --dry-run
+
+Notes:
+    Requires [push] enabled = true and [capabilities] network_push = true in
+    kaptaind.toml — without both, this command refuses to run rather than
+    silently doing nothing. See CHANGELOG.md [10.2.0] and [10.1.4]."#)]
+    Push {
+        #[arg(long)]
+        remote: Option<String>,
+        #[arg(long)]
+        branch: Option<String>,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        force: bool,
+        #[arg(short, long)]
+        verbose: bool,
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Prepare, validate, issue, or roll back governed releases.
     #[command(subcommand)]
     Release(LifecycleReleaseCommand),
@@ -162,15 +317,15 @@ changing the local branch, index, worktree, or commit history."#)]
     clusters, run tests, or create commits.
 
 Usage:
-    kaptaind-cli suspend [OPTIONS]
+    kaptaind suspend [OPTIONS]
 
 Options:
     -r, --repo <PATH>     Operate on the specified repository
         --reason <TEXT>   Optional human-readable reason
 
 Examples:
-    kaptaind-cli suspend
-    kaptaind-cli suspend --reason "manual hold"
+    kaptaind suspend
+    kaptaind suspend --reason "manual hold"
 
 Notes:
     Writes .kaptaind/suspend.json and updates .kaptaind/status.json to
@@ -183,17 +338,17 @@ Notes:
 
     /// ▶️ Resume automated daemon commits
     #[command(long_about = r#"Purpose:
-    Resume a daemon that was suspended via 'kaptaind-cli suspend' or an
+    Resume a daemon that was suspended via 'kaptaind suspend' or an
     Aim-of-Change session.
 
 Usage:
-    kaptaind-cli resume [OPTIONS]
+    kaptaind resume [OPTIONS]
 
 Options:
     -r, --repo <PATH>    Operate on the specified repository
 
 Examples:
-    kaptaind-cli resume
+    kaptaind resume
 
 Notes:
     Removes .kaptaind/suspend.json and sets .kaptaind/status.json to Idle."#)]
@@ -205,13 +360,13 @@ Notes:
     constraint violations.
 
 Usage:
-    kaptaind-cli config validate [OPTIONS]
+    kaptaind config validate [OPTIONS]
 
 Options:
     -r, --repo <PATH>    Operate on the specified repository
 
 Examples:
-    kaptaind-cli config validate
+    kaptaind config validate
 
 Notes:
     Exits with a non-zero status if validation fails."#)]
@@ -223,16 +378,16 @@ Notes:
     bumps, scores, and the reasons for each bump.
 
 Usage:
-    kaptaind-cli log [OPTIONS]
+    kaptaind log [OPTIONS]
 
 Options:
     -l, --limit <N>      Number of commits to display (default: 10).
     -r, --repo <PATH>    Operate on the specified repository
 
 Examples:
-    kaptaind-cli log
-    kaptaind-cli log --limit 50
-    kaptaind-cli log -l 5"#)]
+    kaptaind log
+    kaptaind log --limit 50
+    kaptaind log -l 5"#)]
     Log {
         /// Number of commits to display (default: 10).
         #[arg(short, long, value_name = "N", default_value_t = 10)]
@@ -246,13 +401,13 @@ Examples:
     breakdown.
 
 Usage:
-    kaptaind-cli analyze [OPTIONS]
+    kaptaind analyze [OPTIONS]
 
 Options:
     -r, --repo <PATH>    Operate on the specified repository
 
 Examples:
-    kaptaind-cli analyze
+    kaptaind analyze
 
 Notes:
     Output includes the structural, API, dependency, runtime, and optional
@@ -266,15 +421,15 @@ Notes:
     not met and the achieved score.
 
 Usage:
-    kaptaind-cli explain [OPTIONS]
+    kaptaind explain [OPTIONS]
 
 Options:
     --last <N>           Number of decisions to display (default: 10).
     -r, --repo <PATH>    Operate on the specified repository
 
 Examples:
-    kaptaind-cli explain
-    kaptaind-cli explain --last 25"#)]
+    kaptaind explain
+    kaptaind explain --last 25"#)]
     Explain {
         /// Number of decisions to display (default: 10).
         #[arg(long, value_name = "N", default_value_t = 10)]
@@ -288,7 +443,7 @@ Examples:
     starts with the daemon's `kaptaind:` prefix.
 
 Usage:
-    kaptaind-cli rollback [COMMIT] [OPTIONS]
+    kaptaind rollback [COMMIT] [OPTIONS]
 
 Arguments:
     [COMMIT]    Specific commit to revert (default: latest kaptaind commit).
@@ -298,9 +453,9 @@ Options:
     -y, --yes        Execute the revert (omit to preview).
 
 Examples:
-    kaptaind-cli rollback
-    kaptaind-cli rollback --yes
-    kaptaind-cli rollback abc1234 --yes
+    kaptaind rollback
+    kaptaind rollback --yes
+    kaptaind rollback abc1234 --yes
 
 Notes:
     Defaults to preview mode unless --yes is passed. If the revert conflicts,
@@ -326,7 +481,7 @@ Notes:
     changes.
 
 Usage:
-    kaptaind-cli aoc <SUBCOMMAND>
+    kaptaind aoc <SUBCOMMAND>
 
 Subcommands:
     start      Start a new AoC session
@@ -337,11 +492,11 @@ Subcommands:
     log        List completed sessions
 
 Examples:
-    kaptaind-cli aoc start "feature: auth flow"
-    kaptaind-cli aoc status
-    kaptaind-cli aoc ship
-    kaptaind-cli aoc cancel
-    kaptaind-cli aoc intercept -- npm test
+    kaptaind aoc start "feature: auth flow"
+    kaptaind aoc status
+    kaptaind aoc ship
+    kaptaind aoc cancel
+    kaptaind aoc intercept -- npm test
 
 Notes:
     Session state is stored in .kaptaind/aoc/active.json and archived to
@@ -355,14 +510,14 @@ Notes:
     on detected project type.
 
 Usage:
-    kaptaind-cli init [OPTIONS]
+    kaptaind init [OPTIONS]
 
 Options:
     -r, --repo <PATH>    Operate on the specified repository
 
 Examples:
-    kaptaind-cli init
-    kaptaind-cli init --repo /path/to/project
+    kaptaind init
+    kaptaind init --repo /path/to/project
 
 Detected project types:
     Rust       Cargo.toml
@@ -384,7 +539,7 @@ Notes:
     monitoring.
 
 Usage:
-    kaptaind-cli trawl [OPTIONS]
+    kaptaind trawl [OPTIONS]
 
 Options:
     -p, --path <PATH>            Root directory to start from (default: current directory).
@@ -402,11 +557,11 @@ Options:
         --expand-workspaces      Also initialize Cargo workspace member crates.
 
 Examples:
-    kaptaind-cli trawl
-    kaptaind-cli trawl --path ~/projects
-    kaptaind-cli trawl --max-depth 3
-    kaptaind-cli trawl --type rust,go --dry-run
-    kaptaind-cli trawl --blacklist scratch,vendor/* --type rust
+    kaptaind trawl
+    kaptaind trawl --path ~/projects
+    kaptaind trawl --max-depth 3
+    kaptaind trawl --type rust,go --dry-run
+    kaptaind trawl --blacklist scratch,vendor/* --type rust
 
 Notes:
     Discovery is root-down and ignore-aware: .gitignore/.ignore files are honored, the
@@ -415,7 +570,7 @@ Notes:
     empty manifests are ignored. Workspace members are reported but only initialized
     with --expand-workspaces. By default, projects with an existing kaptaind.toml are
     skipped."#,
-        after_help = r#"See the kaptaind-cli(1) man page and kaptaind.toml(5) for details.
+        after_help = r#"See the kaptaind(1) man page and kaptaind.toml(5) for details.
 Relevant config section: [trawler] (if present)."#
     )]
     Trawl {
@@ -467,13 +622,13 @@ Relevant config section: [trawler] (if present)."#
     stability score, LLM costs, release history, and recent analysis artifacts.
 
 Usage:
-    kaptaind-cli dashboard [OPTIONS]
+    kaptaind dashboard [OPTIONS]
 
 Options:
     -r, --repo <PATH>    Operate on the specified repository
 
 Examples:
-    kaptaind-cli dashboard
+    kaptaind dashboard
 
 Notes:
     Updates by reading the latest .kaptaind/ state files."#)]
@@ -485,16 +640,16 @@ Notes:
     on stability score, pass streak, diff-spike guard, and cooldown.
 
 Usage:
-    kaptaind-cli ci-hint [OPTIONS]
+    kaptaind ci-hint [OPTIONS]
 
 Options:
     -f, --format <FORMAT>    Output format: text (default), json, or github.
     -r, --repo <PATH>        Operate on the specified repository
 
 Examples:
-    kaptaind-cli ci-hint
-    kaptaind-cli ci-hint --format json
-    kaptaind-cli ci-hint --format github
+    kaptaind ci-hint
+    kaptaind ci-hint --format json
+    kaptaind ci-hint --format github
 
 Notes:
     The github format emits workflow annotations and writes outputs through
@@ -505,15 +660,39 @@ Notes:
         format: String,
     },
 
+    /// 📜 Show version history: tags, commits, bumps, and pushes
+    #[command(long_about = r#"Purpose:
+    Emit a timeline of version-related events for the repository.
+
+Usage:
+    kaptaind history [OPTIONS]
+
+Options:
+    -r, --repo <PATH>    Operate on the specified repository
+        --json           Emit machine-readable JSON
+
+Examples:
+    kaptaind history
+    kaptaind history --json
+
+Notes:
+    Reads VERSION, git tags, git log, .kaptaind/decisions.jsonl, and the
+    reflog to build the timeline."#)]
+    History {
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
+
     /// ✅ Enable auto-start for the kaptaind daemon
     #[command(long_about = r#"Purpose:
     Configure the system to automatically start kaptaind on boot or shell login.
 
 Usage:
-    kaptaind-cli enable-autostart
+    kaptaind enable-autostart
 
 Examples:
-    kaptaind-cli enable-autostart
+    kaptaind enable-autostart
 
 Notes:
     Linux/systemd installs a user service, macOS adds a launchd plist, and the
@@ -526,10 +705,10 @@ Notes:
     Remove auto-start configuration so kaptaind no longer starts automatically.
 
 Usage:
-    kaptaind-cli disable-autostart
+    kaptaind disable-autostart
 
 Examples:
-    kaptaind-cli disable-autostart
+    kaptaind disable-autostart
 
 Notes:
     Disables the systemd user service, removes the launchd plist, or strips the
@@ -542,10 +721,10 @@ Notes:
     registered project. Used internally by the auto-start system.
 
 Usage:
-    kaptaind-cli autostart
+    kaptaind autostart
 
 Examples:
-    kaptaind-cli autostart"#)]
+    kaptaind autostart"#)]
     Autostart,
 
     /// 📋 Monitor registered projects and resume daemons
@@ -556,7 +735,7 @@ Examples:
     projects. The registry lives at ~/.config/kaptaind/monitored.json.
 
 Usage:
-    kaptaind-cli monitor <SUBCOMMAND>
+    kaptaind monitor <SUBCOMMAND>
 
 Subcommands:
     add      Register a project for monitoring
@@ -567,10 +746,10 @@ Subcommands:
     resume   Start daemons for all enabled, not-running projects
 
 Examples:
-    kaptaind-cli monitor add
-    kaptaind-cli monitor add /path/to/repo --port 3001
-    kaptaind-cli monitor list
-    kaptaind-cli monitor resume"#
+    kaptaind monitor add
+    kaptaind monitor add /path/to/repo --port 3001
+    kaptaind monitor list
+    kaptaind monitor resume"#
     )]
     Monitor(MonitorCommand),
 
@@ -583,7 +762,7 @@ Examples:
     on login or boot.
 
 Usage:
-    kaptaind-cli service <SUBCOMMAND>
+    kaptaind service <SUBCOMMAND>
 
 Subcommands:
     install        --user | --system
@@ -592,10 +771,10 @@ Subcommands:
     status         --user | --system
 
 Examples:
-    kaptaind-cli service install --user
-    kaptaind-cli service install --system
-    kaptaind-cli service install-icon --user
-    kaptaind-cli service status --user"#
+    kaptaind service install --user
+    kaptaind service install --system
+    kaptaind service install-icon --user
+    kaptaind service status --user"#
     )]
     Service(ServiceCommand),
 
@@ -606,7 +785,7 @@ Examples:
     Inspect per-cluster trace records linked to Aim of Change sessions.
 
 Usage:
-    kaptaind-cli trace <SUBCOMMAND>
+    kaptaind trace <SUBCOMMAND>
 
 Subcommands:
     log     List traces for the current or a specified AoC session
@@ -615,11 +794,11 @@ Subcommands:
     prune   Remove traces older than N days
 
 Examples:
-    kaptaind-cli trace log
-    kaptaind-cli trace log --limit 20
-    kaptaind-cli trace list --format json
-    kaptaind-cli trace show <cluster-id>
-    kaptaind-cli trace prune --days 7"#
+    kaptaind trace log
+    kaptaind trace log --limit 20
+    kaptaind trace list --format json
+    kaptaind trace show <cluster-id>
+    kaptaind trace prune --days 7"#
     )]
     Trace(TraceCommand),
 
@@ -631,16 +810,16 @@ Examples:
     to commits or concepts.
 
 Usage:
-    kaptaind-cli vacs <SUBCOMMAND>
+    kaptaind vacs <SUBCOMMAND>
 
 Subcommands:
     show       List generated visual assets
     generate   Trigger asset generation
 
 Examples:
-    kaptaind-cli vacs show
-    kaptaind-cli vacs show <commit-id>
-    kaptaind-cli vacs generate --asset-type diagram"#
+    kaptaind vacs show
+    kaptaind vacs show <commit-id>
+    kaptaind vacs generate --asset-type diagram"#
     )]
     Vacs(VacsCommand),
 
@@ -651,7 +830,7 @@ Examples:
     Clean and sweep build artifacts, caches, and stale storage.
 
 Usage:
-    kaptaind-cli storage <SUBCOMMAND>
+    kaptaind storage <SUBCOMMAND>
 
 Subcommands:
     clean    Run cargo clean across the workspace
@@ -659,10 +838,10 @@ Subcommands:
     status   Report workspace storage state
 
 Examples:
-    kaptaind-cli storage clean
-    kaptaind-cli storage clean --profile debug --dry-run
-    kaptaind-cli storage sweep --keep-days 14
-    kaptaind-cli storage status --json"#
+    kaptaind storage clean
+    kaptaind storage clean --profile debug --dry-run
+    kaptaind storage sweep --keep-days 14
+    kaptaind storage status --json"#
     )]
     Storage(StorageCommand),
 
@@ -673,7 +852,7 @@ Examples:
     View and manage Shark Stating, the high-availability leader election system.
 
 Usage:
-    kaptaind-cli shark <SUBCOMMAND>
+    kaptaind shark <SUBCOMMAND>
 
 Subcommands:
     status     Show current role and lease state
@@ -682,10 +861,10 @@ Subcommands:
     upgrade    Perform a zero-downtime binary upgrade
 
 Examples:
-    kaptaind-cli shark status
-    kaptaind-cli shark status --json
-    kaptaind-cli shark observe
-    kaptaind-cli shark upgrade --binary /usr/local/bin/kaptaind"#
+    kaptaind shark status
+    kaptaind shark status --json
+    kaptaind shark observe
+    kaptaind shark upgrade --binary /usr/local/bin/kaptaind"#
     )]
     Shark(SharkCommand),
 
@@ -697,7 +876,7 @@ Examples:
     publish to package managers and app stores.
 
 Usage:
-    kaptaind-cli ship <SUBCOMMAND>
+    kaptaind ship <SUBCOMMAND>
 
 Subcommands:
     plan             Preview the ship plan without building or publishing
@@ -714,18 +893,18 @@ Options (common):
         --format <FORMAT>      Output format: text (default) or json.
 
 Examples:
-    kaptaind-cli ship plan
-    kaptaind-cli ship run
-    kaptaind-cli ship run --force
-    kaptaind-cli ship stable --dry-run
-    kaptaind-cli ship nightly --no-force
-    kaptaind-cli ship status --auto
+    kaptaind ship plan
+    kaptaind ship run
+    kaptaind ship run --force
+    kaptaind ship stable --dry-run
+    kaptaind ship nightly --no-force
+    kaptaind ship status --auto
 
 Notes:
     The run and stable subcommands skip qualification gates when --force is set.
     Nightly releases skip qualification gates by default; use --no-force to
     enforce them."#,
-        after_help = r#"See the kaptaind-cli(1) man page and kaptaind.toml(5) for details.
+        after_help = r#"See the kaptaind(1) man page and kaptaind.toml(5) for details.
 Relevant config sections: [ship], [ship.stable], [ship.nightly], [ship.channels]."#
     )]
     Ship(ShipCommand),
@@ -737,14 +916,14 @@ Relevant config sections: [ship], [ship.stable], [ship.nightly], [ship.channels]
     (T0–T4). Writes a machine-readable artifact to .kaptaind/doctor/.
 
 Usage:
-    kaptaind-cli doctor [OPTIONS]
+    kaptaind doctor [OPTIONS]
 
 Options:
     -f, --format <FORMAT>    Output format: text (default) or json.
 
 Examples:
-    kaptaind-cli doctor
-    kaptaind-cli doctor --format json
+    kaptaind doctor
+    kaptaind doctor --format json
 
 Notes:
     The JSON artifact includes the git revision and dirty flag and feeds the
@@ -764,7 +943,7 @@ Notes:
     change batches, asserting the version never decreases.
 
 Usage:
-    kaptaind-cli stress run [OPTIONS]
+    kaptaind stress run [OPTIONS]
 
 Options:
     --files <N>        Number of synthetic source files (default: 50).
@@ -774,8 +953,8 @@ Options:
     -f, --format <F>   Output format: text (default) or json.
 
 Examples:
-    kaptaind-cli stress run --files 100 --batches 10
-    kaptaind-cli stress run --files 20 --batches 3 --format json
+    kaptaind stress run --files 100 --batches 10
+    kaptaind stress run --files 20 --batches 3 --format json
 
 Notes:
     Writes .kaptaind/stress/<run-id>.json with per-stage latency and the bump
@@ -790,7 +969,7 @@ Notes:
     `kaptaind.qualification.v1` JSON and a human markdown report.
 
 Usage:
-    kaptaind-cli report [OPTIONS]
+    kaptaind report [OPTIONS]
 
 Options:
     -v, --version <V>          Version to report (default: read VERSION).
@@ -802,8 +981,8 @@ Options:
     -f, --format <FORMAT>      Output format: text (default) or json.
 
 Examples:
-    kaptaind-cli report --version 9.7.16 --format json
-    kaptaind-cli report --cargo-test target/test.log --clippy target/clippy.log
+    kaptaind report --version 9.7.16 --format json
+    kaptaind report --cargo-test target/test.log --clippy target/clippy.log
 
 Notes:
     A section is PASS only with real evidence; missing evidence is
@@ -839,7 +1018,7 @@ Notes:
     Tail, filter errors, or grep the daemon's text logs.
 
 Usage:
-    kaptaind-cli logs <SUBCOMMAND>
+    kaptaind logs <SUBCOMMAND>
 
 Subcommands:
     tail     Show the last N lines
@@ -847,9 +1026,9 @@ Subcommands:
     grep     Filter lines by a regex
 
 Examples:
-    kaptaind-cli logs tail -n 50
-    kaptaind-cli logs errors
-    kaptaind-cli logs grep "commit" --format json"#
+    kaptaind logs tail -n 50
+    kaptaind logs errors
+    kaptaind logs grep "commit" --format json"#
     )]
     Logs(LogsCommand),
 
@@ -861,7 +1040,7 @@ Examples:
     timestamp ordering and (when present) the per-entry prev_hash chain.
 
 Usage:
-    kaptaind-cli audit <SUBCOMMAND>
+    kaptaind audit <SUBCOMMAND>
 
 Subcommands:
     tail     Show the last N entries
@@ -870,10 +1049,10 @@ Subcommands:
     export-verify  Verify integrity linkage for the configured collector mirror
 
 Examples:
-    kaptaind-cli audit tail -n 20
-    kaptaind-cli audit stats
-    kaptaind-cli audit verify
-    kaptaind-cli audit export-verify"#
+    kaptaind audit tail -n 20
+    kaptaind audit stats
+    kaptaind audit verify
+    kaptaind audit export-verify"#
     )]
     Audit(AuditCommand),
 
@@ -908,7 +1087,7 @@ Examples:
     client; if the daemon is not running, prints a clear message.
 
 Usage:
-    kaptaind-cli probe <SUBCOMMAND>
+    kaptaind probe <SUBCOMMAND>
 
 Subcommands:
     health    GET /health
@@ -916,9 +1095,9 @@ Subcommands:
     events    GET /events (--follow to stream SSE)
 
 Examples:
-    kaptaind-cli probe health
-    kaptaind-cli probe metrics --prometheus
-    kaptaind-cli probe events --follow
+    kaptaind probe health
+    kaptaind probe metrics --prometheus
+    kaptaind probe events --follow
 
 Notes:
     Reads the health port from config (default 9090)."#
@@ -933,7 +1112,7 @@ Notes:
     mutation path, and every run is recorded in .kaptaind/migrations/.
 
 Usage:
-    kaptaind-cli migrate [OPTIONS]
+    kaptaind migrate [OPTIONS]
 
 Options:
         --check               Report whether migration is needed (no changes).
@@ -943,10 +1122,10 @@ Options:
     -f, --format <FORMAT>     Output format: text (default) or json.
 
 Examples:
-    kaptaind-cli migrate
-    kaptaind-cli migrate --check --strict
-    kaptaind-cli migrate --to 2.0 --allow-lossy
-    kaptaind-cli migrate --check --format json"#)]
+    kaptaind migrate
+    kaptaind migrate --check --strict
+    kaptaind migrate --to 2.0 --allow-lossy
+    kaptaind migrate --check --format json"#)]
     Migrate {
         /// Report whether migration is needed without changing anything.
         #[arg(long)]
@@ -972,17 +1151,199 @@ Examples:
     Show which .kaptaind schema versions this kaptaind knows about.
 
 Usage:
-    kaptaind-cli schema <SUBCOMMAND>
+    kaptaind schema <SUBCOMMAND>
 
 Subcommands:
     list               List installed schema versions
     explain <VERSION> Describe a schema version
 
 Examples:
-    kaptaind-cli schema list
-    kaptaind-cli schema explain 2.1"#
+    kaptaind schema list
+    kaptaind schema explain 2.1"#
     )]
     Schema(SchemaCommand),
+
+    /// Model, validate, and execute repository lifecycle promotions
+    /// (ELCI KAPTAIND-RTL-001): declarative branch roles and transitions,
+    /// independent of the `branch`/`release` Desktop/Mobile Git flow.
+    #[command(subcommand)]
+    Lifecycle(LifecycleCommand),
+
+    /// Convenience alias for `lifecycle plan` + `validate` + `promote`,
+    /// resolving internally to the same canonical lifecycle model.
+    Promote {
+        from: String,
+        to: String,
+        /// Authorise a transition whose policy requires explicit approval.
+        #[arg(long)]
+        approve: bool,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum LifecycleCommand {
+    /// Report configured branches and every transition's eligibility.
+    Inspect {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Compute a promotion plan without mutating the repository.
+    Plan {
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Run configured validation gates against a planned promotion.
+    Validate {
+        #[arg(long)]
+        promotion: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Execute (or, with --dry-run, simulate) a validated promotion.
+    Promote {
+        #[arg(long)]
+        promotion: String,
+        #[arg(long)]
+        approve: bool,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show active (non-terminal) promotions.
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show every promotion's latest recorded snapshot.
+    History {
+        #[arg(long)]
+        limit: Option<usize>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Abandon an outstanding promotion, releasing its hold on the
+    /// transition so a fresh plan for the same source/target is accepted.
+    Cancel {
+        #[arg(long)]
+        promotion: String,
+        #[arg(long)]
+        reason: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Reconcile a failed or recovery-required promotion.
+    Recover {
+        #[arg(long)]
+        promotion: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the stable, versioned lifecycle event feed (ELCI
+    /// KAPTAIND-RTL-001 §18/§19) that Zebra or Vamos can consume.
+    Feed {
+        /// Only show events recorded after this event id.
+        #[arg(long)]
+        since: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show Ingauge-shaped execution metrics for a promotion.
+    Metrics {
+        #[arg(long)]
+        promotion: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Queue a transition request to be planned later, once its transition
+    /// is no longer outstanding.
+    #[command(subcommand)]
+    Queue(QueueCommand),
+    /// Coordinate the same transition across several repositories, with a
+    /// single manifest for cross-repository provenance.
+    #[command(subcommand)]
+    Batch(BatchCommand),
+}
+
+#[derive(Subcommand)]
+enum QueueCommand {
+    /// Add a transition request to the queue.
+    Add {
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        note: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show queued requests.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Remove a queued request without planning it.
+    Remove {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Plan every queued request whose transition is no longer outstanding.
+    Drain {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum BatchCommand {
+    /// Plan the same transition independently across several repositories.
+    Plan {
+        /// Comma-separated repository paths.
+        #[arg(long, value_delimiter = ',')]
+        repos: Vec<PathBuf>,
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Validate every member of a batch.
+    Validate {
+        #[arg(long)]
+        batch: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Promote every ready member of a batch.
+    Promote {
+        #[arg(long)]
+        batch: String,
+        #[arg(long)]
+        approve: bool,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show a batch's current status.
+    Status {
+        #[arg(long)]
+        batch: String,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -1079,7 +1440,7 @@ enum StorageCommand {
     Remove build artifacts for the specified cargo profile.
 
 Usage:
-    kaptaind-cli storage clean [OPTIONS]
+    kaptaind storage clean [OPTIONS]
 
 Options:
     -p, --profile <PROFILE>    Profile to clean: debug, release, or all (default: all).
@@ -1087,9 +1448,9 @@ Options:
     -o, --older-than <DAYS>    Only remove artifacts older than N days.
 
 Examples:
-    kaptaind-cli storage clean
-    kaptaind-cli storage clean --profile debug
-    kaptaind-cli storage clean --dry-run --older-than 7"#)]
+    kaptaind storage clean
+    kaptaind storage clean --profile debug
+    kaptaind storage clean --dry-run --older-than 7"#)]
     Clean {
         /// Profile to clean: debug, release, or all (default: all).
         #[arg(short, long, value_name = "PROFILE", default_value = "all")]
@@ -1106,16 +1467,16 @@ Examples:
     Remove stale registry cache entries, git checkouts, and other cached data.
 
 Usage:
-    kaptaind-cli storage sweep [OPTIONS]
+    kaptaind storage sweep [OPTIONS]
 
 Options:
     -k, --keep-days <DAYS>    Keep registry cache entries newer than N days (default: 30).
         --dry-run             Only print what would be removed.
 
 Examples:
-    kaptaind-cli storage sweep
-    kaptaind-cli storage sweep --keep-days 14
-    kaptaind-cli storage sweep --dry-run"#)]
+    kaptaind storage sweep
+    kaptaind storage sweep --keep-days 14
+    kaptaind storage sweep --dry-run"#)]
     Sweep {
         /// Keep registry cache entries newer than N days (default: 30).
         #[arg(short, long, value_name = "DAYS", default_value_t = 30)]
@@ -1129,16 +1490,16 @@ Examples:
     Report disk usage for workspace artifacts and caches.
 
 Usage:
-    kaptaind-cli storage status [OPTIONS]
+    kaptaind storage status [OPTIONS]
 
 Options:
     -j, --json          Output JSON instead of text.
     -l, --limit <N>     Show only the top N largest artifacts.
 
 Examples:
-    kaptaind-cli storage status
-    kaptaind-cli storage status --json
-    kaptaind-cli storage status --limit 10"#)]
+    kaptaind storage status
+    kaptaind storage status --json
+    kaptaind storage status --limit 10"#)]
     Status {
         /// Output JSON instead of text.
         #[arg(short, long)]
@@ -1157,14 +1518,14 @@ enum SharkCommand {
     state.
 
 Usage:
-    kaptaind-cli shark status [OPTIONS]
+    kaptaind shark status [OPTIONS]
 
 Options:
     -j, --json    Output JSON instead of text.
 
 Examples:
-    kaptaind-cli shark status
-    kaptaind-cli shark status --json"#)]
+    kaptaind shark status
+    kaptaind shark status --json"#)]
     Status {
         /// Output JSON instead of text.
         #[arg(short, long)]
@@ -1175,14 +1536,14 @@ Examples:
     Poll the Shark arbiter and print leadership changes until interrupted.
 
 Usage:
-    kaptaind-cli shark observe [OPTIONS]
+    kaptaind shark observe [OPTIONS]
 
 Options:
     -i, --interval-ms <MILLISECONDS>    Poll interval in milliseconds (default: 1000).
 
 Examples:
-    kaptaind-cli shark observe
-    kaptaind-cli shark observe --interval-ms 500"#)]
+    kaptaind shark observe
+    kaptaind shark observe --interval-ms 500"#)]
     Observe {
         /// Poll interval in milliseconds (default: 1000).
         #[arg(short, long, value_name = "MILLISECONDS", default_value_t = 1000)]
@@ -1193,10 +1554,10 @@ Examples:
     Release the current instance's leadership lease, if held.
 
 Usage:
-    kaptaind-cli shark release
+    kaptaind shark release
 
 Examples:
-    kaptaind-cli shark release
+    kaptaind shark release
 
 Notes:
     Requires the shark.release RBAC permission."#)]
@@ -1209,7 +1570,7 @@ Notes:
     hands off leadership.
 
 Usage:
-    kaptaind-cli shark upgrade [OPTIONS]
+    kaptaind shark upgrade [OPTIONS]
 
 Options:
     -b, --binary <BINARY>                  Path to the new kaptaind binary.
@@ -1218,13 +1579,13 @@ Options:
                                            healthy before retiring (default: 30000).
 
 Examples:
-    kaptaind-cli shark upgrade --binary /usr/local/bin/kaptaind
-    kaptaind-cli shark upgrade --binary ./target/release/kaptaind --standby-health-port 9090
+    kaptaind shark upgrade --binary /usr/local/bin/kaptaind
+    kaptaind shark upgrade --binary ./target/release/kaptaind --standby-health-port 9090
 
 Notes:
     Must be run from the current leader. Requires the shark.upgrade RBAC
     permission."#,
-        after_help = r#"See the kaptaind-cli(1) man page and kaptaind.toml(5) for details.
+        after_help = r#"See the kaptaind(1) man page and kaptaind.toml(5) for details.
 Relevant config section: [shark]."#
     )]
     Upgrade {
@@ -1320,7 +1681,7 @@ enum ShipCommand {
     destructive operations.
 
 Usage:
-    kaptaind-cli ship plan [OPTIONS]
+    kaptaind ship plan [OPTIONS]
 
 Options:
     -t, --targets <TARGETS>    Override target triples (comma-separated).
@@ -1328,9 +1689,9 @@ Options:
         --format <FORMAT>      Output format: text (default) or json.
 
 Examples:
-    kaptaind-cli ship plan
-    kaptaind-cli ship plan --targets x86_64-unknown-linux-gnu
-    kaptaind-cli ship plan --format json"#)]
+    kaptaind ship plan
+    kaptaind ship plan --targets x86_64-unknown-linux-gnu
+    kaptaind ship plan --format json"#)]
     Plan {
         /// Override target triples (comma-separated).
         #[arg(short, long, value_name = "TARGETS", value_delimiter = ',')]
@@ -1347,7 +1708,7 @@ Examples:
     Build release binaries, installers, and publish to configured channels.
 
 Usage:
-    kaptaind-cli ship run [OPTIONS]
+    kaptaind ship run [OPTIONS]
 
 Options:
     -t, --targets <TARGETS>    Override target triples (comma-separated).
@@ -1356,9 +1717,9 @@ Options:
         --format <FORMAT>      Output format: text (default) or json.
 
 Examples:
-    kaptaind-cli ship run
-    kaptaind-cli ship run --force
-    kaptaind-cli ship run --channels binaries,homebrew"#)]
+    kaptaind ship run
+    kaptaind ship run --force
+    kaptaind ship run --channels binaries,homebrew"#)]
     Run {
         /// Override target triples (comma-separated).
         #[arg(short, long, value_name = "TARGETS", value_delimiter = ',')]
@@ -1378,7 +1739,7 @@ Examples:
     Produce and publish a stable release using the current VERSION file.
 
 Usage:
-    kaptaind-cli ship stable [OPTIONS]
+    kaptaind ship stable [OPTIONS]
 
 Options:
     -t, --targets <TARGETS>    Override target triples (comma-separated).
@@ -1388,9 +1749,9 @@ Options:
         --format <FORMAT>      Output format: text (default) or json.
 
 Examples:
-    kaptaind-cli ship stable
-    kaptaind-cli ship stable --dry-run
-    kaptaind-cli ship stable --force"#)]
+    kaptaind ship stable
+    kaptaind ship stable --dry-run
+    kaptaind ship stable --force"#)]
     Stable {
         /// Override target triples (comma-separated).
         #[arg(short, long, value_name = "TARGETS", value_delimiter = ',')]
@@ -1414,7 +1775,7 @@ Examples:
     suffix.
 
 Usage:
-    kaptaind-cli ship nightly [OPTIONS]
+    kaptaind ship nightly [OPTIONS]
 
 Options:
     -t, --targets <TARGETS>    Override target triples (comma-separated).
@@ -1424,9 +1785,9 @@ Options:
         --format <FORMAT>      Output format: text (default) or json.
 
 Examples:
-    kaptaind-cli ship nightly
-    kaptaind-cli ship nightly --dry-run
-    kaptaind-cli ship nightly --no-force"#)]
+    kaptaind ship nightly
+    kaptaind ship nightly --dry-run
+    kaptaind ship nightly --no-force"#)]
     Nightly {
         /// Override target triples (comma-separated).
         #[arg(short, long, value_name = "TARGETS", value_delimiter = ',')]
@@ -1462,16 +1823,16 @@ Examples:
     auto-nightly and auto-stable fire times.
 
 Usage:
-    kaptaind-cli ship status [OPTIONS]
+    kaptaind ship status [OPTIONS]
 
 Options:
         --format <FORMAT>    Output format: text (default) or json.
         --auto               Include next scheduled auto-release fire times.
 
 Examples:
-    kaptaind-cli ship status
-    kaptaind-cli ship status --auto
-    kaptaind-cli ship status --format json"#)]
+    kaptaind ship status
+    kaptaind ship status --auto
+    kaptaind ship status --format json"#)]
     Status {
         /// Output format: text (default) or json.
         #[arg(long, value_name = "FORMAT", default_value = "text")]
@@ -1489,14 +1850,14 @@ enum VacsCommand {
     List generated visual assets, optionally filtered by commit or concept ID.
 
 Usage:
-    kaptaind-cli vacs show [ID]
+    kaptaind vacs show [ID]
 
 Arguments:
     [ID]    Optional commit or concept ID to filter by.
 
 Examples:
-    kaptaind-cli vacs show
-    kaptaind-cli vacs show <commit-id>"#)]
+    kaptaind vacs show
+    kaptaind vacs show <commit-id>"#)]
     Show {
         /// Optional commit or concept ID to filter by.
         #[arg(value_name = "ID")]
@@ -1507,14 +1868,14 @@ Examples:
     Trigger generation of a visual asset of the specified type.
 
 Usage:
-    kaptaind-cli vacs generate [OPTIONS]
+    kaptaind vacs generate [OPTIONS]
 
 Options:
         --asset-type <TYPE>    Type of asset to generate (default: diagram).
 
 Examples:
-    kaptaind-cli vacs generate
-    kaptaind-cli vacs generate --asset-type chart"#)]
+    kaptaind vacs generate
+    kaptaind vacs generate --asset-type chart"#)]
     Generate {
         /// Type of asset to generate (default: diagram).
         #[arg(long, value_name = "TYPE", default_value = "diagram")]
@@ -1529,16 +1890,16 @@ enum TraceCommand {
     Display traces for the active Aim of Change session or a specified AoC ID.
 
 Usage:
-    kaptaind-cli trace log [OPTIONS]
+    kaptaind trace log [OPTIONS]
 
 Options:
     -a, --aoc-id <ID>    AoC ID to filter by (defaults to the active session).
     -l, --limit <N>      Number of traces to display (default: 10).
 
 Examples:
-    kaptaind-cli trace log
-    kaptaind-cli trace log --limit 20
-    kaptaind-cli trace log --aoc-id <id>"#)]
+    kaptaind trace log
+    kaptaind trace log --limit 20
+    kaptaind trace log --aoc-id <id>"#)]
     Log {
         /// AoC ID to filter by (defaults to the active session).
         #[arg(short, long, value_name = "ID")]
@@ -1553,14 +1914,14 @@ Examples:
     `trace log` but supports `--format json` for machine consumption.
 
 Usage:
-    kaptaind-cli trace list [OPTIONS]
+    kaptaind trace list [OPTIONS]
 
 Options:
     -f, --format <FORMAT>    Output format: text (default) or json.
     -l, --limit <N>          Number of traces to display (default: 10).
 
 Examples:
-    kaptaind-cli trace list --format json --limit 20"#)]
+    kaptaind trace list --format json --limit 20"#)]
     List {
         /// Output format: text (default) or json.
         #[arg(short, long, value_name = "FORMAT", default_value = "text")]
@@ -1574,13 +1935,13 @@ Examples:
     Display a detailed breakdown for a single trace by cluster ID.
 
 Usage:
-    kaptaind-cli trace show <CLUSTER_ID>
+    kaptaind trace show <CLUSTER_ID>
 
 Arguments:
     <CLUSTER_ID>    Cluster or trace ID to display.
 
 Examples:
-    kaptaind-cli trace show <cluster-id>"#)]
+    kaptaind trace show <cluster-id>"#)]
     Show {
         /// Cluster or trace ID to display.
         #[arg(value_name = "ID")]
@@ -1591,14 +1952,14 @@ Examples:
     Remove trace records older than the specified retention period.
 
 Usage:
-    kaptaind-cli trace prune [OPTIONS]
+    kaptaind trace prune [OPTIONS]
 
 Options:
     -d, --days <DAYS>    Retention period in days (default: 30).
 
 Examples:
-    kaptaind-cli trace prune
-    kaptaind-cli trace prune --days 7"#)]
+    kaptaind trace prune
+    kaptaind trace prune --days 7"#)]
     Prune {
         /// Retention period in days (default: 30).
         #[arg(short, long, value_name = "DAYS", default_value_t = 30)]
@@ -1615,7 +1976,7 @@ enum MonitorCommand {
     port is given, the next free health port starting at 3000 is assigned.
 
 Usage:
-    kaptaind-cli monitor add [PATH] [OPTIONS]
+    kaptaind monitor add [PATH] [OPTIONS]
 
 Arguments:
     [PATH]    Project path (default: current directory).
@@ -1626,9 +1987,9 @@ Options:
         --enabled <BOOL>    Enable or disable monitoring (default: true).
 
 Examples:
-    kaptaind-cli monitor add
-    kaptaind-cli monitor add ~/projects/my-app --port 3001
-    kaptaind-cli monitor add /path/to/repo --config /path/to/repo/kaptaind.toml --enabled false"#)]
+    kaptaind monitor add
+    kaptaind monitor add ~/projects/my-app --port 3001
+    kaptaind monitor add /path/to/repo --config /path/to/repo/kaptaind.toml --enabled false"#)]
     Add {
         /// Project path (default: current directory).
         #[arg(value_name = "PATH")]
@@ -1652,14 +2013,14 @@ Examples:
     Remove a project from the monitor registry by path.
 
 Usage:
-    kaptaind-cli monitor remove <PATH>
+    kaptaind monitor remove <PATH>
 
 Arguments:
     <PATH>    Project path.
 
 Examples:
-    kaptaind-cli monitor remove /path/to/repo
-    kaptaind-cli monitor remove ."#)]
+    kaptaind monitor remove /path/to/repo
+    kaptaind monitor remove ."#)]
     Remove {
         /// Project path.
         #[arg(value_name = "PATH")]
@@ -1672,10 +2033,10 @@ Examples:
     path, enabled status, health port, and last active timestamp.
 
 Usage:
-    kaptaind-cli monitor list
+    kaptaind monitor list
 
 Examples:
-    kaptaind-cli monitor list"#)]
+    kaptaind monitor list"#)]
     List,
 
     /// ▶️ Enable monitoring for a project
@@ -1683,13 +2044,13 @@ Examples:
     Mark a registered project as enabled so it is resumed on login.
 
 Usage:
-    kaptaind-cli monitor enable <PATH>
+    kaptaind monitor enable <PATH>
 
 Arguments:
     <PATH>    Project path.
 
 Examples:
-    kaptaind-cli monitor enable /path/to/repo"#)]
+    kaptaind monitor enable /path/to/repo"#)]
     Enable {
         /// Project path.
         #[arg(value_name = "PATH")]
@@ -1701,13 +2062,13 @@ Examples:
     Mark a registered project as disabled so it is skipped on resume.
 
 Usage:
-    kaptaind-cli monitor disable <PATH>
+    kaptaind monitor disable <PATH>
 
 Arguments:
     <PATH>    Project path.
 
 Examples:
-    kaptaind-cli monitor disable /path/to/repo"#)]
+    kaptaind monitor disable /path/to/repo"#)]
     Disable {
         /// Project path.
         #[arg(value_name = "PATH")]
@@ -1721,10 +2082,10 @@ Examples:
     projects are detected via their .kaptaind/daemon.pid file.
 
 Usage:
-    kaptaind-cli monitor resume
+    kaptaind monitor resume
 
 Examples:
-    kaptaind-cli monitor resume"#)]
+    kaptaind monitor resume"#)]
     Resume,
 }
 
@@ -1737,16 +2098,16 @@ enum ServiceCommand {
     The system variant writes to /etc/systemd/system and requires root.
 
 Usage:
-    kaptaind-cli service install --user
-    kaptaind-cli service install --system
+    kaptaind service install --user
+    kaptaind service install --system
 
 Options:
         --user      Install for the current user.
         --system    Install system-wide (requires root on Linux/macOS).
 
 Examples:
-    kaptaind-cli service install --user
-    sudo kaptaind-cli service install --system"#)]
+    kaptaind service install --user
+    sudo kaptaind service install --system"#)]
     Install {
         /// Install for the current user.
         #[arg(long)]
@@ -1763,16 +2124,16 @@ Examples:
     entry.
 
 Usage:
-    kaptaind-cli service uninstall --user
-    kaptaind-cli service uninstall --system
+    kaptaind service uninstall --user
+    kaptaind service uninstall --system
 
 Options:
         --user      Remove the user service.
         --system    Remove the system service (requires root).
 
 Examples:
-    kaptaind-cli service uninstall --user
-    sudo kaptaind-cli service uninstall --system"#)]
+    kaptaind service uninstall --user
+    sudo kaptaind service uninstall --system"#)]
     Uninstall {
         /// Remove the user service.
         #[arg(long)]
@@ -1791,16 +2152,16 @@ Examples:
     requires root.
 
 Usage:
-    kaptaind-cli service install-icon --user
-    kaptaind-cli service install-icon --system
+    kaptaind service install-icon --user
+    kaptaind service install-icon --system
 
 Options:
         --user      Install for the current user.
         --system    Install system-wide (requires root on Linux).
 
 Examples:
-    kaptaind-cli service install-icon --user
-    sudo kaptaind-cli service install-icon --system"#)]
+    kaptaind service install-icon --user
+    sudo kaptaind service install-icon --system"#)]
     InstallIcon {
         /// Install for the current user.
         #[arg(long)]
@@ -1816,15 +2177,15 @@ Examples:
     Report whether the user or system service file is present and enabled.
 
 Usage:
-    kaptaind-cli service status --user
-    kaptaind-cli service status --system
+    kaptaind service status --user
+    kaptaind service status --system
 
 Options:
         --user      Check the user service.
         --system    Check the system service.
 
 Examples:
-    kaptaind-cli service status --user"#)]
+    kaptaind service status --user"#)]
     Status {
         /// Check the user service.
         #[arg(long)]
@@ -1845,15 +2206,15 @@ enum AocCommand {
     linked in the manifest.
 
 Usage:
-    kaptaind-cli aoc start <LABEL>
+    kaptaind aoc start <LABEL>
 
 Arguments:
     <LABEL>    User-friendly name for this session.
 
 Examples:
-    kaptaind-cli aoc start "feature: authentication flow"
-    kaptaind-cli aoc start "refactor: database layer"
-    kaptaind-cli aoc start "fix: memory leaks"
+    kaptaind aoc start "feature: authentication flow"
+    kaptaind aoc start "refactor: database layer"
+    kaptaind aoc start "fix: memory leaks"
 
 Notes:
     Session state is stored in .kaptaind/aoc/active.json. Only one session can
@@ -1871,10 +2232,10 @@ Notes:
     results.
 
 Usage:
-    kaptaind-cli aoc ship
+    kaptaind aoc ship
 
 Examples:
-    kaptaind-cli aoc ship
+    kaptaind aoc ship
 
 Notes:
     The manifest is archived to .kaptaind/aoc/manifests/<id>.json and the active
@@ -1887,10 +2248,10 @@ Notes:
     traces collected so far.
 
 Usage:
-    kaptaind-cli aoc status
+    kaptaind aoc status
 
 Examples:
-    kaptaind-cli aoc status
+    kaptaind aoc status
 
 Notes:
     Returns an error if no session is active."#)]
@@ -1901,10 +2262,10 @@ Notes:
     Cancel the active Aim of Change session without creating a manifest.
 
 Usage:
-    kaptaind-cli aoc cancel
+    kaptaind aoc cancel
 
 Examples:
-    kaptaind-cli aoc cancel
+    kaptaind aoc cancel
 
 Notes:
     Removes .kaptaind/aoc/active.json. When [daemon].auto_resume_on_aoc_end
@@ -1920,7 +2281,7 @@ Notes:
     description.
 
 Usage:
-    kaptaind-cli aoc intercept [OPTIONS] -- <COMMAND> [ARGS]...
+    kaptaind aoc intercept [OPTIONS] -- <COMMAND> [ARGS]...
 
 Arguments:
     <COMMAND>    Command to wrap and execute.
@@ -1931,15 +2292,15 @@ Options:
     -i, --intent <DESCRIPTION>   High-level description of the agent's task.
 
 Examples:
-    kaptaind-cli aoc intercept -- npm test
-    kaptaind-cli aoc intercept --model claude-3-5-sonnet -- cargo test
-    kaptaind-cli aoc intercept --intent "refactor auth" -- npm test
+    kaptaind aoc intercept -- npm test
+    kaptaind aoc intercept --model claude-3-5-sonnet -- cargo test
+    kaptaind aoc intercept --intent "refactor auth" -- npm test
 
 Notes:
     If no AoC session is active, a temporary session named after --intent (or
     "agent-intercept") is created. The session remains active for the daemon to
     process."#,
-        after_help = r#"See the kaptaind-cli(1) man page and kaptaind.toml(5) for details.
+        after_help = r#"See the kaptaind(1) man page and kaptaind.toml(5) for details.
 Relevant config section: [aoc] (if present)."#
     )]
     Intercept {
@@ -1966,14 +2327,14 @@ Relevant config section: [aoc] (if present)."#
     version change, commit count, and test results.
 
 Usage:
-    kaptaind-cli aoc log [OPTIONS]
+    kaptaind aoc log [OPTIONS]
 
 Options:
     -l, --limit <N>    Number of sessions to display (default: 10).
 
 Examples:
-    kaptaind-cli aoc log
-    kaptaind-cli aoc log --limit 50"#)]
+    kaptaind aoc log
+    kaptaind aoc log --limit 50"#)]
     Log {
         /// Number of sessions to display (default: 10).
         #[arg(short, long, value_name = "N", default_value_t = 10)]
@@ -1990,11 +2351,11 @@ enum StressCommand {
     version is monotone.
 
 Usage:
-    kaptaind-cli stress run [OPTIONS]
+    kaptaind stress run [OPTIONS]
 
 Examples:
-    kaptaind-cli stress run --files 50 --batches 5
-    kaptaind-cli stress run --files 20 --batches 3 --format json"#)]
+    kaptaind stress run --files 50 --batches 5
+    kaptaind stress run --files 20 --batches 3 --format json"#)]
     Run {
         /// Number of synthetic source files (default: 50).
         #[arg(long, value_name = "N", default_value_t = 50)]
@@ -2123,8 +2484,7 @@ enum ProbeCommand {
     },
 }
 
-#[tokio::main]
-async fn __curly_original_main() -> anyhow::Result<()> {
+fn __curly_original_main() -> anyhow::Result<()> {
     // Load optional `.env` file so provider API keys and other secrets can live
     // outside of `kaptaind.toml`.
     if let Err(error) = kaptaind::util::dotenv::load() {
@@ -2140,7 +2500,7 @@ async fn __curly_original_main() -> anyhow::Result<()> {
 
     // Init and Trawl commands work without a valid config
     match &cli.command {
-        Commands::Init => {
+        Some(Commands::Init) => {
             let rbac_config = loader::load()
                 .map(|config| {
                     kaptaind::audit::configure_export(config.audit.export.clone());
@@ -2165,7 +2525,7 @@ async fn __curly_original_main() -> anyhow::Result<()> {
             handle_init(&config)?;
             return Ok(());
         }
-        Commands::Trawl {
+        Some(Commands::Trawl {
             path,
             max_depth,
             include_existing,
@@ -2178,7 +2538,7 @@ async fn __curly_original_main() -> anyhow::Result<()> {
             no_ignore,
             follow_links,
             expand_workspaces,
-        } => {
+        }) => {
             let rbac_config = loader::load()
                 .map(|config| {
                     kaptaind::audit::configure_export(config.audit.export.clone());
@@ -2226,6 +2586,214 @@ async fn __curly_original_main() -> anyhow::Result<()> {
     }
 
     match &cli.command {
+        None => {
+            // Track this project as active in the monitor registry.
+            if let Err(error) = kaptaind::monitor::touch_last_active(&config.repo_path) {
+                tracing::warn!(
+                    ?error,
+                    operation = "main",
+                    source_line = line!(),
+                    "best-effort operation failed"
+                );
+            }
+
+            if let Some(mode) = cli.shark_mode {
+                config.shark.enabled = true;
+                config.shark.mode = match mode.to_lowercase().as_str() {
+                    "leader" => kaptaind::config::loader::SharkMode::Leader,
+                    "standby" => kaptaind::config::loader::SharkMode::Standby,
+                    "observer" => kaptaind::config::loader::SharkMode::Observer,
+                    _ => kaptaind::config::loader::SharkMode::Auto,
+                };
+            }
+            if let Some(path) = cli.shark_arbiter {
+                config.shark.arbiter_path = path;
+            }
+            if let Some(port) = cli.health_port {
+                config.health_port = port;
+            }
+            if cli.web || cli.web_port.is_some() {
+                config.web_port = cli.web_port.unwrap_or(8080);
+                if config.web_port == config.health_port {
+                    tracing::error!(
+                        operation = "main",
+                        source_line = line!(),
+                        "main returned an error"
+                    );
+                    return Err(anyhow::anyhow!(
+                        "WebUI port ({}) must be different from health port ({})",
+                        config.web_port,
+                        config.health_port
+                    ));
+                }
+            }
+
+            if cli.dock {
+                println!(
+                    "{} {}",
+                    "⚓".cyan(),
+                    "Watched Static Projects (Dock)".bold().cyan()
+                );
+                println!("{}", "-".repeat(50).cyan());
+                println!("{:<40} | {}", "📂 Path".bold(), "🚦 Status".bold());
+                println!("{}", "-".repeat(50).cyan());
+                println!(
+                    "{:<40} | {}",
+                    config.repo_path.display().to_string().blue(),
+                    "🟢 Watched".green()
+                );
+                return Ok(());
+            }
+
+            if cli.radar {
+                println!(
+                    "{} {}",
+                    "📡".magenta(),
+                    "Active Projects (Radar)".bold().magenta()
+                );
+                println!("{}", "-".repeat(60).magenta());
+                println!(
+                    "{:<40} | {:<12} | {}",
+                    "📂 Active Project".bold(),
+                    "⚡ Events/hr".bold(),
+                    "🕒 Last Action".bold()
+                );
+                println!("{}", "-".repeat(60).magenta());
+                println!(
+                    "{:<40} | {:<12} | {}",
+                    config.repo_path.display().to_string().blue(),
+                    "〰️ 12".yellow(),
+                    "5m ago".green()
+                );
+                return Ok(());
+            }
+
+            if cli.lanes {
+                println!(
+                    "{} {}",
+                    "🛣️".blue(),
+                    "Service/Model Load Breakdown (Lanes)".bold().blue()
+                );
+                println!("{}", "-".repeat(60).blue());
+                println!(
+                    "{:<25} | {:<10} | {}",
+                    "🛠️ Service/Model".bold(),
+                    "🚥 Load".bold(),
+                    "🚦 Status".bold()
+                );
+                println!("{}", "-".repeat(60).blue());
+                println!(
+                    "{:<25} | {:<10} | {}",
+                    "📊 Semantic Diff Engine".cyan(),
+                    "🟢 Low".green(),
+                    "✅ Optimal".green()
+                );
+                println!(
+                    "{:<25} | {:<10} | {}",
+                    "📦 Dependency Grapher".cyan(),
+                    "💤 Idle".blue(),
+                    "✅ Ready".green()
+                );
+                println!(
+                    "{:<25} | {:<10} | {}",
+                    "🎯 Version Heuristics".cyan(),
+                    "🟢 Low".green(),
+                    "✅ Optimal".green()
+                );
+                return Ok(());
+            }
+
+            // Validate after CLI overrides but before any operation that can invoke
+            // configured commands (including dry-run bundle scoring and the daemon).
+            // Read-only status views above intentionally remain usable for reviewing
+            // an untrusted repository configuration.
+            config.validate()?;
+
+            kaptaind::git::repo::ensure_git_available()
+                .map_err(|err| anyhow::anyhow!("kaptaind requires git in PATH: {err}"))?;
+
+            if cli.dry_run {
+                return kaptaind::dryrun::run(&config);
+            }
+
+            // Startup guard: refuse to run against a dirty tree when the repo opted
+            // in — accidental starts must not catch-up-commit in-flight work. Checked
+            // before daemonizing so the refusal is visible on the operator's terminal.
+            if config.daemon.startup_guard && !cli.force {
+                let dirty = kaptaind::git::repo::dirty_path_count(&config.repo_path)?;
+                if dirty > 0 {
+                    tracing::error!(
+                        operation = "main",
+                        source_line = line!(),
+                        "main returned an error"
+                    );
+                    return Err(anyhow::anyhow!(
+                        "startup guard: {} uncommitted path(s) under {} — refusing to start. \
+                         Commit or stash first, or pass --force to override.",
+                        dirty,
+                        config.repo_path.display()
+                    ));
+                }
+            }
+
+            if cli.daemon {
+                let kaptaind_dir = config.repo_path.join(".kaptaind");
+                kaptaind::util::permissions::ensure_private_dir(&kaptaind_dir)?;
+
+                let stdout_path = kaptaind_dir.join("daemon.out");
+                let stderr_path = kaptaind_dir.join("daemon.err");
+                let stdout = kaptaind::util::permissions::create_private_file(&stdout_path)?;
+                let stderr = kaptaind::util::permissions::create_private_file(&stderr_path)?;
+
+                kaptaind::daemon::process::daemonize(
+                    &config.repo_path,
+                    &kaptaind_dir.join("daemon.pid"),
+                    stdout,
+                    stderr,
+                )?;
+            }
+
+            // Any fork() above (via --daemon) has already happened before any
+            // tokio runtime exists — forking a process with live tokio worker
+            // threads is unsound, so the runtime is only built here.
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+
+            rt.block_on(async {
+                tracing_subscriber::fmt()
+                    .with_env_filter(
+                        tracing_subscriber::EnvFilter::try_from_default_env()
+                            .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                    )
+                    .init();
+                tracing::info!(component = module_path!(), "Starting kaptaind");
+                tracing::info!(
+                    component = module_path!(),
+                    "Watching repository at: {}",
+                    config.repo_path.display()
+                );
+                if matches!(
+                    config.staging.mode,
+                    kaptaind::config::loader::StagingMode::All
+                ) {
+                    tracing::warn!(
+                        component = module_path!(),
+                        "staging mode \"all\" runs `git add -A` across the whole worktree: \
+                         untracked files — including secrets — may be committed. Prefer \
+                         mode = \"cluster\" (the default since v9.7.17). Commits abort \
+                         fail-closed if a changed path matches the secret denylist."
+                    );
+                }
+                kaptaind::daemon::runtime::start(config).await
+            })
+        }
+        Some(cmd) => {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(async {
+            match cmd {
         Commands::Status { json } => {
             if *json {
                 let report = kaptaind::lifecycle::status(
@@ -2463,6 +3031,96 @@ async fn __curly_original_main() -> anyhow::Result<()> {
                 }
             }
         }
+        Commands::Push {
+            remote,
+            branch,
+            dry_run,
+            force,
+            verbose,
+            json,
+        } => {
+            if !(config.push.enabled && config.capabilities.network_push) {
+                let msg = "push is disabled: set [push] enabled = true and \
+                    [capabilities] network_push = true in kaptaind.toml to allow \
+                    kaptaind to push commits."
+                    .to_string();
+                if *json {
+                    println!(
+                        "{}",
+                        serde_json::json!({
+                            "operation": "push",
+                            "status": "error",
+                            "error": msg,
+                        })
+                    );
+                } else {
+                    eprintln!("ERROR: {msg}");
+                }
+                std::process::exit(1);
+            }
+
+            let angler = match kaptaind::angler::AnglerSystem::new(&config.angler, &config.repo_path) {
+                Ok(system) => Some(system),
+                Err(error) => {
+                    if *verbose {
+                        eprintln!("warning: failed to initialize angler system: {error}");
+                    }
+                    None
+                }
+            };
+            let overrides = kaptaind::push::PushOverrides {
+                remote: remote.clone(),
+                branch: branch.clone(),
+                dry_run: if *dry_run { Some(true) } else { None },
+                force: *force,
+            };
+            let result =
+                kaptaind::push::run_configured(&config.repo_path, &config, angler.as_ref(), &overrides)
+                    .await;
+            match result {
+                Ok(summary) => {
+                    if *json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "operation": "push",
+                                "status": "ok",
+                                "branch": summary.branch,
+                                "remotes_pushed": summary.remotes_pushed,
+                                "dry_run": summary.dry_run,
+                            })
+                        );
+                    } else if summary.dry_run {
+                        println!(
+                            "Dry run: would push branch '{}' to {}",
+                            summary.branch,
+                            summary.remotes_pushed.join(", ")
+                        );
+                    } else {
+                        println!(
+                            "Pushed branch '{}' to {}",
+                            summary.branch,
+                            summary.remotes_pushed.join(", ")
+                        );
+                    }
+                }
+                Err(error) => {
+                    if *json {
+                        println!(
+                            "{}",
+                            serde_json::json!({
+                                "operation": "push",
+                                "status": "error",
+                                "error": error.to_string(),
+                            })
+                        );
+                    } else {
+                        eprintln!("ERROR: {error}");
+                    }
+                    std::process::exit(1);
+                }
+            }
+        }
         Commands::Release(command) => match command {
             LifecycleReleaseCommand::Prepare {
                 version,
@@ -2516,7 +3174,7 @@ async fn __curly_original_main() -> anyhow::Result<()> {
                     &config.repo_path,
                     version,
                     lifecycle_platform(platform)?,
-                    "kaptaind-cli",
+                    "kaptaind",
                     *dry_run,
                 )?;
                 if *json {
@@ -2542,7 +3200,7 @@ async fn __curly_original_main() -> anyhow::Result<()> {
                     version,
                     new_version,
                     lifecycle_platform(platform)?,
-                    "kaptaind-cli",
+                    "kaptaind",
                     *dry_run,
                 )?;
                 if *json {
@@ -2621,6 +3279,9 @@ async fn __curly_original_main() -> anyhow::Result<()> {
         }
         Commands::CiHint { format } => {
             handle_ci_hint(&config, format)?;
+        }
+        Commands::History { json } => {
+            handle_history(&config, *json)?;
         }
         Commands::EnableAutostart => {
             handle_enable_autostart()?;
@@ -2847,9 +3508,104 @@ async fn __curly_original_main() -> anyhow::Result<()> {
         Commands::Trawl { .. } => {
             // Already handled above - this should not be reached
         }
+        Commands::Lifecycle(command) => match command {
+            LifecycleCommand::Inspect { json } => {
+                commands::lifecycle::inspect(&config, *json)?;
+            }
+            LifecycleCommand::Plan { from, to, json } => {
+                commands::lifecycle::plan(&config, from, to, *json)?;
+            }
+            LifecycleCommand::Validate { promotion, json } => {
+                commands::lifecycle::validate(&config, promotion, *json)?;
+            }
+            LifecycleCommand::Promote {
+                promotion,
+                approve,
+                dry_run,
+                json,
+            } => {
+                commands::lifecycle::promote(&config, promotion, *approve, *dry_run, *json)?;
+            }
+            LifecycleCommand::Status { json } => {
+                commands::lifecycle::status(&config, *json)?;
+            }
+            LifecycleCommand::History { limit, json } => {
+                commands::lifecycle::history(&config, *limit, *json)?;
+            }
+            LifecycleCommand::Cancel {
+                promotion,
+                reason,
+                json,
+            } => {
+                commands::lifecycle::cancel(&config, promotion, reason.as_deref(), *json)?;
+            }
+            LifecycleCommand::Recover { promotion, json } => {
+                commands::lifecycle::recover(&config, promotion, *json)?;
+            }
+            LifecycleCommand::Feed { since, json } => {
+                commands::lifecycle::feed(&config, since.as_deref(), *json)?;
+            }
+            LifecycleCommand::Metrics { promotion, json } => {
+                commands::lifecycle::metrics(&config, promotion, *json)?;
+            }
+            LifecycleCommand::Queue(queue_cmd) => match queue_cmd {
+                QueueCommand::Add {
+                    from,
+                    to,
+                    note,
+                    json,
+                } => {
+                    commands::lifecycle::queue_add(&config, from, to, note.as_deref(), *json)?;
+                }
+                QueueCommand::List { json } => {
+                    commands::lifecycle::queue_list(&config, *json)?;
+                }
+                QueueCommand::Remove { id, json } => {
+                    commands::lifecycle::queue_remove(&config, id, *json)?;
+                }
+                QueueCommand::Drain { json } => {
+                    commands::lifecycle::queue_drain(&config, *json)?;
+                }
+            },
+            LifecycleCommand::Batch(batch_cmd) => match batch_cmd {
+                BatchCommand::Plan {
+                    repos,
+                    from,
+                    to,
+                    json,
+                } => {
+                    commands::lifecycle::batch_plan(&config, repos, from, to, *json)?;
+                }
+                BatchCommand::Validate { batch, json } => {
+                    commands::lifecycle::batch_validate(&config, batch, *json)?;
+                }
+                BatchCommand::Promote {
+                    batch,
+                    approve,
+                    dry_run,
+                    json,
+                } => {
+                    commands::lifecycle::batch_promote(&config, batch, *approve, *dry_run, *json)?;
+                }
+                BatchCommand::Status { batch, json } => {
+                    commands::lifecycle::batch_status(&config, batch, *json)?;
+                }
+            },
+        },
+        Commands::Promote {
+            from,
+            to,
+            approve,
+            dry_run,
+            json,
+        } => {
+            commands::lifecycle::promote_alias(&config, from, to, *approve, *dry_run, *json)?;
+        }
     }
-
-    Ok(())
+                Ok(())
+            })
+        }
+    }
 }
 
 fn lifecycle_platform(value: &str) -> anyhow::Result<kaptaind::lifecycle::Platform> {
@@ -2898,8 +3654,53 @@ fn format_datetime(dt: DateTime<Utc>) -> String {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let raw_args: Vec<String> = std::env::args().collect();
+
+    // Genuine top-level help intent only: `kaptaind -h`/`--help`/`help` with
+    // nothing else. `kaptaind push --help` (len 3+) and bare `kaptaind` with
+    // zero args (which launches the daemon, unchanged) both fall through.
+    if raw_args.len() == 2 && matches!(raw_args[1].as_str(), "-h" | "--help" | "help") {
+        help::print_top_level_help();
+        std::process::exit(0);
+    }
+
     let mut positions: Vec<usize> = Vec::new();
     let mut fields: Vec<Vec<String>> = Vec::new();
+    for (__i, __a) in raw_args.iter().enumerate() {
+        if __a == "--shark-mode" {
+            if let Some(__v) = raw_args.get(__i + 1) {
+                positions.push(__i + 1);
+                fields.push(curly_expand::expand_or_literal(__v));
+            }
+            break;
+        } else if let Some(__v) = __a.strip_prefix("--shark-mode=") {
+            positions.push(__i);
+            fields.push(
+                curly_expand::expand_or_literal(__v)
+                    .into_iter()
+                    .map(|v| format!("--shark-mode={}", v))
+                    .collect(),
+            );
+            break;
+        }
+    }
+    for (__i, __a) in raw_args.iter().enumerate() {
+        if __a == "--shark-arbiter" {
+            if let Some(__v) = raw_args.get(__i + 1) {
+                positions.push(__i + 1);
+                fields.push(curly_expand::expand_or_literal(__v));
+            }
+            break;
+        } else if let Some(__v) = __a.strip_prefix("--shark-arbiter=") {
+            positions.push(__i);
+            fields.push(
+                curly_expand::expand_or_literal(__v)
+                    .into_iter()
+                    .map(|v| format!("--shark-arbiter={}", v))
+                    .collect(),
+            );
+            break;
+        }
+    }
     for (__i, __a) in raw_args.iter().enumerate() {
         if __a == "--repo" {
             if let Some(__v) = raw_args.get(__i + 1) {

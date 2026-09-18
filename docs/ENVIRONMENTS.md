@@ -7,20 +7,20 @@ Terraform, Kubernetes, or CI runners.
 External delivery systems record completed facts after their own deployment:
 
 ```bash
-kaptaind-cli environment record staging --version 2.4.0 \
+kaptaind environment record staging --version 2.4.0 \
   --health healthy --rollout-percent 100 --config-sha256 <digest>
-kaptaind-cli environment promote staging production --version 2.4.0 --adr ADR-42
-kaptaind-cli environment record production --version 2.4.0 \
+kaptaind environment promote staging production --version 2.4.0 --adr ADR-42
+kaptaind environment record production --version 2.4.0 \
   --health healthy --rollout-percent 100 --config-sha256 <digest>
 ```
 
 Read-only review commands:
 
 ```bash
-kaptaind-cli environment status
-kaptaind-cli environment history production
-kaptaind-cli environment diff staging production
-kaptaind-cli environment risk
+kaptaind environment status
+kaptaind environment history production
+kaptaind environment diff staging production
+kaptaind environment risk
 ```
 
 `rollback` records an approved rollback decision, including an optional ADR;

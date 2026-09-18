@@ -1,6 +1,6 @@
 //! `kaptaind --dry-run`: the full decision pipeline minus staging/commit (C4).
 //!
-//! Runs the same one-shot path as `kaptaind-cli analyze` over the current
+//! Runs the same one-shot path as `kaptaind analyze` over the current
 //! pending changes, then prints the full decision the daemon *would* make:
 //! bump, next version, and the exact deterministic commit message.
 

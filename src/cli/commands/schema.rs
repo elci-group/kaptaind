@@ -1,4 +1,4 @@
-//! `kaptaind-cli migrate` and `kaptaind-cli schema`: manage the `.kaptaind`
+//! `kaptaind migrate` and `kaptaind schema`: manage the `.kaptaind`
 //! semantic-state document and its schema.
 
 use anyhow::{bail, Context, Result};
@@ -114,7 +114,7 @@ pub fn handle_migrate(repo: &Path, args: &MigrateArgs) -> Result<()> {
         &schema::LedgerEntry {
             from: current,
             to: target,
-            tool: format!("kaptaind-cli {}", env!("CARGO_PKG_VERSION")),
+            tool: format!("kaptaind {}", env!("CARGO_PKG_VERSION")),
             timestamp: Utc::now(),
             canonicalization: migrated.canonicalization().to_string(),
             digest_before: digest_before.clone(),

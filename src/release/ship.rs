@@ -81,7 +81,6 @@ pub struct ShipResult {
 struct BuiltTarget {
     triple: String,
     kaptaind: PathBuf,
-    kaptaind_cli: PathBuf,
 }
 
 /// Manual release pipeline: build binaries for configured targets, produce
@@ -330,10 +329,7 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
             let target_dir = ship_dir.join(&bt.triple);
             std::fs::create_dir_all(&target_dir)?;
 
-            for (name, path) in [
-                ("kaptaind", &bt.kaptaind),
-                ("kaptaind-cli", &bt.kaptaind_cli),
-            ] {
+            for (name, path) in [("kaptaind", &bt.kaptaind)] {
                 if path.exists() {
                     let pkg = packager::create_from_artifact(
                         &version,
@@ -620,7 +616,7 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
 
     crate::audit::log_release(
         &config.repo_path,
-        "kaptaind-cli",
+        "kaptaind",
         &version,
         opts.kind.as_str(),
         &distributed,
@@ -924,7 +920,6 @@ async fn build_target(
         return Ok(BuiltTarget {
             triple: triple.to_string(),
             kaptaind: artifact_base.join("kaptaind"),
-            kaptaind_cli: artifact_base.join("kaptaind-cli"),
         });
     }
 
@@ -963,11 +958,6 @@ async fn build_target(
             "kaptaind.exe"
         } else {
             "kaptaind"
-        }),
-        kaptaind_cli: target_dir.join(if triple.contains("windows") {
-            "kaptaind-cli.exe"
-        } else {
-            "kaptaind-cli"
         }),
     })
 }
@@ -1031,15 +1021,6 @@ async fn build_shell_installer_bundle(
                 )
             })?;
             std::fs::copy(&bt.kaptaind, target_bin.join(file_name))?;
-        }
-        if bt.kaptaind_cli.exists() {
-            let file_name = bt.kaptaind_cli.file_name().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "kaptaind-cli artifact has no file name: {}",
-                    bt.kaptaind_cli.display()
-                )
-            })?;
-            std::fs::copy(&bt.kaptaind_cli, target_bin.join(file_name))?;
         }
     }
 
@@ -1177,7 +1158,6 @@ async fn generate_homebrew_formula(
 
   def install
     bin.install "kaptaind"
-    bin.install "kaptaind-cli"
   end
 
   service do

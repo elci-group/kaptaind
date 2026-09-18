@@ -1,4 +1,4 @@
-//! `kaptaind-cli logs` — daemon log inspection (Workstream D1).
+//! `kaptaind logs` — daemon log inspection (Workstream D1).
 //!
 //! Reads `.kaptaind/daemon.out` and `.kaptaind/daemon.err` (plain tracing
 //! text) and offers tail / errors / grep views.

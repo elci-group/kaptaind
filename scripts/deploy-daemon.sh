@@ -9,19 +9,12 @@ if [ ! -f "$SOURCE_DIR/kaptaind" ]; then
     exit 1
 fi
 
-if [ ! -f "$SOURCE_DIR/kaptaind-cli" ]; then
-    echo "Error: kaptaind-cli binary not found in $SOURCE_DIR"
-    exit 1
-fi
-
-echo "Installing kaptaind binaries to $TARGET_DIR..."
+echo "Installing kaptaind binary to $TARGET_DIR..."
 
 if [ -w "$TARGET_DIR" ]; then
     install -m 755 "$SOURCE_DIR/kaptaind" "$TARGET_DIR/kaptaind"
-    install -m 755 "$SOURCE_DIR/kaptaind-cli" "$TARGET_DIR/kaptaind-cli"
 else
     sudo install -m 755 "$SOURCE_DIR/kaptaind" "$TARGET_DIR/kaptaind"
-    sudo install -m 755 "$SOURCE_DIR/kaptaind-cli" "$TARGET_DIR/kaptaind-cli"
 fi
 
-echo "Daemon binaries installed successfully."
+echo "Daemon binary installed successfully."

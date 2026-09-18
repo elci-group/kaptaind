@@ -64,7 +64,7 @@ fn test_branch_lifecycle_release_and_channels() {
         vec!["release", "validate", "1.0.0"],
         vec!["release", "issue", "1.0.0"],
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+        let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
             .current_dir(dir.path())
             .args(&args)
             .output()
@@ -77,7 +77,7 @@ fn test_branch_lifecycle_release_and_channels() {
         );
     }
 
-    let status = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let status = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .args(["status", "--json"])
         .output()
@@ -86,7 +86,7 @@ fn test_branch_lifecycle_release_and_channels() {
     let json: serde_json::Value = serde_json::from_slice(&status.stdout).unwrap();
     assert_eq!(json["production_version"], "1.0.0");
 
-    let stable = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let stable = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .args(["checkout", "stable", "--dry-run"])
         .output()
@@ -101,7 +101,7 @@ fn test_branch_init_dry_run_does_not_create_refs() {
     write_lifecycle_config(dir.path());
     std::fs::write(dir.path().join("VERSION"), "1.0.0").unwrap();
     init_git(dir.path());
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .args(["branch", "init", "--dry-run", "--json"])
         .output()
@@ -122,7 +122,7 @@ fn test_status_command() {
     write_default_config(dir.path());
     std::fs::write(dir.path().join("VERSION"), "1.2.3").unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .arg("status")
         .output()
@@ -177,7 +177,7 @@ fn test_log_command_with_artifacts() {
 
     std::fs::write(analysis_dir.join("test-cluster.json"), json).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .arg("log")
         .output()
@@ -202,7 +202,7 @@ fn test_analyze_command_on_clean_repo() {
 
     init_git(dir.path());
 
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .arg("analyze")
         .output()
@@ -232,7 +232,7 @@ fn test_analyze_command_on_dirty_repo() {
 
     std::fs::write(&file_path, "pub fn hello() {}\npub fn world() {}").unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .arg("analyze")
         .output()
@@ -255,7 +255,7 @@ fn test_init_detects_node_project() {
     init_git(dir.path());
     std::fs::write(dir.path().join("package.json"), r#"{"name":"test"}"#).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .arg("init")
         .output()
@@ -283,7 +283,7 @@ fn test_init_does_not_overwrite_existing() {
     init_git(dir.path());
     std::fs::write(dir.path().join("kaptaind.toml"), "# existing config").unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .arg("init")
         .output()
@@ -358,7 +358,7 @@ shell = true
     std::fs::write(dir.path().join("kaptaind.toml"), config).unwrap();
     std::fs::write(dir.path().join("VERSION"), "1.2.3").unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .args(["ship", "plan"])
         .output()
@@ -439,7 +439,7 @@ fn test_ship_stable_dry_run() {
     std::fs::write(dir.path().join("VERSION"), "4.5.6").unwrap();
     init_git(dir.path());
 
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .args(["ship", "stable", "--dry-run", "--channels", "binaries"])
         .output()
@@ -465,7 +465,7 @@ fn test_ship_nightly_dry_run_uses_prerelease_version() {
     std::fs::write(dir.path().join("VERSION"), "4.5.6").unwrap();
     init_git(dir.path());
 
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .args(["ship", "nightly", "--dry-run", "--channels", "binaries"])
         .output()
@@ -490,7 +490,7 @@ fn test_ship_status_json_when_empty() {
     std::fs::write(dir.path().join("kaptaind.toml"), ship_config()).unwrap();
     std::fs::write(dir.path().join("VERSION"), "1.0.0").unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .args(["ship", "status", "--format", "json"])
         .output()
@@ -512,7 +512,7 @@ fn test_suspend_resume_roundtrip() {
     write_default_config(dir.path());
 
     // Suspend
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .args(["suspend", "--reason", "manual hold"])
         .output()
@@ -526,7 +526,7 @@ fn test_suspend_resume_roundtrip() {
     assert!(dir.path().join(".kaptaind").join("suspend.json").exists());
 
     // Status shows Suspended
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .arg("status")
         .output()
@@ -542,7 +542,7 @@ fn test_suspend_resume_roundtrip() {
     assert!(stdout.contains("manual hold"));
 
     // Resume
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .arg("resume")
         .output()
@@ -556,7 +556,7 @@ fn test_suspend_resume_roundtrip() {
     assert!(!dir.path().join(".kaptaind").join("suspend.json").exists());
 
     // Status no longer shows Suspended
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .arg("status")
         .output()
@@ -579,7 +579,7 @@ fn test_aoc_start_suspends_and_cancel_resumes() {
     std::fs::write(dir.path().join("VERSION"), "1.0.0").unwrap();
 
     // Start AoC — should suspend by default.
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .args(["aoc", "start", "feature: test"])
         .output()
@@ -593,7 +593,7 @@ fn test_aoc_start_suspends_and_cancel_resumes() {
     assert!(dir.path().join(".kaptaind").join("suspend.json").exists());
 
     // Cancel — should resume by default.
-    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind-cli"))
+    let output = Command::new(env!("CARGO_BIN_EXE_kaptaind"))
         .current_dir(dir.path())
         .args(["aoc", "cancel"])
         .output()

@@ -2,15 +2,15 @@
 # TEMPLATE — release-time scaffold, NOT self-publishing.
 #
 # Builds a .deb from a staged tree using dpkg-deb. Run after the release
-# workflow has produced the Linux tarballs; point KAPTAIND_BIN and
-# KAPTAIND_CLI_BIN at the unpacked binaries for the target architecture.
+# workflow has produced the Linux tarballs; point KAPTAIND_BIN at the
+# unpacked binary for the target architecture.
 #
 # The resulting .deb is published manually to an APT repository or PPA
 # (see packaging/README.md).
 #
 # Usage:
 #   VERSION=9.7.16 ARCH=amd64 \
-#   KAPTAIND_BIN=/path/to/kaptaind KAPTAIND_CLI_BIN=/path/to/kaptaind-cli \
+#   KAPTAIND_BIN=/path/to/kaptaind \
 #   ./build-deb.sh
 set -euo pipefail
 
@@ -25,13 +25,11 @@ if ! command -v dpkg-deb >/dev/null 2>&1; then
 fi
 
 : "${KAPTAIND_BIN:?set KAPTAIND_BIN to the path of the kaptaind binary}"
-: "${KAPTAIND_CLI_BIN:?set KAPTAIND_CLI_BIN to the path of the kaptaind-cli binary}"
 
 rm -rf "$STAGE"
 mkdir -p "$STAGE/DEBIAN" "$STAGE/usr/bin" "$OUT"
 
 install -m 0755 "$KAPTAIND_BIN" "$STAGE/usr/bin/kaptaind"
-install -m 0755 "$KAPTAIND_CLI_BIN" "$STAGE/usr/bin/kaptaind-cli"
 
 cat > "$STAGE/DEBIAN/control" <<EOF
 Package: kaptaind
@@ -44,7 +42,7 @@ Depends: git, libssl3
 Description: Repository change-watcher that ships semantic releases
  kaptaind watches a repository for filesystem changes, clusters them,
  scores the change set, computes a semantic-version bump, and creates the
- release commit. Ships the kaptaind daemon and the kaptaind-cli tool.
+ release commit. Ships the kaptaind daemon/CLI as a single binary.
 EOF
 
 dpkg-deb --build "$STAGE" "${OUT}/kaptaind_${VERSION}_${ARCH}.deb"

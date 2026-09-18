@@ -31,6 +31,64 @@ pub struct AocManifest {
     pub commit_count: usize,
     pub test_failures: usize,
     pub trace_ids: Vec<String>, // cluster UUIDs in order
+    /// Commit SHAs (oldest first) whose daemon commit body references one of
+    /// `trace_ids` via `cluster=<uuid>`. Recorded at ship time so downstream
+    /// tools (e.g. scrawny's `--aoc` scope) can derive the session's
+    /// realised diff from the manifest alone, without re-grepping history.
+    /// Absent in manifests written before this linkage existed.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub commits: Vec<String>,
+}
+
+/// Commit SHAs (oldest first) realised by an AoC session. Daemon commit
+/// bodies embed `cluster=<uuid>` for the cluster they realised, so the
+/// session's commits are exactly those still reachable whose message
+/// mentions one of its cluster ids. Commits amended or rebased away since
+/// simply aren't recorded — the manifest links what history still holds.
+/// Shared by the `aoc ship` CLI path and the daemon's auto-reap ship so
+/// both produce the same linkage.
+pub fn session_commit_hashes(repo_path: &Path, trace_ids: &[String]) -> anyhow::Result<Vec<String>> {
+    use std::collections::HashSet;
+
+    if trace_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut args: Vec<String> = vec!["log".to_string(), "--format=%H".to_string()];
+    for id in trace_ids {
+        args.push("--grep".to_string());
+        args.push(format!("cluster={id}"));
+    }
+
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(repo_path)
+        .args(&args)
+        .output()
+        .map_err(|e| anyhow::anyhow!("running git log for AoC commit linkage: {e}"))?;
+
+    // A failing log (empty repo, not a repository at all) means no linkage,
+    // not a failed ship — the manifest just records no commits.
+    if !output.status.success() {
+        return Ok(Vec::new());
+    }
+
+    // git log walks the history newest-first; a session's manifest reads
+    // oldest-first. Reverse git's own DAG order rather than sorting by
+    // date — commits within the same second would otherwise be ordered
+    // arbitrarily.
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut seen = HashSet::new();
+    let mut hashes: Vec<String> = text
+        .lines()
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect();
+    hashes.reverse();
+    Ok(hashes
+        .into_iter()
+        .filter(|hash| seen.insert(hash.clone()))
+        .collect())
 }
 
 /// Load the currently active AoC session, if any.
@@ -167,11 +225,114 @@ mod tests {
             commit_count: 3,
             test_failures: 1,
             trace_ids: vec![],
+            commits: vec![],
         };
 
         save_manifest(repo_path, &manifest).unwrap();
         let manifests = list_manifests(repo_path).unwrap();
         assert_eq!(manifests.len(), 1);
         assert_eq!(manifests[0].label, "test-feature");
+    }
+
+    #[test]
+    fn test_manifest_without_commits_field_still_deserializes() {
+        // Manifests written before commit linkage existed must keep loading.
+        let json = r#"{
+            "id": "22222222-2222-2222-2222-222222222222",
+            "label": "legacy",
+            "created_at": "2026-09-01T10:00:00Z",
+            "shipped_at": "2026-09-02T10:00:00Z",
+            "initial_version": "0.1.0",
+            "final_version": "0.1.1",
+            "cluster_count": 1,
+            "commit_count": 1,
+            "test_failures": 0,
+            "trace_ids": ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"]
+        }"#;
+        let manifest: AocManifest = serde_json::from_str(json).unwrap();
+        assert!(manifest.commits.is_empty());
+    }
+
+    #[test]
+    fn test_manifest_with_commits_round_trips() {
+        let json = r#"{
+            "id": "22222222-2222-2222-2222-222222222222",
+            "label": "linked",
+            "created_at": "2026-09-01T10:00:00Z",
+            "shipped_at": "2026-09-02T10:00:00Z",
+            "initial_version": "0.1.0",
+            "final_version": "0.1.1",
+            "cluster_count": 1,
+            "commit_count": 1,
+            "test_failures": 0,
+            "trace_ids": ["aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"],
+            "commits": ["1111111111111111111111111111111111111111"]
+        }"#;
+        let manifest: AocManifest = serde_json::from_str(json).unwrap();
+        assert_eq!(manifest.commits.len(), 1);
+        let serialised = serde_json::to_string(&manifest).unwrap();
+        assert!(serialised.contains("\"commits\""));
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .status()
+            .expect("git command runnable");
+        assert!(status.success(), "git {args:?} failed");
+    }
+
+    fn git_output(dir: &Path, args: &[&str]) -> String {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .expect("git runnable");
+        assert!(output.status.success(), "git {args:?} failed");
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    }
+
+    #[test]
+    fn session_commit_hashes_collects_only_session_commits_oldest_first() {
+        let dir = TempDir::new().unwrap();
+        let repo = dir.path();
+        git(repo, &["init", "-q"]);
+        git(repo, &["config", "user.email", "test@example.com"]);
+        git(repo, &["config", "user.name", "Kaptaind Test"]);
+
+        std::fs::write(repo.join("f.txt"), "1\n").unwrap();
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-q", "-m", "unrelated initial commit"]);
+
+        std::fs::write(repo.join("f.txt"), "2\n").unwrap();
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-q", "-m", "kaptaind: Patch -> v0.1.1 [cluster=aaaaaaaa]"]);
+
+        std::fs::write(repo.join("f.txt"), "3\n").unwrap();
+        git(repo, &["add", "."]);
+        git(repo, &["commit", "-q", "-m", "kaptaind: Patch -> v0.1.2 [cluster=bbbbbbbb]"]);
+
+        let hashes =
+            session_commit_hashes(repo, &["aaaaaaaa".to_string(), "bbbbbbbb".to_string()])
+                .unwrap();
+        assert_eq!(hashes.len(), 2, "the unrelated initial commit must be excluded");
+        assert_eq!(hashes[0], git_output(repo, &["rev-parse", "HEAD~1"]), "oldest first");
+        assert_eq!(hashes[1], git_output(repo, &["rev-parse", "HEAD"]));
+    }
+
+    #[test]
+    fn session_commit_hashes_without_traces_is_empty() {
+        let dir = TempDir::new().unwrap();
+        assert!(session_commit_hashes(dir.path(), &[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn session_commit_hashes_outside_a_repository_is_empty() {
+        let dir = TempDir::new().unwrap();
+        let result = session_commit_hashes(dir.path(), &["aaaaaaaa".to_string()]).unwrap();
+        assert!(result.is_empty(), "not a repository → no linkage, not an error");
     }
 }

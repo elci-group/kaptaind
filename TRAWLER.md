@@ -1,7 +1,7 @@
 # Trawler module
 
 The trawler discovers codebases under a directory tree and prepares them for
-kaptaind. It is used by `kaptaind-cli trawl` and by the (optional) daemon
+kaptaind. It is used by `kaptaind trawl` and by the (optional) daemon
 `[trawl]` configuration.
 
 ## What it does
@@ -26,16 +26,16 @@ kaptaind. It is used by `kaptaind-cli trawl` and by the (optional) daemon
 
 ```bash
 # Discover everything under the current directory
-kaptaind-cli trawl
+kaptaind trawl
 
 # Discover only Rust/Go projects, don't initialize anything
-kaptaind-cli trawl --type rust,go --dry-run
+kaptaind trawl --type rust,go --dry-run
 
 # Skip custom directories in addition to the built-in list
-kaptaind-cli trawl --blacklist scratch,vendor/*
+kaptaind trawl --blacklist scratch,vendor/*
 
 # Surface projects inside gitignored directories
-kaptaind-cli trawl --no-ignore
+kaptaind trawl --no-ignore
 ```
 
 ## Configuration

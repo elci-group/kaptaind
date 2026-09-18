@@ -1,4 +1,4 @@
-//! `kaptaind-cli probe` — health/metrics/events scraper (Workstream D3).
+//! `kaptaind probe` — health/metrics/events scraper (Workstream D3).
 //!
 //! Wraps the daemon's HTTP endpoints (`/health`, `/metrics`,
 //! `/metrics/prometheus`, `/events`) so operators don't hand-curl. Uses a

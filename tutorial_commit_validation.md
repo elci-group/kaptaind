@@ -409,7 +409,7 @@ echo "OPENAI_API_KEY: $OPENAI_API_KEY"
 **Fix:**
 ```bash
 export ANTHROPIC_API_KEY="sk-ant-..."
-kaptaind-cli stop && kaptaind --daemon
+kaptaind stop && kaptaind --daemon
 ```
 
 Or override in config:
@@ -567,7 +567,7 @@ consensus_min_agreement = 2
 - 📖 Read the [main README](./README.md) for `[inference]` config details
 - 🔧 Enable either `"fast"` or `"consensus"` mode
 - 📊 Monitor logs: `tracing::info!` messages show mode selection and scores
-- 🧪 Test with `kaptaind-cli analyze` first (dry-run before daemon)
+- 🧪 Test with `kaptaind analyze` first (dry-run before daemon)
 
 ---
 

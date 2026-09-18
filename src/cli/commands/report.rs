@@ -1,4 +1,4 @@
-//! `kaptaind-cli report` — aggregate qualification evidence (Workstream G).
+//! `kaptaind report` — aggregate qualification evidence (Workstream G).
 //!
 //! Discovers the latest doctor/bench/stress artifacts, folds in optional
 //! external logs (cargo-test/clippy/deny/container), computes git state and

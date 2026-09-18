@@ -4,7 +4,7 @@
 //! format identity, capabilities, canonical serialization with a stable
 //! digest, validation, and a deterministic stepwise migrator with an
 //! append-only migration ledger. The daemon never rewrites the document
-//! implicitly; `kaptaind-cli migrate` is the only mutation path.
+//! implicitly; `kaptaind migrate` is the only mutation path.
 
 pub mod document;
 pub mod migrator;

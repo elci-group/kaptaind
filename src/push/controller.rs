@@ -3,9 +3,148 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::process::Command;
 
-use crate::config::loader::{PushProtectionConfig, RemoteConfig, RetryConfig};
+use crate::config::loader::{Config, PushProtectionConfig, RemoteConfig, RetryConfig};
 use anyhow::{bail, Context};
 use serde::Deserialize;
+
+/// Caller-supplied overrides for a manually-triggered push, layered on top of
+/// `config.push.*`. `force` bypasses the configured `protect_branches` list
+/// for this invocation only.
+#[derive(Debug, Clone, Default)]
+pub struct PushOverrides {
+    pub remote: Option<String>,
+    pub branch: Option<String>,
+    pub dry_run: Option<bool>,
+    pub force: bool,
+}
+
+/// Distinguishes a pre-push-hook rejection from every other push failure, so
+/// callers can react differently (e.g. a distinct notification title) without
+/// matching on error message text.
+#[derive(Debug, Clone)]
+pub struct PrePushHookFailed(pub String);
+
+impl std::fmt::Display for PrePushHookFailed {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Pre-push hook failed: {}", self.0)
+    }
+}
+
+impl std::error::Error for PrePushHookFailed {}
+
+/// Outcome of a push attempt, used by both the manual CLI command and the
+/// daemon's automatic post-commit push to report what happened.
+#[derive(Debug, Clone)]
+pub struct PushSummary {
+    pub remotes_pushed: Vec<String>,
+    pub branch: String,
+    pub dry_run: bool,
+}
+
+/// Runs a push using `config.push.*`/`config.capabilities.*`, with `overrides`
+/// layered on top. Assumes the caller has already checked
+/// `config.push.enabled && config.capabilities.network_push` — this function
+/// does not re-check that gate, so it can be reused by a manual CLI
+/// invocation (which wants a clear error when the gate is closed) and by the
+/// daemon's automatic push (which silently no-ops when the gate is closed).
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
+pub async fn run_configured(
+    repo_path: &Path,
+    config: &Config,
+    angler: Option<&crate::angler::AnglerSystem>,
+    overrides: &PushOverrides,
+) -> anyhow::Result<PushSummary> {
+    // A production-branch commit may have been migrated to its matching
+    // development branch; push the branch that actually received the commit
+    // rather than sending the old production ref — unless the caller pinned
+    // an explicit branch.
+    let push_branch = match overrides.branch.clone() {
+        Some(branch) => branch,
+        None => crate::integration::current_branch(repo_path)
+            .ok()
+            .filter(|branch| !branch.is_empty())
+            .unwrap_or_else(|| config.push.branch.clone()),
+    };
+
+    let remote_for_hook = overrides
+        .remote
+        .clone()
+        .unwrap_or_else(|| config.push.remote.clone());
+
+    if let Some(angler) = angler {
+        let refs = vec![(
+            format!("refs/heads/{push_branch}"),
+            "HEAD".to_string(),
+            format!("refs/heads/{push_branch}"),
+            "origin/HEAD".to_string(),
+        )];
+        if let Some(hook_result) = angler.run_pre_push(&remote_for_hook, "origin", &refs).await {
+            if !hook_result.success {
+                let required = config
+                    .angler
+                    .git_hooks
+                    .pre_push
+                    .as_ref()
+                    .map(|c| c.required)
+                    .unwrap_or(false);
+                if required {
+                    return Err(PrePushHookFailed(hook_result.stderr).into());
+                }
+                tracing::warn!(stderr = %hook_result.stderr, "pre-push hook failed");
+            }
+        }
+    }
+
+    let dry_run = overrides.dry_run.unwrap_or(config.push.dry_run);
+    let protect_branches = if overrides.force {
+        Vec::new()
+    } else {
+        config.push.safety.protect_branches.clone()
+    };
+
+    // An explicit --remote override targets exactly that remote; otherwise
+    // fall back to multi-remote push if configured, else the single default.
+    let remotes_pushed = if overrides.remote.is_none() && !config.push.remotes.is_empty() {
+        let multi_push_options = MultiRemotePushOptions {
+            remotes: config.push.remotes.clone(),
+            branch: push_branch.clone(),
+            dry_run,
+            protect_branches,
+        };
+        push_multi_remote(
+            repo_path,
+            &multi_push_options,
+            &config.push.retry,
+            &config.push.protection,
+        )
+        .await?
+    } else {
+        let remote = overrides
+            .remote
+            .clone()
+            .unwrap_or_else(|| config.push.remote.clone());
+        let push_options = PushOptions {
+            remote: remote.clone(),
+            branch: push_branch.clone(),
+            dry_run,
+            protect_branches,
+        };
+        push(
+            repo_path,
+            &push_options,
+            &config.push.retry,
+            &config.push.protection,
+        )
+        .await?;
+        vec![remote]
+    };
+
+    Ok(PushSummary {
+        remotes_pushed,
+        branch: push_branch,
+        dry_run,
+    })
+}
 
 #[derive(Debug, Clone)]
 pub struct PushOptions {

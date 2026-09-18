@@ -73,8 +73,8 @@ cargo build --release
 Test the CLI in your current repository:
 
 ```bash
-./target/release/kaptaind-cli analyze
-./target/release/kaptaind-cli status
+./target/release/kaptaind analyze
+./target/release/kaptaind status
 ```
 
 Test the daemon in foreground mode (for debugging):

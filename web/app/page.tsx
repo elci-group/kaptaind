@@ -149,14 +149,14 @@ export default function LandingPage() {
               <span className="ml-2 text-xs text-zinc-400">kaptaind</span>
             </div>
             <pre className="overflow-x-auto p-4 font-mono text-sm leading-6 text-emerald-400">
-              <code>{`$ kaptaind-cli status
+              <code>{`$ kaptaind status
 🚢 Kaptaind Status
 =================
 📂 Repository:  /home/dev/my-project
 🏷️  Version:     0.3.12
 ⚙️  Daemon:      🟢 Running
 
-$ kaptaind-cli log --limit 3
+$ kaptaind log --limit 3
 ┌──────────┬──────────┬───────┬───────┐
 │ Version  │ Bump     │ Score │ Paths │
 ├──────────┼──────────┼───────┼───────┤

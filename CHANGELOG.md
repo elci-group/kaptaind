@@ -13,6 +13,110 @@ All notable changes to kaptaind are documented here. The format follows
 > here. Per-commit detail for the `v0.1.44 → v9.x` range lives in `git log`;
 > the consolidated capability set is summarized under `[9.7.16]` below.
 
+## [Unreleased]
+
+### Changed
+- **BREAKING: `kaptaind` and `kaptaind-cli` are merged into a single `kaptaind`
+  binary.** Every subcommand formerly under `kaptaind-cli` (`status`, `log`,
+  `analyze`, `pull`, `ship`, `aoc`, `branch`, `release`, `checkout`, `monitor`,
+  `service`, `shark`, `trawl`, `trace`, `vacs`, `storage`, and the rest) is now
+  a subcommand of `kaptaind` itself, alongside the existing daemon-mode flags
+  (`--daemon`, `--dock`, `--radar`, `--lanes`, `--web`, etc.). There is no
+  `kaptaind-cli` binary anymore. Existing systemd user services, launchd
+  agents, and shell rc autostart lines that invoke `kaptaind-cli autostart`
+  need to be re-created by running the updated `install.sh` again, or updated
+  by hand to call `kaptaind autostart` instead. `man/kaptaind-cli.1.md` is
+  merged into `man/kaptaind.1.md`.
+
+### Added
+- **`kaptaind lifecycle` (Phase 1, ELCI KAPTAIND-RTL-001)**: declarative
+  repository lifecycle & promotion orchestration, independent of the
+  `branch`/`release` Desktop/Mobile Git flow. Branch roles and transitions are
+  configured under `[lifecycle]` in `kaptaind.toml` (zero config falls back to
+  `development`/`staging`/`main`/`hotfix/*`); a promotion moves through an
+  explicit `requested → inspected → planned → validated → (awaiting-approval →
+  approved) → executing → verifying → completed` lifecycle, or a `blocked` /
+  `failed` / `recovery-required` state, with a stable `promotion-<uuid>` id
+  persisted to `.kaptaind/promotions.jsonl` and every transition recorded to
+  `.kaptaind/audit.jsonl`. Subcommands: `inspect`, `plan`, `validate`,
+  `promote` (`--approve`/`--dry-run`), `status`, `history`, `cancel`,
+  `recover`, plus a `kaptaind promote <from> <to>` convenience alias that runs
+  the same plan/validate/promote sequence. All subcommands support `--json`.
+  A stale plan (source/target moved since planning) is blocked rather than
+  silently re-executed; `merge` and `fast-forward` operations are supported
+  today, `rebase`/`cherry-pick` are recognized by policy but not yet executed.
+  **Phase 2 (safety):** a `protected` branch role now always forces an
+  `approval` gate at plan time regardless of what the transition's own
+  `requires` list says, so protection can't be silently bypassed by a
+  misconfigured transition; `lifecycle plan`/`inspect` now refuse (block
+  eligibility on) a source/target pair that already has an outstanding
+  (non-terminal, non-blocked/failed) promotion, preventing two overlapping
+  promotions from racing on the same transition; and `lifecycle cancel
+  --promotion <id> [--reason TEXT]` explicitly abandons an outstanding
+  promotion, releasing its lock so the transition can be re-planned.
+  **Phase 3 (ELCI integration):** every promotion transition now also emits a
+  versioned event (`promotion.requested/planned/validated/approved/started/
+  completed/failed/recovered/cancelled`, matching the directive's §19 schema —
+  `event_id`, `timestamp`, `repository`, `promotion_id`, `source_state`,
+  `target_state`, `severity`, `result`, `evidence_count`, `provenance`) to a
+  new append-only `.kaptaind/lifecycle-events.jsonl`, readable via `kaptaind
+  lifecycle feed [--since <event_id>]` — the stable, machine-readable contract
+  Zebra/Vamos are meant to consume (no bespoke wire client was built for
+  either, since neither has a real API anywhere in this codebase or its
+  dependencies to build one against; inventing one would be indistinguishable
+  from a fake integration). An optional `[lifecycle.feed] webhook_url =
+  "https://..."` in `kaptaind.toml` mirrors the same JSON to an operator's own
+  endpoint, using the same egress validation as every other outbound webhook
+  in Kaptaind. `kaptaind lifecycle metrics --promotion <id>` exposes
+  Ingauge-shaped execution metrics (planning/validation/execution durations,
+  commit/file/conflict counts, failed-gate count, retry count, success,
+  `tokens_consumed` — always `0`, since the core transition is deterministic
+  and never invokes an LLM) derived entirely from data already recorded on
+  the promotion. Where Padagonia is enabled (`[padagonia]` in
+  `~/.config/kaptaind/supervisor.toml`), each transition is also projected as
+  a `KaptaindLifecyclePromotion` node via the existing
+  `PadagoniaClient` (reused, not duplicated) with the branch/state
+  relationships flattened into its properties, since Padagonia's real API has
+  no edge/relationship endpoint to model them as graph edges. All of this is
+  best-effort and non-blocking: a disabled/unreachable Padagonia, an
+  unconfigured feed webhook, or a local disk hiccup writing the feed file
+  never fails or slows a promotion.
+  **Phase 4 (advanced orchestration):** a transition's `operation` may now be
+  `"auto"`, resolved at plan time from real ancestry to `fast-forward` when
+  possible and `merge` otherwise — the persisted plan always records the
+  concrete, resolved operation, never `auto` itself. `lifecycle recover` now
+  performs sophisticated reconciliation: if the target has since reached the
+  planned source revision by a different commit than this promotion executed
+  (e.g. a manual `git merge`, or a retried promotion), it is reconciled as
+  completed via a deterministic ancestry check rather than only an exact
+  commit-hash match, with the resolving strategy recorded in
+  `recovery_action`. New `kaptaind lifecycle queue {add,list,remove,drain}`
+  implements a local, file-backed FIFO promotion queue
+  (`.kaptaind/lifecycle-queue.json`): a queued request holds no lock on its
+  transition and is planned against live repository state only when
+  `drain` runs and no promotion is already outstanding for it, so a
+  long-queued request is never planned against a stale snapshot. New
+  `kaptaind lifecycle batch {plan,validate,promote,status}` coordinates the
+  same transition across several repositories from one manifest
+  (`.kaptaind/batches/<id>.json` in the invoking repository); each member
+  repository is planned/validated/promoted independently — using *its own*
+  `kaptaind.toml` for validation gates — and a per-repository failure never
+  aborts the rest of the batch, since Git has no cross-repository atomic-
+  commit primitive to promise all-or-nothing across repositories. The
+  batch manifest itself, listing every member's own `promotion-<uuid>`, is
+  the cross-repository provenance record.
+- **`kaptaind push`**: manually trigger a push using the same safety
+  machinery as the daemon's automatic post-commit push — protected-branch
+  checks, pre-push hooks, and retry/backoff. Supports `--remote`, `--branch`,
+  `--dry-run`, `--force` (bypass `protect_branches` for one invocation),
+  `--json`, and `--verbose`. Requires `[push] enabled = true` and
+  `[capabilities] network_push = true`, same as the automatic path.
+- A colorized, logically grouped top-level `kaptaind --help` screen (built on
+  the `form3` styling crate), listing subcommands by purpose — Lifecycle &
+  Release, Sync & Remote, Observability, Analysis & Safety, System & Daemon —
+  instead of one flat list. Falls back to plain static text under `NO_COLOR`,
+  non-TTY output, or piping. Per-subcommand `--help` is unchanged.
+
 ## [10.2.0] — 2026-08-01
 
 Minor release: an explicit observe/actuate gate around every repository

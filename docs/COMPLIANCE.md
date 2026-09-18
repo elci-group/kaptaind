@@ -51,7 +51,7 @@ enabled.
 
 1. Map each configured endpoint to its processor, region, retention, and data
    transfer basis.
-2. Use `kaptaind-cli validate` in CI and require an approved host inventory.
+2. Use `kaptaind validate` in CI and require an approved host inventory.
 3. Keep model hosting within the selected jurisdiction or documented transfer
    mechanism; the UK Cosine route is a selectable controlled deployment, not a
    residency guarantee by itself.

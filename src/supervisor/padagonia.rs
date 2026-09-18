@@ -14,6 +14,7 @@ use std::time::Duration;
 
 const PROJECT_LABEL: &str = "KaptaindProjectControl";
 const OBSERVATION_LABEL: &str = "KaptaindWorkerObservation";
+const LIFECYCLE_PROMOTION_LABEL: &str = "KaptaindLifecyclePromotion";
 
 #[derive(Debug, Clone)]
 pub struct PadagoniaClient {
@@ -112,6 +113,21 @@ impl PadagoniaClient {
             "observed_at_ms": Utc::now().timestamp_millis(),
         });
         self.create_node(OBSERVATION_LABEL, &external_id, properties)
+            .await
+    }
+
+    /// Project a `kaptaind::promotion` (ELCI KAPTAIND-RTL-001 §17) lifecycle
+    /// promotion as a Padagonia node. Padagonia has no edge/relationship API,
+    /// so the branch-role and promotion relationships the directive
+    /// describes (`REPRESENTS`, `PROMOTES_TO`, `CONTAINS`, `EVIDENCED_BY`)
+    /// are flattened into this node's own properties rather than invented as
+    /// a separate graph-edge call this service does not expose.
+    pub async fn record_lifecycle_promotion(
+        &self,
+        promotion_id: &str,
+        properties: Value,
+    ) -> Result<()> {
+        self.create_node(LIFECYCLE_PROMOTION_LABEL, promotion_id, properties)
             .await
     }
 

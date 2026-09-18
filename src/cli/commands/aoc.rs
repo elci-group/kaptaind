@@ -114,6 +114,14 @@ fn handle_aoc_ship(config: &Config) -> anyhow::Result<()> {
         .count();
     let test_failures = traces.iter().filter(|t| t.test.outcome == "failed").count();
 
+    // Record the session's realised commits so post-hoc analysis (e.g.
+    // `scrawny analyse --aoc <id>`) can derive the session diff from the
+    // manifest alone.
+    let commit_hashes = kaptaind::aoc::session::session_commit_hashes(
+        &config.repo_path,
+        &traces.iter().map(|t| t.cluster_id.clone()).collect::<Vec<_>>(),
+    )?;
+
     // Create manifest
     let manifest = kaptaind::aoc::AocManifest {
         id: session.id.clone(),
@@ -126,6 +134,7 @@ fn handle_aoc_ship(config: &Config) -> anyhow::Result<()> {
         commit_count,
         test_failures,
         trace_ids: traces.iter().map(|t| t.cluster_id.clone()).collect(),
+        commits: commit_hashes,
     };
 
     // Save manifest
@@ -293,14 +302,13 @@ fn handle_aoc_intercept(
     );
 
     if tmp_aoc {
-        println!("{} {}", "ℹ️".blue(), "AoC session remains active for daemon to process clusters. Run 'kaptaind-cli aoc ship' later.".blue());
+        println!("{} {}", "ℹ️".blue(), "AoC session remains active for daemon to process clusters. Run 'kaptaind aoc ship' later.".blue());
     }
 
     Ok(())
 }
 
-fn handle_aoc_log(config: &Config, limit: usize) -> anyhow::Result<()> {
-    let manifests = kaptaind::aoc::session::list_manifests(&config.repo_path)?;
+fn handle_aoc_log(config: &Config, limit: usize) -> anyhow::Result<()> {    let manifests = kaptaind::aoc::session::list_manifests(&config.repo_path)?;
 
     if manifests.is_empty() {
         println!("No completed AoC sessions found.");
@@ -338,3 +346,4 @@ fn handle_aoc_log(config: &Config, limit: usize) -> anyhow::Result<()> {
 
     Ok(())
 }
+

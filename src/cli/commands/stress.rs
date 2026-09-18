@@ -1,4 +1,4 @@
-//! `kaptaind-cli stress` — deterministic synthetic-fixture pipeline run
+//! `kaptaind stress` — deterministic synthetic-fixture pipeline run
 //! (Workstream B2 lite).
 //!
 //! Generates a reproducible repo into a temp dir, then drives the REAL

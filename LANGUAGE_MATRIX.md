@@ -432,7 +432,7 @@ Some adapters (especially lower-confidence ones) may flag non-breaking changes a
 a = 0.1  # Reduce API weight if you don't trust detection
 ```
 
-Or use `kaptaind-cli analyze` (dry-run) to preview the score before committing.
+Or use `kaptaind analyze` (dry-run) to preview the score before committing.
 
 ### "My language isn't supported"
 

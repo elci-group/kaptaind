@@ -162,7 +162,7 @@ Well-designed entitlement system with database-backed overrides. Coherent SaaS p
 - No Docker CI build. No desktop CI.
 
 **Release Artifacts:**
-- Daemon binaries: kaptaind (20MB), kaptaind-cli (8.6MB) — reasonable.
+- Daemon binary: kaptaind (~20MB, daemon + CLI) — reasonable.
 - Web static export: deploy/web/ (3.4MB) — may be stale.
 
 **Observability:**

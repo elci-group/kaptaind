@@ -390,7 +390,7 @@ fn screen_complete(
         if s.enable_autostart {
             "\n✓ Auto-start enabled: kaptaind will start on next login"
         } else {
-            "\nTo enable auto-start later, run:\n   kaptaind-cli enable-autostart"
+            "\nTo enable auto-start later, run:\n   kaptaind enable-autostart"
         }
     } else {
         ""
@@ -406,7 +406,7 @@ fn screen_complete(
          1. Update your shell PATH (if needed):\n\
             export PATH=\"$HOME/.local/bin:$PATH\"\n\n\
          2. Initialize a project:\n\
-            kaptaind-cli init\n\n\
+            kaptaind init\n\n\
          3. Start the daemon:\n\
             kaptaind --daemon\n{}",
         autostart_msg

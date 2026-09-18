@@ -74,12 +74,13 @@ pub fn analyse(
     // a reviewer would actually be asked to approve, not the union of both
     // branches' history.
     let range_diff = diff_range(repo, target, source)?;
-    let scrawny = run_scrawny_check(
-        scrawny_program,
-        &["--path", path_arg(repo), "--format", "json", "check", "--stdin"],
-        range_diff.as_bytes(),
-    )
-    .with_context(|| format!("running Scrawny for {target} and {source}"))?;
+    let mut scrawny_args = vec!["--path", path_arg(repo), "--format", "json", "check", "--stdin"];
+    if aoc_context_flag(repo).is_some() {
+        scrawny_args.push("--aoc");
+        scrawny_args.push("@active");
+    }
+    let scrawny = run_scrawny_check(scrawny_program, &scrawny_args, range_diff.as_bytes())
+        .with_context(|| format!("running Scrawny for {target} and {source}"))?;
 
     let work = TempTrees::new(repo, target, source)?;
     let emulsify = run_json(
@@ -120,7 +121,7 @@ pub fn analyse(
         report.persisted = Some(path.clone());
         crate::audit::log_event(
             repo,
-            "kaptaind-cli",
+            "kaptaind",
             "integration.analysis",
             true,
             serde_json::json!({"target": target, "source": source, "report": path}),
@@ -311,6 +312,15 @@ fn path_arg(path: &Path) -> &str {
     path.to_str().unwrap_or("")
 }
 
+/// `Some("@active")` when a kaptaind AoC session is open in `repo`. Passed
+/// to scrawny's `check --aoc` so the verdict it returns — and this report —
+/// carries the session's label/id and stays intent-traceable. Annotation
+/// only: scrawny never lets it influence the verdict. A malformed
+/// `active.json` means no context, not a failed integration run.
+fn aoc_context_flag(repo: &Path) -> Option<&'static str> {
+    crate::aoc::session::load_active(repo).ok().flatten().map(|_| "@active")
+}
+
 struct TempTrees {
     root: PathBuf,
     target: PathBuf,
@@ -374,8 +384,9 @@ fn archive(repo: &Path, reference: &str, destination: &Path) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::recommendation;
+    use super::{aoc_context_flag, recommendation};
     use serde_json::json;
+    use std::fs;
 
     #[test]
     fn recommendation_combines_all_three_tools() {
@@ -404,5 +415,29 @@ mod tests {
     fn recommendation_reports_scrawny_unavailable_without_failing() {
         let result = recommendation(&json!({}), &json!(null), &json!({}));
         assert!(result.contains("Scrawny: unavailable"));
+    }
+
+    #[test]
+    fn aoc_context_flag_is_set_only_while_a_session_is_open() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(aoc_context_flag(dir.path()).is_none());
+
+        let aoc = dir.path().join(".kaptaind").join("aoc");
+        fs::create_dir_all(&aoc).unwrap();
+        fs::write(
+            aoc.join("active.json"),
+            r#"{"id":"11111111-1111-1111-1111-111111111111","label":"refactor-engine","created_at":"2026-09-01T10:00:00Z","initial_version":"0.1.0"}"#,
+        )
+        .unwrap();
+        assert_eq!(aoc_context_flag(dir.path()), Some("@active"));
+    }
+
+    #[test]
+    fn aoc_context_flag_tolerates_a_malformed_active_session() {
+        let dir = tempfile::tempdir().unwrap();
+        let aoc = dir.path().join(".kaptaind").join("aoc");
+        fs::create_dir_all(&aoc).unwrap();
+        fs::write(aoc.join("active.json"), "{ not json").unwrap();
+        assert!(aoc_context_flag(dir.path()).is_none());
     }
 }

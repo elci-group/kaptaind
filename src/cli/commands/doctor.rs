@@ -1,4 +1,4 @@
-//! `kaptaind-cli doctor` — host profile capture for qualification (Workstream E3).
+//! `kaptaind doctor` — host profile capture for qualification (Workstream E3).
 //!
 //! Collects a best-effort hardware/OS profile, checks inotify limits against
 //! the repo-size tier table, verifies tool availability, recommends a tier,

@@ -15,7 +15,7 @@ const plans = [
       { name: "Multi-dimensional diff analysis", included: true },
       { name: "Aim of Change sessions", included: true },
       { name: "100% open source & self-hosted", included: true },
-      { name: "CLI tools (kaptaind, kaptaind-cli)", included: true },
+      { name: "kaptaind CLI", included: true },
       { name: "AI commit messages", included: false },
       { name: "Changelog generation", included: false },
       { name: "Team dashboard", included: false },

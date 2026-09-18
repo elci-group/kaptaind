@@ -533,7 +533,7 @@ pub fn run(
             return Err(PullError::new(
                 ExitCode::Conflicts,
                 format!(
-                    "integration stopped with {} conflict(s); resolve them, then use `kaptaind-cli pull --continue`, or use `--abort`",
+                    "integration stopped with {} conflict(s); resolve them, then use `kaptaind pull --continue`, or use `--abort`",
                     conflicts.len()
                 ),
             ));

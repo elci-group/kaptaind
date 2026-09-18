@@ -1,4 +1,4 @@
-//! `kaptaind-cli audit` — compliance audit-trail inspection (Workstream D2).
+//! `kaptaind audit` — compliance audit-trail inspection (Workstream D2).
 //!
 //! Reads `.kaptaind/audit.jsonl` (one `AuditEntry` per line) and offers tail,
 //! stats, and an append-only/optional-hash-chain integrity check.

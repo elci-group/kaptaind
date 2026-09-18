@@ -26,10 +26,8 @@ server {
 
 Built from the repository root with `cargo build --release`.
 
-- **Binaries**:
-  - `kaptaind` — main daemon binary (20 MB)
-  - `kaptaind-cli` — CLI companion binary (8.6 MB)
-- **Deployment**: Copy the binaries to a location in `$PATH` (e.g., `/usr/local/bin/`) and run `kaptaind`. The daemon expects a `kaptaind.toml` config file in its working directory.
+- **Binary**: `kaptaind` — daemon + CLI, single binary (~20 MB)
+- **Deployment**: Copy the binary to a location in `$PATH` (e.g., `/usr/local/bin/`) and run `kaptaind`. The daemon expects a `kaptaind.toml` config file in its working directory.
 
 Example systemd service:
 ```ini

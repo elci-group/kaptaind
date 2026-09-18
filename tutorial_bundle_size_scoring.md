@@ -184,7 +184,7 @@ output_dir = "dist"            # Where artifacts land
 Run an initial dry-run:
 
 ```bash
-kaptaind-cli analyze
+kaptaind analyze
 
 # Output:
 # ✓ Structural score: 0.12
