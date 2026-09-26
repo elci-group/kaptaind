@@ -2801,6 +2801,43 @@ fn absolutize(base: &Path, path: &Path) -> PathBuf {
     }
 }
 
+impl Config {
+    /// Re-anchor repo-relative paths after `repo_path` changed underneath a
+    /// loaded config — e.g. the `--repo` override applied after `load()`
+    /// finalized paths against the discovered base. For an external config
+    /// file that base is the config file's directory, so `watch.path` would
+    /// otherwise point at the wrong tree (and, when the log lives there, the
+    /// daemon watches its own log). Paths under `old_repo_path` are moved
+    /// under `new_repo_path`; absolute paths elsewhere keep their location.
+    pub fn reanchor_repo_relative_paths(&mut self, old_repo_path: &Path, new_repo_path: &Path) {
+        if old_repo_path == new_repo_path {
+            return;
+        }
+        fn reanchor(old: &Path, new: &Path, path: &mut PathBuf) {
+            if let Ok(tail) = path.strip_prefix(old) {
+                *path = absolutize(new, tail);
+            }
+        }
+        reanchor(old_repo_path, new_repo_path, &mut self.watch.path);
+        reanchor(old_repo_path, new_repo_path, &mut self.watch.ignore_file);
+        reanchor(old_repo_path, new_repo_path, &mut self.identity.replay_dir);
+        if let Some(path) = self.identity.gpgv_keyring.as_mut() {
+            reanchor(old_repo_path, new_repo_path, path);
+        }
+        if let Some(path) = self.identity.assertion_path.as_mut() {
+            reanchor(old_repo_path, new_repo_path, path);
+        }
+        if let Some(path) = self
+            .audit
+            .export
+            .as_mut()
+            .and_then(|export| export.jsonl_path.as_mut())
+        {
+            reanchor(old_repo_path, new_repo_path, path);
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Version bump threshold config
 // ---------------------------------------------------------------------------
@@ -3024,6 +3061,103 @@ mod tests {
         let loaded = loaded.expect("load() should honor KAPTAIND_CONFIG");
         assert_eq!(loaded.repo_path, repo_dir);
         assert_eq!(loaded.operation.mode, super::OperationMode::Actuate);
+    }
+
+    /// External config + `--repo` override: `load()` finalizes relative
+    /// paths against the config file's directory, so overriding `repo_path`
+    /// afterwards must re-anchor `watch.path` and friends under the real
+    /// repo. Without this the daemon watched its own log file in the
+    /// scratch directory (a self-amplifying event loop).
+    #[test]
+    fn reanchor_moves_repo_relative_paths_under_the_override() {
+        let config_dir = PathBuf::from("/tmp/kaptaind-cfg");
+        let repo = PathBuf::from("/tmp/kaptaind-repo");
+        let old_repo = config_dir.join("repo");
+        let parsed: Config = toml::from_str(
+            r#"
+            repo_path = "repo"
+
+            [watch]
+            path = "watched"
+            ignore_file = ".kaptainignore"
+
+            [identity]
+            replay_dir = ".kaptaind"
+
+            [audit]
+            enabled = true
+
+            [audit.export]
+            jsonl_path = "audit/out.jsonl"
+            "#,
+        )
+        .unwrap();
+        let mut config = finalize_config(config_dir.clone(), parsed);
+        assert_eq!(config.repo_path, old_repo);
+        assert_eq!(config.watch.path, old_repo.join("watched"));
+        assert_eq!(config.watch.ignore_file, old_repo.join(".kaptainignore"));
+        assert_eq!(config.identity.replay_dir, old_repo.join(".kaptaind"));
+        assert_eq!(
+            config
+                .audit
+                .export
+                .as_ref()
+                .and_then(|e| e.jsonl_path.as_ref()),
+            Some(&old_repo.join("audit/out.jsonl"))
+        );
+
+        config.reanchor_repo_relative_paths(&old_repo, &repo);
+
+        assert_eq!(config.watch.path, repo.join("watched"));
+        assert_eq!(config.watch.ignore_file, repo.join(".kaptainignore"));
+        assert_eq!(config.identity.replay_dir, repo.join(".kaptaind"));
+        assert_eq!(
+            config
+                .audit
+                .export
+                .as_ref()
+                .and_then(|e| e.jsonl_path.as_ref()),
+            Some(&repo.join("audit/out.jsonl"))
+        );
+    }
+
+    /// Absolute paths outside the old repo keep their location; absolute
+    /// paths inside it move with the repo.
+    #[test]
+    fn reanchor_leaves_external_absolute_paths_alone() {
+        let config_dir = PathBuf::from("/tmp/kaptaind-cfg2");
+        let repo = PathBuf::from("/tmp/kaptaind-repo2");
+        let external_log = PathBuf::from("/var/log/kaptaind.jsonl");
+        let mut config = Config {
+            identity: super::IdentityConfig {
+                replay_dir: PathBuf::from(".kaptaind"),
+                gpgv_keyring: Some(external_log.clone()),
+                assertion_path: Some(config_dir.join("assertions")),
+                ..Default::default()
+            },
+            ..Config::default()
+        };
+        config.watch.path = repo.join("watched");
+        config = finalize_config(config_dir.clone(), config);
+        assert_eq!(config.identity.gpgv_keyring, Some(external_log.clone()));
+
+        config.reanchor_repo_relative_paths(&config_dir, &repo);
+
+        assert_eq!(config.identity.gpgv_keyring, Some(external_log));
+        assert_eq!(
+            config.identity.assertion_path,
+            Some(repo.join("assertions"))
+        );
+    }
+
+    /// Re-anchoring is a no-op when the override names the same repo.
+    #[test]
+    fn reanchor_is_a_no_op_for_the_same_repo() {
+        let repo = PathBuf::from("/tmp/kaptaind-same");
+        let mut config = finalize_config(repo.clone(), Config::default());
+        let before = config.watch.path.clone();
+        config.reanchor_repo_relative_paths(&repo, &repo);
+        assert_eq!(config.watch.path, before);
     }
 
     #[test]

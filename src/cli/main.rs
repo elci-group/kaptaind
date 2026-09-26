@@ -2498,6 +2498,15 @@ fn __curly_original_main() -> anyhow::Result<()> {
 
     let cli = Cli::parse();
 
+    // `--config` is documented to override both the default search path and
+    // the KAPTAIND_CONFIG environment variable, but every config load goes
+    // through `loader::load()`, which only reads the environment variable —
+    // so publish the flag there before the first load. Without this the flag
+    // parsed silently and the repo's own kaptaind.toml was used instead.
+    if let Some(explicit) = &cli.config {
+        std::env::set_var("KAPTAIND_CONFIG", explicit);
+    }
+
     // Init and Trawl commands work without a valid config
     match &cli.command {
         Some(Commands::Init) => {
@@ -2582,7 +2591,13 @@ fn __curly_original_main() -> anyhow::Result<()> {
     kaptaind::compliance::configure(config.clone());
 
     if let Some(repo_override) = cli.repo {
-        config.repo_path = repo_override.canonicalize().unwrap_or(repo_override);
+        let new_repo = repo_override.canonicalize().unwrap_or(repo_override);
+        let old_repo = std::mem::replace(&mut config.repo_path, new_repo);
+        // `load()` finalized watch/identity/audit paths against the
+        // discovered repo path (for an external config that is the config
+        // file's directory), so re-anchor them under the override.
+        let current = config.repo_path.clone();
+        config.reanchor_repo_relative_paths(&old_repo, &current);
     }
 
     match &cli.command {

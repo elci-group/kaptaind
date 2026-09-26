@@ -612,3 +612,107 @@ fn test_aoc_start_suspends_and_cancel_resumes() {
         .join("active.json")
         .exists());
 }
+
+/// Regression: `--config <path>` (and `KAPTAIND_CONFIG`) must actually load
+/// the requested file. The flag parsed for a long time but no code applied
+/// it, so the repo's own kaptaind.toml was used instead — discovered by
+/// running `kaptaind --config <override>` against a repo and watching the
+/// override never take effect. The discriminator: the override zeroes every
+/// scoring weight, so the same working tree analyzes to "Stable"/0.000
+/// instead of "Patch".
+#[test]
+fn test_config_flag_and_env_var_select_the_override_config() {
+    let dir = tempdir().expect("temp dir");
+    std::fs::write(
+        dir.path().join("kaptaind.toml"),
+        r#"
+repo_path = "."
+
+[weights]
+s = 1.0
+a = 0.0
+d = 0.0
+r = 0.0
+
+[version_thresholds]
+minor = 5.0
+patch = 0.01
+"#,
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("VERSION"), "1.0.0").unwrap();
+    init_git(dir.path());
+    std::fs::write(dir.path().join("content.txt"), "changed\n").unwrap();
+
+    // The override lives in a subdirectory so it is not the config the
+    // default search would discover at the repo root.
+    let cfg_dir = dir.path().join("cfg");
+    std::fs::create_dir_all(&cfg_dir).unwrap();
+    let override_path = cfg_dir.join("override.toml");
+    std::fs::write(
+        &override_path,
+        r#"
+repo_path = "."
+
+[weights]
+s = 0.0
+a = 0.0
+d = 0.0
+r = 0.0
+
+[version_thresholds]
+minor = 5.0
+patch = 0.01
+"#,
+    )
+    .unwrap();
+
+    let analyze = |env_config: Option<&std::path::Path>, args: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_kaptaind"));
+        command.current_dir(dir.path()).args(args);
+        if let Some(path) = env_config {
+            command.env("KAPTAIND_CONFIG", path);
+        }
+        let output = command.output().expect("run analyze");
+        assert!(
+            output.status.success(),
+            "analyze failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).to_string()
+    };
+
+    // Control: the repo's own config applies → nonzero score → Patch.
+    let control = analyze(None, &["analyze"]);
+    assert!(
+        control.contains("Patch"),
+        "repo config should propose a patch bump, got:\n{control}"
+    );
+
+    // The flag selects the override config even though it is not the config
+    // the default search would find.
+    let flagged = analyze(
+        None,
+        &[
+            "-r",
+            dir.path().to_str().unwrap(),
+            "--config",
+            override_path.to_str().unwrap(),
+            "analyze",
+        ],
+    );
+    assert!(
+        flagged.contains("Stable") && flagged.contains("0.000"),
+        "--config override (zero weights) should analyze Stable at 0.000, got:\n{flagged}"
+    );
+
+    // The documented environment variable behaves the same way.
+    let env_override = analyze(
+        Some(&override_path),
+        &["-r", dir.path().to_str().unwrap(), "analyze"],
+    );
+    assert!(
+        env_override.contains("Stable") && env_override.contains("0.000"),
+        "KAPTAIND_CONFIG override (zero weights) should analyze Stable at 0.000, got:\n{env_override}"
+    );
+}
