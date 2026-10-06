@@ -47,7 +47,10 @@ pub struct AocManifest {
 /// simply aren't recorded — the manifest links what history still holds.
 /// Shared by the `aoc ship` CLI path and the daemon's auto-reap ship so
 /// both produce the same linkage.
-pub fn session_commit_hashes(repo_path: &Path, trace_ids: &[String]) -> anyhow::Result<Vec<String>> {
+pub fn session_commit_hashes(
+    repo_path: &Path,
+    trace_ids: &[String],
+) -> anyhow::Result<Vec<String>> {
     use std::collections::HashSet;
 
     if trace_ids.is_empty() {
@@ -309,17 +312,40 @@ mod tests {
 
         std::fs::write(repo.join("f.txt"), "2\n").unwrap();
         git(repo, &["add", "."]);
-        git(repo, &["commit", "-q", "-m", "kaptaind: Patch -> v0.1.1 [cluster=aaaaaaaa]"]);
+        git(
+            repo,
+            &[
+                "commit",
+                "-q",
+                "-m",
+                "kaptaind: Patch -> v0.1.1 [cluster=aaaaaaaa]",
+            ],
+        );
 
         std::fs::write(repo.join("f.txt"), "3\n").unwrap();
         git(repo, &["add", "."]);
-        git(repo, &["commit", "-q", "-m", "kaptaind: Patch -> v0.1.2 [cluster=bbbbbbbb]"]);
+        git(
+            repo,
+            &[
+                "commit",
+                "-q",
+                "-m",
+                "kaptaind: Patch -> v0.1.2 [cluster=bbbbbbbb]",
+            ],
+        );
 
         let hashes =
-            session_commit_hashes(repo, &["aaaaaaaa".to_string(), "bbbbbbbb".to_string()])
-                .unwrap();
-        assert_eq!(hashes.len(), 2, "the unrelated initial commit must be excluded");
-        assert_eq!(hashes[0], git_output(repo, &["rev-parse", "HEAD~1"]), "oldest first");
+            session_commit_hashes(repo, &["aaaaaaaa".to_string(), "bbbbbbbb".to_string()]).unwrap();
+        assert_eq!(
+            hashes.len(),
+            2,
+            "the unrelated initial commit must be excluded"
+        );
+        assert_eq!(
+            hashes[0],
+            git_output(repo, &["rev-parse", "HEAD~1"]),
+            "oldest first"
+        );
         assert_eq!(hashes[1], git_output(repo, &["rev-parse", "HEAD"]));
     }
 
@@ -333,6 +359,9 @@ mod tests {
     fn session_commit_hashes_outside_a_repository_is_empty() {
         let dir = TempDir::new().unwrap();
         let result = session_commit_hashes(dir.path(), &["aaaaaaaa".to_string()]).unwrap();
-        assert!(result.is_empty(), "not a repository → no linkage, not an error");
+        assert!(
+            result.is_empty(),
+            "not a repository → no linkage, not an error"
+        );
     }
 }

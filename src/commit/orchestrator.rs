@@ -116,6 +116,10 @@ pub fn commit_with_staging(
         }
     }
 
+    if !has_staged_changes(git_root)? {
+        return Err(NothingStaged.into());
+    }
+
     if commit_config.sign {
         repo::commit_signed(git_root, msg, commit_config.gpg_key_id.as_deref())?;
     } else {
@@ -123,6 +127,53 @@ pub fn commit_with_staging(
     }
 
     Ok(())
+}
+
+/// Returned when staging selected nothing, so there is nothing to commit —
+/// typically every changed path is outside `[staging] include` or excluded.
+/// This is a skip, not a failure: callers can `downcast_ref` to tell it apart.
+#[derive(Debug)]
+pub struct NothingStaged;
+
+impl std::fmt::Display for NothingStaged {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(
+            "nothing to commit: no changed path matched the staging configuration \
+             (git commit skipped)",
+        )
+    }
+}
+
+impl std::error::Error for NothingStaged {}
+
+/// True when the index differs from HEAD (or HEAD is unborn and the index
+/// is non-empty).
+fn has_staged_changes(git_root: &Path) -> anyhow::Result<bool> {
+    let head = std::process::Command::new("git")
+        .arg("-C")
+        .arg(git_root)
+        .args(["rev-parse", "--verify", "--quiet", "HEAD"])
+        .stdout(std::process::Stdio::null())
+        .status()?;
+    let mut cmd = std::process::Command::new("git");
+    cmd.arg("-C").arg(git_root);
+    if head.success() {
+        cmd.args(["diff", "--cached", "--quiet"]);
+    } else {
+        // Unborn branch: anything in the index is a change.
+        cmd.args(["ls-files", "--error-unmatch", "."]);
+        return Ok(cmd
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()?
+            .success());
+    }
+    // `diff --quiet` exits 1 when there are differences, 0 when none.
+    match cmd.status()?.code() {
+        Some(0) => Ok(false),
+        Some(1) => Ok(true),
+        other => anyhow::bail!("git diff --cached failed with status {other:?}"),
+    }
 }
 
 /// `git add -A` with a fail-closed secret guard, scoped to the project.
@@ -168,8 +219,11 @@ fn add_all_guarded(ctx: &repo::RepoContext) -> anyhow::Result<()> {
 fn add_paths(git_root: &Path, paths: &[PathBuf]) -> anyhow::Result<()> {
     for path in paths {
         let full_path = git_root.join(path);
-        // Skip transient paths that no longer exist (e.g. git tmp objects).
-        if !full_path.exists() {
+        // Skip transient paths that no longer exist (e.g. git tmp objects) —
+        // but a missing *tracked* file is a deletion, and must be staged:
+        // skipping it commits a tree that still contains the file, which is
+        // not the tree the test gate just validated.
+        if !full_path.exists() && !is_tracked(git_root, path) {
             continue;
         }
         // Skip paths ignored by git (e.g. build outputs, caches, .git internals).
@@ -179,6 +233,21 @@ fn add_paths(git_root: &Path, paths: &[PathBuf]) -> anyhow::Result<()> {
         repo::run_git(git_root, &["add", "--", &path.to_string_lossy()])?;
     }
     Ok(())
+}
+
+/// Returns true if the path is in the index (tracked), whether or not it
+/// still exists in the worktree.
+fn is_tracked(git_root: &Path, path: &Path) -> bool {
+    std::process::Command::new("git")
+        .arg("-C")
+        .arg(git_root)
+        .args(["ls-files", "--error-unmatch", "--"])
+        .arg(path)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
 }
 
 /// Returns true if git considers the path ignored.
@@ -355,6 +424,64 @@ mod tests {
     }
 
     #[test]
+    fn pattern_mode_stages_deleted_tracked_files() {
+        // Regression: a deleted tracked file matching an include pattern was
+        // skipped as "missing", so the commit kept a file the tested
+        // worktree no longer had.
+        let repo = TestRepo::new();
+        std::fs::remove_file(repo.path().join("src/b.rs")).unwrap();
+        repo.write("src/a.rs", "changed");
+
+        let staging = StagingConfig {
+            mode: StagingMode::Pattern,
+            include: vec!["src/**".to_string()],
+            exclude: vec![],
+        };
+
+        commit_with_staging(
+            &crate::git::repo::RepoContext::single(repo.path()),
+            "pattern mode deletion",
+            &staging,
+            &[],
+            &CommitConfig::default(),
+        )
+        .unwrap();
+
+        assert_eq!(repo.last_commit_files(), vec!["src/a.rs", "src/b.rs"]);
+        assert!(
+            repo.changed_files().is_empty(),
+            "{:?}",
+            repo.changed_files()
+        );
+        let tree = repo.output(&["ls-tree", "-r", "--name-only", "HEAD"]);
+        assert!(!String::from_utf8_lossy(&tree.stdout).contains("src/b.rs"));
+    }
+
+    #[test]
+    fn cluster_mode_stages_deleted_tracked_files() {
+        let repo = TestRepo::new();
+        std::fs::remove_file(repo.path().join("src/b.rs")).unwrap();
+
+        let staging = StagingConfig {
+            mode: StagingMode::Cluster,
+            include: vec![],
+            exclude: vec![],
+        };
+
+        commit_with_staging(
+            &crate::git::repo::RepoContext::single(repo.path()),
+            "cluster mode deletion",
+            &staging,
+            &[PathBuf::from("src/b.rs")],
+            &CommitConfig::default(),
+        )
+        .unwrap();
+
+        let tree = repo.output(&["ls-tree", "-r", "--name-only", "HEAD"]);
+        assert!(!String::from_utf8_lossy(&tree.stdout).contains("src/b.rs"));
+    }
+
+    #[test]
     fn no_staged_changes_returns_error() {
         let repo = TestRepo::new();
         let staging = StagingConfig {
@@ -372,6 +499,7 @@ mod tests {
         )
         .unwrap_err();
         assert!(err.to_string().contains("git commit"));
+        assert!(err.downcast_ref::<NothingStaged>().is_some());
     }
 
     #[test]

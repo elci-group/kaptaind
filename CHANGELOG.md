@@ -15,6 +15,17 @@ All notable changes to kaptaind are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **First-run version enforcement** (`[versioning].bootstrap`, `initial_version`).
+  A repository with no `VERSION` and no root `Cargo.toml [package].version`
+  previously failed every cluster with `baseline_unresolvable`. Daemon startup
+  now establishes the baseline before daemonizing: `initialize` (default)
+  seeds `VERSION` from the highest semver git tag, else `initial_version`
+  (default `0.1.0`), writing only in actuate mode; `refuse` blocks startup with
+  remediation. An unparseable `VERSION` now fails at startup instead of per
+  cluster. `kaptaind doctor` reports `version_baseline_missing`; dry-run shows
+  the seed; observe-mode artifacts use the seed instead of a hardcoded `0.1.0`.
+
 ## [10.4.0] — 2026-09-18
 
 ### Changed
@@ -119,6 +130,60 @@ All notable changes to kaptaind are documented here. The format follows
   instead of one flat list. Falls back to plain static text under `NO_COLOR`,
   non-TTY output, or piping. Per-subcommand `--help` is unchanged.
 
+## [10.3.4] — 2026-09-04
+
+> The release workflow did not complete for 10.3.1–10.3.4, so no binaries were
+> published for them. Their `v10.3.x` tags were backfilled on 2026-09-24 onto
+> each version's bump commit, matching where CI tags releases.
+
+### Added
+- Scrawny joins Hybreed and Emulsify in the advisory branch-integration
+  analysis run before every push (and by `kaptaind integrate analyze`): the
+  source branch's own changes since divergence are piped to
+  `scrawny check --stdin --format json`, and its review-readiness verdict is
+  folded into the report's recommendation. A non-zero exit with a valid
+  verdict is a policy failure, not a tool crash. Configure the binary with
+  `[integrations] scrawny_command`.
+
+### Changed
+- `curly` subprocess fan-out expansion for named CLI flags.
+- Man pages for `kaptaind` and `kaptaind-cli` brought up to date.
+
+## [10.3.3] — 2026-08-31
+
+### Added
+- Padagonia supervisor (`kaptaind.supervisor.toml.example`) for running
+  several repositories under one supervised process.
+- `evidence` validates `bound-snapshot/v1` documents before use.
+
+### Fixed
+- Autostash no longer passes an all-files pathspec that makes Git reject an
+  otherwise valid pull when `.kaptaind` transaction state is ignored.
+- Updated `h2` to 0.4.16 or newer to address RUSTSEC-2026-0258 (unbounded
+  empty DATA frames).
+- `load()` now honours `--config` and `KAPTAIND_CONFIG` instead of always
+  resolving `<repo_root>/kaptaind.toml`.
+- Dependency refresh.
+
+## [10.3.2] — 2026-08-25
+
+Version bump only (dependency manifest refresh); no user-facing changes.
+
+## [10.3.1] — 2026-08-25
+
+### Added
+- A transactional pull engine that separates fetch, topology inspection,
+  strategy planning, integration, verification, and ref mutation instead of
+  delegating repository safety to `git pull`.
+- `kaptaind pull` and `kaptaind-cli pull` support for check-only and dry-run
+  assessment, JSON reports, explicit merge/rebase/Hybreed/Emulsify strategies,
+  autostash, abort/continue/recover flows, recovery refs, repository locks,
+  persistent journals, structured conflicts, risk scoring, and stable exit
+  codes.
+- Remote/upstream resolution, ahead/behind classification, protected-branch
+  policy, conflict prediction, and configurable post-integration build/test
+  verification.
+
 ## [10.2.0] — 2026-08-01
 
 Minor release: an explicit observe/actuate gate around every repository
@@ -138,27 +203,6 @@ mutation.
   `[trust] execution = "trusted"`, `[operation] mode = "actuate"`, and (for
   pushing) `[capabilities] network_push = true` together before the daemon
   will touch the working tree or the remote.
-
-## [10.3.2] — 2026-08-25
-
-### Added
-- A transactional pull engine that separates fetch, topology inspection,
-  strategy planning, integration, verification, and ref mutation instead of
-  delegating repository safety to `git pull`.
-- `kaptaind pull` and `kaptaind-cli pull` support for check-only and dry-run
-  assessment, JSON reports, explicit merge/rebase/Hybreed/Emulsify strategies,
-  autostash, abort/continue/recover flows, recovery refs, repository locks,
-  persistent journals, structured conflicts, risk scoring, and stable exit
-  codes.
-- Remote/upstream resolution, ahead/behind classification, protected-branch
-  policy, conflict prediction, and configurable post-integration build/test
-  verification.
-
-### Fixed
-- Autostash no longer passes an all-files pathspec that makes Git reject an
-  otherwise valid pull when `.kaptaind` transaction state is ignored.
-- Updated `h2` to 0.4.16 or newer to address RUSTSEC-2026-0258 (unbounded
-  empty DATA frames).
 
 ## [10.1.4] — 2026-07-18
 
@@ -511,7 +555,10 @@ the accumulated `Unreleased` notes.
   SBOMs, and keyless (Sigstore) signatures are produced by the GitHub release
   workflow rather than by the daemon dogfooding itself.
 
-## [Unreleased]
+## Pre-stable notes (before 9.7.16)
+
+Accumulated notes from the pre-stable line, kept for reference; the
+consolidated capability set is summarised under `[9.7.16]` above.
 
 ### Added
 - **🎣 Angler Hook & Selective Capture System:** A comprehensive four-part automation system:

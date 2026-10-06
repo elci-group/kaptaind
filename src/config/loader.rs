@@ -2738,6 +2738,12 @@ pub fn load_from_path(path: &Path) -> anyhow::Result<Config> {
             cfg.versioning.mode
         );
     }
+    if let Err(e) = semver::Version::parse(&cfg.versioning.initial_version) {
+        anyhow::bail!(
+            "[versioning].initial_version = {:?} is not valid semver: {e}",
+            cfg.versioning.initial_version
+        );
+    }
     let base_dir = path
         .parent()
         .map(Path::to_path_buf)
@@ -2878,7 +2884,7 @@ impl Default for VersionThresholdConfig {
 /// Versioning *policy* lives here rather than being baked into project
 /// discovery: the trawler identifies structure (workspace roots, member
 /// crates), and this section determines how versions are owned and written.
-#[derive(Debug, Clone, Deserialize, Default)]
+#[derive(Debug, Clone, Deserialize)]
 pub struct VersioningConfig {
     /// How versions are owned within the repository.
     ///
@@ -2901,6 +2907,47 @@ pub struct VersioningConfig {
     /// `docs/planning/WORKSPACE_VERSION_BUMPING_PLAN.md`.
     #[serde(default)]
     pub workspace: WorkspacePolicy,
+    /// What the daemon does on a first run against a repository with no
+    /// resolvable version baseline (no `VERSION`, no root
+    /// `Cargo.toml [package].version`). Default `initialize`.
+    #[serde(default)]
+    pub bootstrap: VersionBootstrap,
+    /// Fallback baseline written by `bootstrap = "initialize"` when the
+    /// repository has no semver git tag to seed from. Must be valid semver.
+    #[serde(default = "default_initial_version")]
+    pub initial_version: String,
+}
+
+impl Default for VersioningConfig {
+    fn default() -> Self {
+        Self {
+            mode: VersioningMode::default(),
+            consistency: VersionConsistency::default(),
+            lock_sync: LockSyncMode::default(),
+            workspace: WorkspacePolicy::default(),
+            bootstrap: VersionBootstrap::default(),
+            initial_version: default_initial_version(),
+        }
+    }
+}
+
+fn default_initial_version() -> String {
+    "0.1.0".to_string()
+}
+
+/// First-run policy for repositories without a version baseline
+/// (`[versioning].bootstrap`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VersionBootstrap {
+    /// Establish a baseline at startup: seed `VERSION` from the highest
+    /// semver git tag (`vX.Y.Z` / `X.Y.Z`), else from `initial_version`.
+    /// In observe mode nothing is written; the seed is only reported.
+    #[default]
+    Initialize,
+    /// Refuse to start until the operator creates `VERSION` (or a root
+    /// `Cargo.toml [package].version`) by hand.
+    Refuse,
 }
 
 /// Version ownership model (`[versioning].mode`).

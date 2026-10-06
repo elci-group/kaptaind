@@ -956,8 +956,11 @@ async fn process_cluster(
         crate::config::loader::OperationMode::Observe
     ) {
         let observed_version = crate::version::resolve_baseline(&config.repo_path).unwrap_or_else(|error| {
-            tracing::warn!(error = %error, "failed to resolve baseline version; defaulting to 0.1.0 for observation");
-            Version::new(0, 1, 0)
+            let seed = crate::version::bootstrap::seed(&config.repo_path, &config.versioning)
+                .map(|(version, _)| version)
+                .unwrap_or_else(|_| Version::new(0, 1, 0));
+            tracing::warn!(error = %error, %seed, "failed to resolve baseline version; using bootstrap seed for observation");
+            seed
         });
         if let Err(error) = persist_analysis_artifact(
             config,
@@ -1044,6 +1047,27 @@ async fn process_cluster(
             &cluster_paths,
             &config.commit,
         );
+        if let Err(err) = &commit_result {
+            if err
+                .downcast_ref::<crate::commit::orchestrator::NothingStaged>()
+                .is_some()
+            {
+                tracing::info!(
+                    "chore commit skipped: no changed path matches the staging configuration"
+                );
+                record_decision(
+                    config,
+                    &cluster,
+                    crate::daemon::decisions::outcome::NOTHING_STAGED,
+                    err.to_string(),
+                    Some(&diff),
+                    Some(&weight),
+                    None,
+                    None,
+                );
+                return;
+            }
+        }
         if let Err(err) = commit_result {
             tracing::error!(error = %err, "chore commit failed");
             write_trace_if_active(
@@ -1736,7 +1760,10 @@ async fn process_cluster(
         let push_summary = match push_result {
             Ok(summary) => summary,
             Err(err) => {
-                if err.downcast_ref::<crate::push::PrePushHookFailed>().is_some() {
+                if err
+                    .downcast_ref::<crate::push::PrePushHookFailed>()
+                    .is_some()
+                {
                     let msg = err.to_string();
                     status.set_failed(msg.clone());
                     write_status(&config.repo_path, status);
@@ -2025,7 +2052,10 @@ async fn auto_ship_aoc(repo_path: &Path, session: &crate::aoc::AocSession) -> an
 
     let commit_hashes = crate::aoc::session::session_commit_hashes(
         repo_path,
-        &traces.iter().map(|t| t.cluster_id.clone()).collect::<Vec<_>>(),
+        &traces
+            .iter()
+            .map(|t| t.cluster_id.clone())
+            .collect::<Vec<_>>(),
     )?;
 
     let manifest = crate::aoc::AocManifest {

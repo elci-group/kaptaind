@@ -1,5 +1,6 @@
 use std::path::Path;
 
+pub mod bootstrap;
 pub mod workspace;
 pub mod writeback;
 

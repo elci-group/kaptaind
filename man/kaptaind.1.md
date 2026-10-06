@@ -770,7 +770,7 @@ Examples:
 :   Runtime directory for analysis artifacts, status, telemetry, traces, Aim-of-Change manifests, bundle metadata, and daemon logs/PID files.
 
 *VERSION*
-:   Authoritative semantic version for the repository. Created automatically when missing, starting from **0.1.0**.
+:   Authoritative semantic version for the repository. When missing at daemon startup, **[versioning].bootstrap** decides: **initialize** (default) writes it from the highest semver git tag, else **[versioning].initial_version** (default **0.1.0**), and only in actuate mode; **refuse** blocks startup until it exists.
 
 *~/.config/kaptaind/monitored.json*
 :   JSON registry of monitored projects for **monitor resume** and auto-start.

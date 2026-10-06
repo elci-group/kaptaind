@@ -154,7 +154,11 @@ struct TagInfo {
 
 fn git_tags(repo_path: &Path) -> anyhow::Result<BTreeMap<String, TagInfo>> {
     let output = git(repo_path)
-        .args(["tag", "--list", "--format=%(refname:short)\t%(objectname:short)\t%(creatordate:unix)"])
+        .args([
+            "tag",
+            "--list",
+            "--format=%(refname:short)\t%(objectname:short)\t%(creatordate:unix)",
+        ])
         .output()
         .context("failed to list git tags")?;
 
@@ -260,7 +264,12 @@ fn kaptaind_bump_events(
                 .map(|s| s.to_string());
 
             if let (Some(from), Some(to)) = (from, to) {
-                events.push(HistoryEvent::VersionBump { from, to, commit, ts });
+                events.push(HistoryEvent::VersionBump {
+                    from,
+                    to,
+                    commit,
+                    ts,
+                });
             }
         }
     }
@@ -276,13 +285,7 @@ fn previous_version_from_tags(tags: &BTreeMap<String, TagInfo>) -> Option<String
 
 fn reflog_push_events(repo_path: &Path) -> anyhow::Result<Vec<HistoryEvent>> {
     let output = git(repo_path)
-        .args([
-            "reflog",
-            "show",
-            "--pretty=format:%H\t%ct\t%gs",
-            "-n",
-            "20",
-        ])
+        .args(["reflog", "show", "--pretty=format:%H\t%ct\t%gs", "-n", "20"])
         .output()
         .context("failed to run git reflog")?;
 
@@ -328,7 +331,12 @@ fn print_text(report: &HistoryReport) {
     println!();
     for event in &report.events {
         match event {
-            HistoryEvent::VersionBump { from, to, commit, ts } => {
+            HistoryEvent::VersionBump {
+                from,
+                to,
+                commit,
+                ts,
+            } => {
                 let ts_str = ts.map(|t| format!(" @ {t}")).unwrap_or_default();
                 let commit_str = commit.as_deref().unwrap_or("?");
                 println!(
@@ -406,7 +414,7 @@ mod tests {
 
     #[test]
     fn sort_orders_by_ts_desc_then_kind() {
-        let mut events = vec![
+        let mut events = [
             HistoryEvent::Commit {
                 sha: "a".into(),
                 message: "later commit".into(),
@@ -439,7 +447,8 @@ mod tests {
 
     #[test]
     fn parse_decisions_jsonl_into_bump_events() {
-        let dir = std::env::temp_dir().join(format!("kaptaind-history-test-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("kaptaind-history-test-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(dir.join(".kaptaind")).unwrap();
         std::fs::write(dir.join("VERSION"), "1.2.3\n").unwrap();
@@ -452,7 +461,6 @@ mod tests {
             .unwrap();
         }
 
-        let config = Config::default();
         // Config::default() uses current dir; we can't easily point it at `dir`
         // without a public setter, so just test the parser directly.
         let tags = BTreeMap::new();

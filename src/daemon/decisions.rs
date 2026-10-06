@@ -27,6 +27,9 @@ pub mod outcome {
     pub const ERROR: &str = "error";
     pub const PRE_COMMIT_HOOK_FAILED: &str = "pre_commit_hook_failed";
     pub const COMMIT_FAILED: &str = "commit_failed";
+    /// Staging selected no paths (all outside `[staging] include`), so no
+    /// commit was attempted.
+    pub const NOTHING_STAGED: &str = "nothing_staged";
     pub const OBSERVED: &str = "observed";
     pub const SUSPENDED: &str = "suspended";
 }

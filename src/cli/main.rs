@@ -2751,6 +2751,34 @@ fn __curly_original_main() -> anyhow::Result<()> {
                 }
             }
 
+            // First-run version enforcement: establish (or refuse to run without)
+            // a version baseline before daemonizing, so the outcome is visible on
+            // the operator's terminal rather than as per-cluster failures. Runs
+            // after the startup guard so a bootstrap write never trips it.
+            match kaptaind::version::bootstrap::ensure_baseline(
+                &config.repo_path,
+                &config.versioning,
+                config.operation.mode,
+            )? {
+                kaptaind::version::bootstrap::BootstrapOutcome::Initialized { version, source } => {
+                    eprintln!(
+                        "kaptaind: no version baseline found — initialized VERSION = {version} \
+                         (from {source}); it is committed with the first cluster"
+                    );
+                }
+                kaptaind::version::bootstrap::BootstrapOutcome::WouldInitialize {
+                    version,
+                    source,
+                } => {
+                    eprintln!(
+                        "kaptaind: no version baseline found — observe mode leaves it unwritten; \
+                         actuation would initialize VERSION = {version} (from {source})"
+                    );
+                }
+                kaptaind::version::bootstrap::BootstrapOutcome::Existing(_)
+                | kaptaind::version::bootstrap::BootstrapOutcome::NotApplicable => {}
+            }
+
             if cli.daemon {
                 let kaptaind_dir = config.repo_path.join(".kaptaind");
                 kaptaind::util::permissions::ensure_private_dir(&kaptaind_dir)?;

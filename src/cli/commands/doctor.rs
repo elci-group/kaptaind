@@ -185,7 +185,51 @@ fn collect_migration_findings(config: &Config) -> Vec<MigrationFinding> {
     // traci: allow -- optional failure is represented by None and handled by the caller.
     let ignore_text = std::fs::read_to_string(ignore_path).ok();
 
-    detect_migration_findings(config, toml_text.as_deref(), ignore_text.as_deref())
+    let mut findings =
+        detect_migration_findings(config, toml_text.as_deref(), ignore_text.as_deref());
+    findings.extend(detect_missing_baseline(config));
+    findings
+}
+
+/// `version_baseline_missing`: no `VERSION` and no root `[package].version`.
+/// Reports what the first daemon run will do under `[versioning].bootstrap`.
+fn detect_missing_baseline(config: &Config) -> Option<MigrationFinding> {
+    use kaptaind::config::loader::VersionBootstrap;
+    if !kaptaind::version::bootstrap::baseline_missing(&config.repo_path) {
+        return None;
+    }
+    let (severity, message, fix) = match config.versioning.bootstrap {
+        VersionBootstrap::Refuse => (
+            MigrationSeverity::Warn,
+            "No VERSION file or Cargo.toml [package].version, and [versioning].bootstrap = \
+             \"refuse\" — the daemon will refuse to start."
+                .to_string(),
+            "Create and commit VERSION (e.g. `echo 0.1.0 > VERSION`), or set \
+             [versioning].bootstrap = \"initialize\"."
+                .to_string(),
+        ),
+        VersionBootstrap::Initialize => {
+            let seed = kaptaind::version::bootstrap::seed(&config.repo_path, &config.versioning)
+                .map(|(v, source)| format!("{v} (from {source})"))
+                .unwrap_or_else(|e| format!("<invalid: {e}>"));
+            (
+                MigrationSeverity::Info,
+                format!(
+                    "No version baseline yet — the first actuating daemon run will initialize \
+                     VERSION = {seed}."
+                ),
+                "Nothing required. To pick the baseline yourself, create VERSION before \
+                 starting, or set [versioning].initial_version."
+                    .to_string(),
+            )
+        }
+    };
+    Some(MigrationFinding {
+        check: "version_baseline_missing".to_string(),
+        severity,
+        message,
+        fix,
+    })
 }
 
 /// Pure detection over the raw config TOML, the ignore-file text, and the

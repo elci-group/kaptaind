@@ -38,8 +38,17 @@ const GROUPS: &[(&str, &[&str])] = &[
     (
         "Observability",
         &[
-            "status", "dashboard", "log", "logs", "history", "trace", "audit", "evidence",
-            "report", "monitor", "probe",
+            "status",
+            "dashboard",
+            "log",
+            "logs",
+            "history",
+            "trace",
+            "audit",
+            "evidence",
+            "report",
+            "monitor",
+            "probe",
         ],
     ),
     (
@@ -142,7 +151,10 @@ pub fn print_top_level_help() {
         ]);
         for sub in &others {
             let about = sub.get_about().map(|a| a.to_string()).unwrap_or_default();
-            table.add_row(vec![command_cell(sub.get_name(), colorize), Cell::new(about)]);
+            table.add_row(vec![
+                command_cell(sub.get_name(), colorize),
+                Cell::new(about),
+            ]);
         }
         println!("{}", heading("Other"));
         print!("{table}");
@@ -171,10 +183,7 @@ fn print_flags_table(title: &str, names: &[&str], cmd: &clap::Command, colorize:
                 Some(short) => format!("-{short}, --{name}"),
                 None => format!("--{name}"),
             };
-            let help = arg
-                .get_help()
-                .map(|h| h.to_string())
-                .unwrap_or_default();
+            let help = arg.get_help().map(|h| h.to_string()).unwrap_or_default();
             table.add_row(vec![command_cell(&flag, colorize), Cell::new(help)]);
             any = true;
         }
@@ -188,7 +197,9 @@ fn print_flags_table(title: &str, names: &[&str], cmd: &clap::Command, colorize:
 
 fn header_cell(text: &str, colorize: bool) -> Cell {
     if colorize {
-        Cell::new(text).add_attribute(Attribute::Bold).fg(Color::Cyan)
+        Cell::new(text)
+            .add_attribute(Attribute::Bold)
+            .fg(Color::Cyan)
     } else {
         Cell::new(text)
     }
@@ -196,7 +207,9 @@ fn header_cell(text: &str, colorize: bool) -> Cell {
 
 fn command_cell(text: &str, colorize: bool) -> Cell {
     if colorize {
-        Cell::new(text).add_attribute(Attribute::Bold).fg(Color::Magenta)
+        Cell::new(text)
+            .add_attribute(Attribute::Bold)
+            .fg(Color::Magenta)
     } else {
         Cell::new(text)
     }

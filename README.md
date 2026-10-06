@@ -1467,7 +1467,20 @@ cat VERSION    # If it exists, kaptaind will continue from here
 cat Cargo.toml | grep -A1 "\[package\]" | grep version  # Rust: falls back to Cargo.toml
 ```
 
-If neither exists, kaptaind defaults to `0.1.0` on first commit.
+If neither exists, the first daemon run enforces a baseline per `[versioning].bootstrap`:
+
+```toml
+[versioning]
+bootstrap = "initialize"     # default; or "refuse" to block startup until VERSION exists
+initial_version = "0.1.0"    # used when no semver git tag (vX.Y.Z / X.Y.Z) exists
+```
+
+With `initialize`, kaptaind writes `VERSION` at startup, seeded from the highest
+semver git tag (so existing releases are never downgraded), else
+`initial_version`; it is committed with the first cluster. In observe mode
+nothing is written — the seed is only reported. `kaptaind doctor` flags the
+missing baseline (`version_baseline_missing`) and `kaptaind --dry-run` shows the
+seed it would use. An unparseable `VERSION` always refuses to start.
 
 ### Step 3: Backfill Analysis Artifacts (Optional)
 

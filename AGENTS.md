@@ -225,7 +225,7 @@ RUST_LOG=kaptaind=debug cargo run
 - `Config::default()` uses the process current directory at runtime; tests or tools that change cwd can affect defaults.
 - Required test hooks block commits on failure; optional hooks do not.
 - A passing test hook reduces runtime weight to `0.1`; a failing hook forces runtime weight to `1.0`.
-- When no `VERSION` file exists, the scheduler starts from `0.1.0`.
+- When no baseline exists (no `VERSION`, no root `[package].version`), daemon startup enforces one via `[versioning].bootstrap` (`src/version/bootstrap.rs`): `initialize` (default) writes `VERSION` from the highest semver git tag, else `initial_version` (`0.1.0`), in actuate mode only; `refuse` blocks startup. An invalid `VERSION` always blocks startup.
 - `ClusterEngine` groups events only while the time delta is strictly less than the configured window.
 - Ignore matching checks whether any path in an event matches; one ignored path suppresses the whole event.
 - Pre-commit gate is `cargo fmt --all -- --check` and `cargo clippy --all-targets -- -D warnings` (enforced in `.github/workflows/rust.yml`).
@@ -235,3 +235,7 @@ RUST_LOG=kaptaind=debug cargo run
 - The repo dogfoods `[versioning].workspace = "touched"` (see `docs/planning/WORKSPACE_VERSION_BUMPING_PLAN.md`): a cluster touching only `crates/kaptaind-diff/**` bumps the member manifest, not the root `VERSION`. CI cuts two tag shapes — `vX.Y.Z` (root, drives the release matrix) and `kaptaind-diff-vX.Y.Z` (member, tag only) — each created only when missing.
 - The repo's `kaptaind.toml` sets `[daemon] startup_guard = true`: the daemon refuses to start while the worktree is dirty (accidental starts must not catch-up-commit release work). A deliberate run needs `--force`.
 - `deckhand` is a pinned git dependency (`Cargo.toml`). To hack on it against a sibling checkout, create a local, gitignored `.cargo/config.toml` with `paths = ["../deckhand"]`; bump the `rev` in `Cargo.toml` to ship a newer deckhand.
+
+## TempCheq
+
+- Submit every artifact containing LLM inference calls to tempcheq before delivery: run `tempcheq <path>` on the workspace that produced the artifact, review the temperature audit, and include the findings with the artifact (`tempcheq --report` for JSON output, `tempcheq report <path>` for Markdown/HTML report files).

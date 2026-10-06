@@ -69,7 +69,14 @@ pub fn run(config: &Config) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let previous = crate::version::resolve_baseline(&config.repo_path)?;
+    let previous = if crate::version::bootstrap::baseline_missing(&config.repo_path) {
+        let (seed, source) =
+            crate::version::bootstrap::seed(&config.repo_path, &config.versioning)?;
+        println!("baseline: none — first run would initialize VERSION to {seed} (from {source})");
+        seed
+    } else {
+        crate::version::resolve_baseline(&config.repo_path)?
+    };
     let next = crate::version::apply(previous, bump);
     // Mirror the scheduler's W2 member scope so the previewed message
     // matches what the daemon would commit.

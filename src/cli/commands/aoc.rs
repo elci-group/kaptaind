@@ -119,7 +119,10 @@ fn handle_aoc_ship(config: &Config) -> anyhow::Result<()> {
     // manifest alone.
     let commit_hashes = kaptaind::aoc::session::session_commit_hashes(
         &config.repo_path,
-        &traces.iter().map(|t| t.cluster_id.clone()).collect::<Vec<_>>(),
+        &traces
+            .iter()
+            .map(|t| t.cluster_id.clone())
+            .collect::<Vec<_>>(),
     )?;
 
     // Create manifest
@@ -308,7 +311,8 @@ fn handle_aoc_intercept(
     Ok(())
 }
 
-fn handle_aoc_log(config: &Config, limit: usize) -> anyhow::Result<()> {    let manifests = kaptaind::aoc::session::list_manifests(&config.repo_path)?;
+fn handle_aoc_log(config: &Config, limit: usize) -> anyhow::Result<()> {
+    let manifests = kaptaind::aoc::session::list_manifests(&config.repo_path)?;
 
     if manifests.is_empty() {
         println!("No completed AoC sessions found.");
@@ -346,4 +350,3 @@ fn handle_aoc_log(config: &Config, limit: usize) -> anyhow::Result<()> {    let 
 
     Ok(())
 }
-

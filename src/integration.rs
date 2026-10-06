@@ -74,7 +74,14 @@ pub fn analyse(
     // a reviewer would actually be asked to approve, not the union of both
     // branches' history.
     let range_diff = diff_range(repo, target, source)?;
-    let mut scrawny_args = vec!["--path", path_arg(repo), "--format", "json", "check", "--stdin"];
+    let mut scrawny_args = vec![
+        "--path",
+        path_arg(repo),
+        "--format",
+        "json",
+        "check",
+        "--stdin",
+    ];
     if aoc_context_flag(repo).is_some() {
         scrawny_args.push("--aoc");
         scrawny_args.push("@active");
@@ -220,13 +227,21 @@ fn recommendation(hybreed: &Value, scrawny: &Value, emulsify: &Value) -> String 
     let review = match scrawny.get("passed").and_then(Value::as_bool) {
         Some(true) => "review-ready".to_owned(),
         Some(false) => {
-            let load = scrawny.get("review_load").and_then(Value::as_u64).unwrap_or(0);
-            let max = scrawny.get("max_review_load").and_then(Value::as_u64).unwrap_or(0);
+            let load = scrawny
+                .get("review_load")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let max = scrawny
+                .get("max_review_load")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
             format!("review load {load}/100 exceeds policy ({max})")
         }
         None => "unavailable".to_owned(),
     };
-    format!("Hybreed: {decision}; Scrawny: {review}; Emulsify: {action}; explicit validation required")
+    format!(
+        "Hybreed: {decision}; Scrawny: {review}; Emulsify: {action}; explicit validation required"
+    )
 }
 
 fn run_json(program: &str, args: &[&str], _timeout_secs: u64) -> Result<Value> {
@@ -294,8 +309,13 @@ fn run_scrawny_check(program: &str, args: &[&str], stdin_data: &[u8]) -> Result<
         .with_context(|| format!("waiting for {program}"))?;
 
     let text = String::from_utf8(output.stdout).context("tool output was not UTF-8")?;
-    let value: Value = serde_json::from_str(&text)
-        .with_context(|| format!("{program} did not return JSON ({}): {}", output.status, String::from_utf8_lossy(&output.stderr).trim()))?;
+    let value: Value = serde_json::from_str(&text).with_context(|| {
+        format!(
+            "{program} did not return JSON ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+    })?;
 
     if !output.status.success() && value.get("passed").is_none() {
         anyhow::bail!(
@@ -318,7 +338,10 @@ fn path_arg(path: &Path) -> &str {
 /// only: scrawny never lets it influence the verdict. A malformed
 /// `active.json` means no context, not a failed integration run.
 fn aoc_context_flag(repo: &Path) -> Option<&'static str> {
-    crate::aoc::session::load_active(repo).ok().flatten().map(|_| "@active")
+    crate::aoc::session::load_active(repo)
+        .ok()
+        .flatten()
+        .map(|_| "@active")
 }
 
 struct TempTrees {
