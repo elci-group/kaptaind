@@ -2,6 +2,7 @@ pub mod decisions;
 pub mod deckhand;
 pub mod health;
 pub mod notification;
+pub mod oneshot;
 pub mod pidfile;
 pub mod policy;
 pub mod process;

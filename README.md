@@ -15,6 +15,7 @@ It eliminates manual version bumping and subjective commit messages by replacing
   - [Installation](#installation)
   - [Runtime Requirements](#runtime-requirements)
   - [Quick Start](#quick-start)
+  - [One-shot commits (scripts and agents)](#one-shot-commits-scripts-and-agents)
 - [Quick Reference](#quick-reference)
 - [How It Works](#how-it-works)
 - [CLI Commands](#cli-commands)
@@ -152,11 +153,93 @@ A generated `kaptaind.toml` is **observe-only** until you opt in — see
 [Repository mutation: observe vs. actuate](#repository-mutation-observe-vs-actuate)
 below before expecting `kaptaind` to actually commit anything.
 
-### CLI Inspection
+### One-shot commits (scripts and agents)
 
-Kaptaind comes with a secondary binary to inspect the daemon's state:
+`kaptaind commit` runs exactly one transaction over the pending changes
+through the daemon's own pipeline (suspend gate, test hook, analysis,
+version bump + `VERSION` writeback, commit, optional push), then exits. Use
+it instead of backgrounding the daemon or falling back to plain git. Check
+every gate first with `kaptaind ready`:
 
 ```bash
+kaptaind ready --for push            # read-only; prints each gate's state and fix
+kaptaind commit --push --json        # one transaction, one JSON object
+kaptaind commit --paths src/parser.rs docs/ --push
+kaptaind commit --skip-tests "CI flake tracked in #123"
+```
+
+`kaptaind commit [--paths <PATH>...] [--push] [--force] [--skip-tests <REASON>] [--json]`
+
+| Exit | Meaning |
+|------|---------|
+| 0 | committed (and any requested push succeeded) |
+| 1 | error (commit failed, version write failed, push failed, ...) |
+| 3 | nothing to commit: clean tree, below threshold (`no_bump`), nothing staged |
+| 4 | refused by a gate: daemon running, untrusted config, suspended, observe mode, test failed, baseline unresolvable, version mismatch, policy block, pre-commit hook failed, push disabled (with `--push`) or refused |
+
+JSON output (`--json`):
+
+```json
+{"outcome":"commit","version_before":"1.2.0","version_after":"1.3.0",
+ "commit":"<sha>","push":{"status":"ok|disabled|refused|failed|skipped","detail":"..."},
+ "reason":"committed","cluster_id":"<uuid>","paths":["src/lib.rs"],"skipped_tests":null}
+```
+
+`outcome` is the decision code recorded in `.kaptaind/decisions.jsonl` (see
+`kaptaind explain`), or `daemon_running` / `untrusted` for pre-flight
+refusals; `push.status = "skipped"` means no commit was created.
+
+- `--paths` restricts the cluster **and** staging to those files/directories
+  (plus version files); other dirty files stay unstaged.
+- `--skip-tests <REASON>` bypasses the test hook for this transaction only.
+  The reason is mandatory; it is appended to the decision reason
+  (`; tests skipped: <reason>`) and added as a
+  `Kaptaind-Skipped-Tests: <reason>` commit trailer.
+- Requires `[operation] mode = "actuate"` and `[trust] execution = "trusted"`
+  like the daemon; in observe mode the `observed` decision is recorded and
+  the command exits 4.
+- Runs the same first-run `VERSION` bootstrap as daemon startup; ignores
+  `[daemon] startup_guard` and the `min_commit_interval` rate limit.
+- With `[push] enabled = true` the commit is pushed even without `--push`
+  (daemon behaviour), never twice; `--push` with push disabled is reported
+  (`push.status = "disabled"`, exit 4), never silently skipped.
+- Refuses while a live daemon holds `.kaptaind/daemon.pid` for the repo
+  (two writers would race) unless `--force` is given.
+
+`kaptaind ready [--for analyze|commit|push] [--json]` (default `commit`)
+evaluates every gate in one read-only pass — `operation_mode`,
+`execution_trust`, `test_hook`, `push_enabled`, `network_push`,
+`protected_branch`, `startup_guard`, `version_baseline`,
+`kaptaind_dir_writable`, `nested_git_root`, `suspended`, `daemon_running` —
+and prints each as `pass` / `block` / `warn` / `info` / `n/a` with the exact
+`kaptaind.toml` key or command that fixes it. It exits 0 when nothing
+required by `--for` blocks, 4 otherwise. `--json` emits
+`{"for","ready","gates":[{"id","state","detail","fix"}]}`. Gate refusals
+elsewhere (untrusted config, protected-branch push, push disabled) now end
+with `run 'kaptaind ready' for every blocker`.
+
+An agent skill describing this workflow ships in
+[`skills/kaptaind/SKILL.md`](skills/kaptaind/SKILL.md); `install.sh` installs
+it to `~/.agents/skills/kaptaind/SKILL.md`.
+
+### CLI Inspection
+
+All inspection commands are subcommands of the single `kaptaind` binary
+(`kaptaind-cli` was merged into it in 10.4.0; see
+[Deprecated `kaptaind-cli`](#deprecated-kaptaind-cli)):
+
+```bash
+# Census Kaptaind history without training a model.
+# Labelled commits, era commits, and observed analyses stay separate.
+kaptaind data census
+kaptaind data census --org elci-group
+kaptaind data extract
+kaptaind data validate
+kaptaind data dedupe
+kaptaind data stats
+kaptaind dataset build --version 0.1.0
+kaptaind dataset inspect
+
 # Bulk discover codebases (99% accuracy across 19 languages)
 kaptaind trawl                       # Discover all projects in current directory
 kaptaind trawl --path ~/projects     # Trawl specific directory
@@ -166,6 +249,20 @@ kaptaind trawl --require-git         # Only git repositories
 
 # View live daemon health and current version
 kaptaind status
+kaptaind status --json            # alive, last_outcome, last_error, version, worktree_version, suspended, ...
+
+# Check every commit/push gate at once, with fixes
+kaptaind ready
+kaptaind ready --for push --json
+
+# Explain recent decisions (commits and skips, test exit codes and output)
+kaptaind explain --last 25
+
+# Daemon text logs (.kaptaind/daemon.out, daemon.err)
+kaptaind logs                     # last 50 lines
+kaptaind logs tail 80             # also: logs tail -n 80, logs --tail 80, logs --lines 80
+kaptaind logs errors              # ERROR/WARN lines
+kaptaind logs grep "push"         # regex filter
 
 # View recent automated commits, scores, and bump reasons
 kaptaind log
@@ -234,7 +331,11 @@ kaptaind checkout bleeding
 | `kaptaind` | Run daemon in foreground | — |
 | `kaptaind --daemon` | Run daemon detached | `[watch]`, `[cluster]`, `[ratelimit]` |
 | `kaptaind init` | Generate `kaptaind.toml` and `.kaptainignore` | — |
-| `kaptaind status` | Daemon health and version | — |
+| `kaptaind status` | Daemon health and version (`--json` for liveness + last outcome) | — |
+| `kaptaind ready` | Check every mutation gate, print each fix | `[operation]`, `[trust]`, `[push]`, `[capabilities]` |
+| `kaptaind commit` | One-shot commit through the daemon pipeline, then exit | `[operation]`, `[trust]`, `[test]`, `[push]` |
+| `kaptaind explain` | Recent cluster decisions (commits and skips) | — |
+| `kaptaind logs` | Tail / filter daemon logs | — |
 | `kaptaind validate` | Validate `kaptaind.toml` | — |
 | `kaptaind log` | Recent automated commits | — |
 | `kaptaind analyze` | Dry-run diff analysis | `[weights]`, `[inference]` |
@@ -267,6 +368,8 @@ kaptaind checkout bleeding
 | `.kaptaind/lifecycle.json` | Versioned candidates, validation evidence, staging revisions, and issued release events |
 | `.kaptaind/status.json` | Daemon state |
 | `.kaptaind/suspend.json` | Daemon suspension state |
+| `.kaptaind/decisions.jsonl` | Per-cluster decision log read by `kaptaind explain` / `status` |
+| `.kaptaind/daemon.pid` | Live daemon pid; `kaptaind commit` refuses while it is held |
 | `.kaptaind/analysis/` | Per-cluster analysis artifacts |
 | `.kaptaind/audit.jsonl` | Structured audit log |
 | `.kaptaind/releases/` | Packaged release artifacts |
@@ -453,6 +556,45 @@ scrape_configs:
     metrics_path: /metrics/prometheus
 ```
 
+### Daemon status and decision log
+
+`kaptaind status --json` reports daemon liveness and the last pipeline result
+as separate facts:
+
+- `alive` — the pid file is present **and** the process is running.
+- `last_outcome` — `committed`, `skipped`, `failed`, `suspended`, or `null`,
+  with `last_outcome_at`, `last_decision`, and `last_error`.
+- `worktree_version` — `VERSION` as it is on disk, uncommitted edits included.
+- `suspended`, plus the existing lifecycle fields, including `version` (the
+  `VERSION` committed at HEAD), or `lifecycle_error` when the lifecycle state
+  cannot be read. Daemon fields never replace a lifecycle field.
+
+The human output shows matching **Liveness** and **Last result** lines. A
+successful commit clears a previous `Failed` state.
+
+Each processed cluster appends a record to `.kaptaind/decisions.jsonl`
+(`kaptaind explain` renders them). Test-hook decisions carry optional
+`exit_code`, `output_tail` (at most the last 40 lines: stdout, then stderr),
+and `missing_program`. A test command whose program cannot be found
+(`sh` exit 127 / ENOENT) is recorded as `test_hook_not_found` instead of
+`test_failed`; a required hook still blocks the commit.
+
+### Deprecated `kaptaind-cli`
+
+`kaptaind-cli` was merged into `kaptaind` in 10.4.0. `install.sh` now installs
+`kaptaind-cli` as a small shim (`scripts/kaptaind-cli`) that prints a
+deprecation line to stderr and execs `kaptaind` with the same arguments,
+replacing any stale standalone binary in the install directory. The shim is
+planned for removal in 11.0. `install.sh` also installs the agent skill to
+`~/.agents/skills/kaptaind/SKILL.md`. Opt out with `KAPTAIND_SKIP_SHIM=1` or
+`KAPTAIND_SKIP_SKILL=1`.
+
+`kaptaind doctor` reports a `binary_shadowing` warning when the `kaptaind` /
+`kaptaind-cli` executables on `PATH` report differing versions, or when a
+`kaptaind-cli` is a standalone binary rather than the shim. Fix: run
+`type -a kaptaind kaptaind-cli`, remove the stale copies, and re-run
+`install.sh`.
+
 ## Web Dashboard
 
 Kaptaind ships with an embedded single-page WebUI. Start it with `--web` (default port `8080`); use `--web-port` to change the port. The WebUI port must differ from `--health-port`.
@@ -500,12 +642,13 @@ Open `http://localhost:8080/` to view the dashboard.
 By default — including a freshly generated `kaptaind init`/`trawl` profile
 — the daemon runs **observe-only**: it watches, clusters, scores, and records
 every decision to `.kaptaind/decisions.jsonl`, but never stages, commits,
-writes `VERSION`, pushes, or ships. Nothing else in the CLI calls this out:
-`kaptaind validate` reports the config as valid either way, and
-`kaptaind analyze` prints the projected bump without noting that it won't
-actually happen. If commits stop appearing, check
-`kaptaind explain` or grep `decisions.jsonl` for `"outcome":"observed"`
-before assuming something is broken.
+writes `VERSION`, pushes, or ships. `kaptaind validate` reports the config as
+valid either way, and `kaptaind analyze` prints the projected bump without
+noting that it won't actually happen; run `kaptaind ready` (or
+`kaptaind ready --for push`) to see every gate that would stop a commit or
+push, with its fix. If commits stop appearing, check `kaptaind explain` or
+grep `decisions.jsonl` for `"outcome":"observed"` before assuming something
+is broken.
 
 To let the daemon actually mutate the repository, opt in explicitly:
 

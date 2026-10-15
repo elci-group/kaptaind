@@ -2251,7 +2251,7 @@ impl Config {
         let violations = self.execution_trust_violations();
         if !violations.is_empty() {
             anyhow::bail!(
-                "untrusted configuration cannot enable program execution ({}) — review the configuration and set [trust].execution = \"trusted\" to opt in",
+                "untrusted configuration cannot enable program execution ({}) — review the configuration and set [trust].execution = \"trusted\" to opt in; run 'kaptaind ready' for every blocker",
                 violations.join(", ")
             );
         }

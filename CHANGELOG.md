@@ -16,6 +16,7 @@ All notable changes to kaptaind are documented here. The format follows
 ## [Unreleased]
 
 ### Added
+- **Kaptaind observation corpus (SLM/0 sprint 0).** `kaptaind data census` counts labelled commits, Kaptaind-era commits, and recoverable analyses as three separate totals. `kaptaind data extract` rebuilds versioned observation units (schema 1) from scorecards, `.kaptaind/decisions.jsonl`, and analysis artifacts without checking out history. `validate`, `dedupe`, and `stats` score label confidence, cluster duplicate diffs before any train/test split, and report KDS plus the model-readiness gate. Leakage is measured inside each holdout regime, so a cluster may be train for time and test for pattern. Root `VERSION`, `.kaptaind/`, and build trees (`target/`, `dist/`, `node_modules/`, including at the repository root) are not training-eligible. `kaptaind dataset build|inspect|export` publishes an immutable `kaptaind-corpus-<version>` manifest. No model is trained.
 - **First-run version enforcement** (`[versioning].bootstrap`, `initial_version`).
   A repository with no `VERSION` and no root `Cargo.toml [package].version`
   previously failed every cluster with `baseline_unresolvable`. Daemon startup
@@ -25,6 +26,58 @@ All notable changes to kaptaind are documented here. The format follows
   remediation. An unparseable `VERSION` now fails at startup instead of per
   cluster. `kaptaind doctor` reports `version_baseline_missing`; dry-run shows
   the seed; observe-mode artifacts use the seed instead of a hardcoded `0.1.0`.
+  `kaptaind commit` runs the same bootstrap; `kaptaind ready` reports it as the
+  `version_baseline` gate.
+- **`kaptaind commit`** — one-shot commit through the daemon's own pipeline
+  (suspend gate, test hook, analysis, `VERSION` writeback, commit, optional
+  push), then exit: `kaptaind commit [--paths <PATH>...] [--push] [--force]
+  [--skip-tests <REASON>] [--json]`. Exit codes `0` committed, `1` error, `3`
+  nothing to commit, `4` refused by a gate. `--json` prints one object
+  (`outcome`, `version_before`, `version_after`, `commit`,
+  `push.status` ∈ `ok|disabled|refused|failed|skipped`, `reason`,
+  `cluster_id`, `paths`, `skipped_tests`). `--paths` scopes the cluster and
+  staging; `--skip-tests` requires a reason, recorded as `; tests skipped:
+  <reason>` in the decision and a `Kaptaind-Skipped-Tests: <reason>` trailer.
+  Needs actuate + trusted (observe mode → `observed`, exit 4); ignores
+  `startup_guard` and the commit rate limit; pushes without `--push` when
+  `[push] enabled = true`, like the daemon; refuses while a live daemon holds
+  `.kaptaind/daemon.pid` unless `--force`.
+- **`kaptaind ready [--for analyze|commit|push] [--json]`** — read-only, one
+  pass over all twelve mutation gates (`operation_mode`, `execution_trust`,
+  `test_hook`, `push_enabled`, `network_push`, `protected_branch`,
+  `startup_guard`, `version_baseline`, `kaptaind_dir_writable`,
+  `nested_git_root`, `suspended`, `daemon_running`), each reported as
+  `pass`/`block`/`warn`/`info`/`n/a` with its exact fix. Exits 0 ready, 4
+  not. Gate refusals elsewhere now end with
+  "run 'kaptaind ready' for every blocker".
+- **Agent skill** `skills/kaptaind/SKILL.md`, installed by `install.sh` to
+  `~/.agents/skills/kaptaind/SKILL.md` (opt out with `KAPTAIND_SKIP_SKILL=1`).
+  `tests/skill_commands.rs` checks every subcommand it documents parses.
+- **`kaptaind status --json`** reports `alive` (pid file + process running)
+  separately from `last_outcome` (`committed|skipped|failed|suspended|null`),
+  with `last_outcome_at`, `last_decision`, `last_error`, `worktree_version`
+  (on-disk `VERSION`), `suspended`, the lifecycle fields (`version` is the
+  `VERSION` committed at HEAD), and `lifecycle_error`. Human output gains
+  Liveness and Last result lines.
+- **Decision log detail**: `.kaptaind/decisions.jsonl` records gain optional
+  `exit_code`, `output_tail` (≤40 lines, stdout then stderr) and
+  `missing_program`; a test program that cannot be found (sh exit 127 /
+  ENOENT) is the new outcome `test_hook_not_found` (still blocks a required
+  hook). `kaptaind explain` shows them.
+- **`kaptaind doctor` `binary_shadowing` warning** for `kaptaind`/`kaptaind-cli`
+  executables with differing versions or a standalone `kaptaind-cli`.
+
+### Changed
+- **`kaptaind logs`** accepts `--tail N` / `--lines N` / `-n N` and
+  `logs tail [N] [-n|--lines N]`; bare `kaptaind logs` tails 50 lines.
+- **`kaptaind-cli` is a deprecation shim** installed by `install.sh`
+  (`scripts/kaptaind-cli`): it prints a deprecation line to stderr and execs
+  `kaptaind`, replacing stale standalone binaries (opt out with
+  `KAPTAIND_SKIP_SHIM=1`). Removal is planned for 11.0.
+
+### Fixed
+- A successful commit now clears a previous `Failed` daemon state in
+  `status.json`.
 
 ## [10.4.0] — 2026-09-18
 

@@ -21,6 +21,17 @@ pub enum LogsAction {
     Grep { pattern: String },
 }
 
+/// Default number of lines shown by `kaptaind logs tail` / `kaptaind logs`.
+pub const DEFAULT_TAIL_LINES: usize = 50;
+
+/// Resolve the effective tail count from the accepted spellings:
+/// a positional `N` (`logs tail 80`) or a flag (`-n 80`, `--lines 80`,
+/// `--n 80`, or the `logs --tail 80` shorthand). Clap rejects supplying both
+/// on `logs tail`; if both somehow arrive, the positional wins.
+pub fn resolve_tail_count(positional: Option<usize>, flag: Option<usize>) -> usize {
+    positional.or(flag).unwrap_or(DEFAULT_TAIL_LINES)
+}
+
 pub fn handle_logs(config: &Config, action: &LogsAction, format: &str) -> anyhow::Result<()> {
     let kd = config.repo_path.join(".kaptaind");
     let mut lines = read_source(&kd.join("daemon.out"), "out");
@@ -89,5 +100,32 @@ fn print_human(lines: &[LogLine]) {
             "out".bright_black().to_string()
         };
         println!("{} {}", format!("[{tag}]").dimmed(), l.line);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_tail_count_prefers_positional_then_flag_then_default() {
+        assert_eq!(resolve_tail_count(Some(80), None), 80);
+        assert_eq!(resolve_tail_count(None, Some(12)), 12);
+        assert_eq!(resolve_tail_count(Some(3), Some(9)), 3);
+        assert_eq!(resolve_tail_count(None, None), DEFAULT_TAIL_LINES);
+    }
+
+    #[test]
+    fn tail_keeps_last_n_lines() {
+        let lines: Vec<LogLine> = (0..5)
+            .map(|i| LogLine {
+                source: "out".into(),
+                line: format!("l{i}"),
+            })
+            .collect();
+        let out = tail(lines, 2);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].line, "l3");
+        assert_eq!(out[1].line, "l4");
     }
 }

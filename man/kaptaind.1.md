@@ -20,7 +20,7 @@
 
 **kaptaind** is a self-governing release companion that watches a repository for filesystem changes, clusters related events, analyzes the change set across structural, API, dependency, runtime, and bundle dimensions, computes a semantic-version bump, writes the **VERSION** file, persists analysis artifacts, creates a git commit, and optionally pushes.
 
-Run **kaptaind** with no arguments (or **--daemon**) to run the watcher — in the foreground to see logs directly, or detached under the project's **.kaptaind/** directory. Run **kaptaind** with a subcommand (*COMMAND*) for one-off visibility into the daemon's state, dry-run analyses, Aim-of-Change session management, release qualification and shipping, and storage/high-availability tasks — all without requiring the daemon to be running. Both surfaces are one binary; there is no separate `kaptaind-cli` executable.
+Run **kaptaind** with no arguments (or **--daemon**) to run the watcher — in the foreground to see logs directly, or detached under the project's **.kaptaind/** directory. Run **kaptaind** with a subcommand (*COMMAND*) for one-off visibility into the daemon's state, dry-run analyses, Aim-of-Change session management, release qualification and shipping, and storage/high-availability tasks — all without requiring the daemon to be running. Both surfaces are one binary. Since 10.4.0, `kaptaind-cli` is only a deprecation shim installed by *install.sh*: it prints a deprecation line to stderr and execs **kaptaind** with the same arguments; it is planned for removal in 11.0.
 
 Most subcommands read **./kaptaind.toml** to determine repository paths and settings. Use **--repo** to override the repository path for a single invocation.
 
@@ -79,13 +79,100 @@ These apply to bare **kaptaind** invocations (no subcommand) — running the wat
 
 ## status
 
-**kaptaind status**
+**kaptaind status** [**--json**]
 
-Show current daemon health, version, and recent errors. Reports the daemon state (Idle, Clustering, Testing, Committing, Failed), installed binary locations, and current version.
+Show current daemon health, version, and recent errors. Reports the daemon state (Idle, Clustering, Testing, Committing, Failed), installed binary locations, and current version. Reads the daemon PID file, *.kaptaind/status.json*, and *.kaptaind/decisions.jsonl*. Liveness is reported separately from the last pipeline result: the human output has a **Liveness** line and a **Last result** line. A successful commit clears a previous Failed state.
+
+**--json**
+:   Emit one JSON object: **alive** (pid file present and process running), **last_outcome** (**committed**, **skipped**, **failed**, **suspended**, or null), **last_outcome_at**, **last_decision**, **last_error**, **worktree_version** (**VERSION** on disk, uncommitted edits included), **suspended**, plus the lifecycle state fields, including **version** (**VERSION** committed at HEAD), or **lifecycle_error** when they cannot be read.
 
 Example:
 
     kaptaind status
+    kaptaind status --json
+
+## commit
+
+**kaptaind commit** [**--paths** *PATH*...] [**--push**] [**--force**] [**--skip-tests** *REASON*] [**--json**]
+
+Run exactly one transaction over the current pending changes through the daemon's own pipeline — suspend gate, test hook, diff analysis, version bump and **VERSION** writeback, commit — then exit. Use this instead of backgrounding the daemon, or falling back to plain git, when a single kaptaind-versioned commit is wanted (for example from an agent or a script).
+
+**--paths** *PATH*...
+:   Restrict the cluster and staging to these files or directories (plus version files). Other dirty files stay unstaged.
+
+**--push**
+:   Push after a successful commit via the configured push orchestrator (protected branches, pre-push hooks, CI gating, retry). Requires **[push] enabled = true** and **[capabilities] network_push = true**; a disabled push is reported, never silently skipped. With **[push] enabled = true** the commit is pushed even without **--push** (daemon behaviour), never twice.
+
+**--skip-tests** *REASON*
+:   Bypass the test hook for this transaction only. The reason is mandatory; it is appended to the decision reason as **; tests skipped:** *REASON* and added as a **Kaptaind-Skipped-Tests:** *REASON* commit trailer.
+
+**--force**
+:   Run even while a live daemon holds *.kaptaind/daemon.pid* for this repository (otherwise refused with outcome **daemon_running**).
+
+**--json**
+:   Print one JSON object instead of human output:
+
+        {"outcome":"commit","version_before":"1.2.0","version_after":"1.3.0",
+         "commit":"<sha>","push":{"status":"ok|disabled|refused|failed|skipped",
+         "detail":"..."},"reason":"committed","cluster_id":"<uuid>",
+         "paths":["src/lib.rs"],"skipped_tests":null}
+
+    **outcome** is the decision code recorded in *.kaptaind/decisions.jsonl* (see **kaptaind explain**), or **daemon_running** / **untrusted** for pre-flight refusals. **push.status** **skipped** means no commit was created.
+
+Requires **[operation] mode = "actuate"** and **[trust] execution = "trusted"** like the daemon; in observe mode the **observed** decision is recorded and the command exits 4. Runs the same first-run **VERSION** bootstrap as daemon startup. Unlike the daemon it ignores **[daemon] startup_guard** and the **min_commit_interval** rate limit. Exit status: **0** committed (and any requested push succeeded); **1** error (commit failed, version write failed, push failed, ...); **3** nothing to commit (clean tree, below threshold / **no_bump**, nothing staged); **4** refused by a gate (daemon running, untrusted config, suspended, observe mode, test failed, baseline unresolvable, version mismatch, policy block, pre-commit hook failed, push disabled with **--push**, or push refused).
+
+Examples:
+
+    kaptaind commit
+    kaptaind commit --push --json
+    kaptaind commit --paths src/parser.rs docs/ --push
+    kaptaind commit --skip-tests "CI flake tracked in #123"
+
+## ready
+
+**kaptaind ready** [**--for** **analyze**|**commit**|**push**] [**--json**]
+
+Evaluate every gate that can stop kaptaind from analyzing, committing, or pushing, in one read-only pass (nothing is created, cleaned up, or written), and print each gate's state — **pass**, **block**, **warn**, **info**, or **n/a** — with the exact *kaptaind.toml* key or command that fixes it. Gates: **operation_mode**, **execution_trust**, **test_hook**, **push_enabled**, **network_push**, **protected_branch**, **startup_guard**, **version_baseline**, **kaptaind_dir_writable**, **nested_git_root**, **suspended**, **daemon_running**. Gate refusals elsewhere end with "run 'kaptaind ready' for every blocker".
+
+**--for** *PURPOSE*
+:   What you intend to do: **analyze**, **commit** (default), or **push**.
+
+**--json**
+:   Emit **{"for","ready","gates":[{"id","state","detail","fix"}]}**.
+
+Exits 0 when no gate required by **--for** blocks, 4 otherwise.
+
+Examples:
+
+    kaptaind ready
+    kaptaind ready --for push
+    kaptaind ready --for analyze --json
+
+## explain
+
+**kaptaind explain** [**--last** *N*]
+
+Show the last *N* (default 10) cluster decisions from *.kaptaind/decisions.jsonl*, commits and skips alike. Skip decisions name the threshold that was not met and the achieved score. Test-hook decisions also show the optional **exit_code**, **output_tail** (at most the last 40 lines, stdout then stderr), and **missing_program** fields. A test command whose program cannot be found (sh exit 127 / ENOENT) is recorded as **test_hook_not_found**; a required hook still blocks the commit.
+
+## logs
+
+**kaptaind logs** [**--tail**|**--lines**|**-n** *N*] [**tail** [*N*] [**-n**|**--lines** *N*] | **errors** | **grep** *REGEX*] [**--format** **text**|**json**]
+
+Inspect the daemon's text logs (*.kaptaind/daemon.out*, *.kaptaind/daemon.err*). Bare **kaptaind logs** tails the last 50 lines; **errors** shows ERROR/WARN lines; **grep** filters by a regex.
+
+Examples:
+
+    kaptaind logs
+    kaptaind logs tail 80
+    kaptaind logs --tail 80
+    kaptaind logs errors
+    kaptaind logs grep "commit" --format json
+
+## doctor
+
+**kaptaind doctor** [**--format** **text**|**json**]
+
+Capture a host profile, check inotify limits against the repo-size tier table, verify tool availability, and report migration findings. The **binary_shadowing** warning fires when the **kaptaind** / **kaptaind-cli** executables on PATH report differing versions, or when a **kaptaind-cli** is a standalone binary rather than the deprecation shim; fix with **type -a kaptaind kaptaind-cli**, remove the stale copies, and re-run *install.sh*.
 
 ## validate
 
@@ -326,6 +413,44 @@ ignored.
 Example:
 
     kaptaind trawl --path ~/projects --type rust,go --dry-run
+
+## data
+
+Build the observation corpus that a later specialist model can learn from. These commands do not train a model and do not check out historical commits.
+
+**kaptaind data census** [**--org** *ORG*] [**--root** *PATH*] [**--max-depth** *N*] [**--format** *text|json*]
+
+Count repositories and commits. Explicitly labelled commits, Kaptaind-era commits, and recoverable analyses are three different totals. **--org** asks the GitHub CLI for the organisation inventory and marks repositories that are not cloned locally; it does not clone them. A local repository is first-party only when its organisation was requested or `.kaptaind/training-permission` says so. Anything else is `evaluation_only`.
+
+**kaptaind data extract** [**--include-weak**] [**--horizon** *N*] [**--limit** *N*] [**--org** *ORG*]
+
+Write `.kaptaind/corpus/observations.jsonl`. One commit can produce several observations. A commit-level label is not treated as ground truth for a symbol that the structural diff classifies differently. Root **VERSION**, paths under **.kaptaind/**, and build trees (**target/**, **dist/**, **node_modules/**) are bookkeeping: they are kept when they are the commit diff, and they are not training-eligible. **--include-weak** admits conventional-commit guesses at confidence 0.50. Later commits can dispute an under-stated label.
+
+**kaptaind data validate**
+
+Drop unknown labels into `.kaptaind/corpus/validated.jsonl`.
+
+**kaptaind data dedupe** [**--cutoff** *DATE*] [**--repo-holdout** *RATIO*] [**--pattern-holdout** *KIND*] [**--language-holdout** *LANG*]
+
+Cluster identical normalised diffs before assigning temporal, repository, pattern, and language partitions. A cluster is never split across train and test.
+
+**kaptaind data stats** [**--with-census**]
+
+Print corpus size, class counts, the dataset score (KDS), and whether the validated volume meets the KAPTAIND-SLM/0 gate (50,000 high-confidence deduplicated observations).
+
+## dataset
+
+**kaptaind dataset build** [**--version** *VERSION*] [**--cutoff** *DATE*]
+
+Write `.kaptaind/corpus/manifest.json` for the deduplicated observations. The corpus name is `kaptaind-corpus-<version>`. Rebuilding the same name with a different checksum is refused.
+
+**kaptaind dataset inspect**
+
+Print the manifest.
+
+**kaptaind dataset export --out** *DIR*
+
+Copy the manifest and `deduped.jsonl` to *DIR*.
 
 ## trace
 
@@ -769,6 +894,15 @@ Examples:
 *.kaptaind/*
 :   Runtime directory for analysis artifacts, status, telemetry, traces, Aim-of-Change manifests, bundle metadata, and daemon logs/PID files.
 
+*.kaptaind/decisions.jsonl*
+:   Append-only per-cluster decision log, read by **kaptaind explain** and **kaptaind status**.
+
+*.kaptaind/daemon.pid*
+:   PID of a running daemon. **kaptaind commit** refuses while it is held by a live process unless **--force** is given.
+
+*~/.agents/skills/kaptaind/SKILL.md*
+:   Agent skill installed by *install.sh* from *skills/kaptaind/SKILL.md* (skip with **KAPTAIND_SKIP_SKILL=1**).
+
 *VERSION*
 :   Authoritative semantic version for the repository. When missing at daemon startup, **[versioning].bootstrap** decides: **initialize** (default) writes it from the highest semver git tag, else **[versioning].initial_version** (default **0.1.0**), and only in actuate mode; **refuse** blocks startup until it exists.
 
@@ -780,6 +914,9 @@ Examples:
 **KAPTAIND_CONFIG**
 :   Path to the configuration file. Equivalent to **--config**. If unset, **kaptaind** looks for **./kaptaind.toml**.
 
+**KAPTAIND_SKIP_SKILL**, **KAPTAIND_SKIP_SHIM**
+:   Read by *install.sh*: set to **1** to skip installing the agent skill or the `kaptaind-cli` deprecation shim.
+
 **RUST_LOG**
 :   Set the tracing log level, e.g. **debug**, **info**, **warn**, or **error**. Default is **info**.
 
@@ -790,6 +927,8 @@ Examples:
 
 **1**
 :   General error, such as a missing configuration file, invalid config, permission failure, or command/startup failure.
+
+**kaptaind commit** exits **3** when there is nothing to commit and **4** when a gate refuses the transaction; **kaptaind ready** exits **4** when a required gate blocks.
 
 Pull-specific stable exit statuses are **2** invalid invocation, **3** unsafe
 repository state, **4** remote unavailable, **5** authentication/authorization
@@ -830,6 +969,11 @@ Check daemon health:
 Run a dry-run analysis:
 
     kaptaind analyze
+
+Check every gate, then commit and push once (agents and scripts):
+
+    kaptaind ready --for push
+    kaptaind commit --push --json
 
 Start a feature AoC session:
 

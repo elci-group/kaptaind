@@ -16,6 +16,9 @@ pub mod outcome {
     /// (`[commit] require_bump = false`, D1).
     pub const CHORE_COMMIT: &str = "chore_commit";
     pub const TEST_FAILED: &str = "test_failed";
+    /// The test hook's program could not be found (sh exit 127 or ENOENT
+    /// spawning). Distinct from [`TEST_FAILED`]: no test actually ran.
+    pub const TEST_HOOK_NOT_FOUND: &str = "test_hook_not_found";
     pub const BLOCKED: &str = "blocked";
     pub const VERSION_WRITE_FAILED: &str = "version_write_failed";
     pub const BASELINE_UNRESOLVABLE: &str = "baseline_unresolvable";
@@ -70,10 +73,38 @@ pub struct DecisionRecord {
     /// contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub members_bumped: Option<Vec<String>>,
+    /// Test hook exit code (test-failure decisions only; `None` when the hook
+    /// was killed by a signal or could not be spawned). Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    /// Last lines (at most [`OUTPUT_TAIL_LINES`]) of the test hook's stdout
+    /// followed by its stderr (test-failure decisions only). Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tail: Option<Vec<String>>,
+    /// Program the test hook tried to run but could not find
+    /// ([`outcome::TEST_HOOK_NOT_FOUND`] only). Additive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub missing_program: Option<String>,
     /// Human-readable detail (e.g. error text, blocking rule).
     pub reason: String,
     /// Project-relative paths in the cluster.
     pub paths: Vec<String>,
+}
+
+/// Maximum number of hook output lines kept in [`DecisionRecord::output_tail`].
+pub const OUTPUT_TAIL_LINES: usize = 40;
+
+/// Last [`OUTPUT_TAIL_LINES`] lines of `output`, with trailing blank lines
+/// dropped.
+pub fn output_tail(output: &str) -> Vec<String> {
+    let lines: Vec<&str> = output.lines().collect();
+    let end = lines
+        .iter()
+        .rposition(|l| !l.trim().is_empty())
+        .map(|i| i + 1)
+        .unwrap_or(0);
+    let start = end.saturating_sub(OUTPUT_TAIL_LINES);
+    lines[start..end].iter().map(|l| l.to_string()).collect()
 }
 
 /// Append one JSON line to `.kaptaind/decisions.jsonl`, creating the state
@@ -167,6 +198,42 @@ pub fn render_decisions(records: &[DecisionRecord]) -> String {
         };
         out.push_str(&line);
         out.push('\n');
+        if matches!(
+            record.outcome.as_str(),
+            outcome::TEST_FAILED | outcome::TEST_HOOK_NOT_FOUND
+        ) {
+            out.push_str(&render_test_detail(record));
+        }
+    }
+    out
+}
+
+/// Indented exit code / missing program / output tail for test-hook decisions.
+fn render_test_detail(record: &DecisionRecord) -> String {
+    let mut out = String::new();
+    if let Some(program) = &record.missing_program {
+        out.push_str(&format!("    missing program: {program}\n"));
+    }
+    match record.exit_code {
+        Some(code) => out.push_str(&format!("    exit code: {code}\n")),
+        None if record.output_tail.is_some() => {
+            out.push_str("    exit code: none (signal or spawn failure)\n")
+        }
+        None => {}
+    }
+    if let Some(tail) = &record.output_tail {
+        if tail.is_empty() {
+            out.push_str("    output: (empty)\n");
+        } else {
+            out.push_str(&format!(
+                "    output (last {} line{}):\n",
+                tail.len(),
+                if tail.len() == 1 { "" } else { "s" }
+            ));
+            for line in tail {
+                out.push_str(&format!("      | {line}\n"));
+            }
+        }
     }
     out
 }
@@ -174,8 +241,8 @@ pub fn render_decisions(records: &[DecisionRecord]) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        append_decision, outcome, render_decisions, tail_decisions, DecisionRecord, DecisionScores,
-        DecisionThresholds,
+        append_decision, outcome, output_tail, render_decisions, tail_decisions, DecisionRecord,
+        DecisionScores, DecisionThresholds,
     };
     use chrono::Utc;
     use tempfile::tempdir;
@@ -198,6 +265,9 @@ mod tests {
             bump: None,
             version: None,
             members_bumped: None,
+            exit_code: None,
+            output_tail: None,
+            missing_program: None,
             reason: reason.to_string(),
             paths: vec!["src/main.rs".to_string()],
         }
@@ -294,6 +364,69 @@ mod tests {
             rendered.contains("skip: rate_limited — min interval 10s"),
             "unexpected render: {rendered}"
         );
+    }
+
+    #[test]
+    fn output_tail_keeps_last_40_lines() {
+        let output: String = (1..=100).map(|i| format!("line {i}\n")).collect();
+        let tail = output_tail(&format!("{output}\n\n"));
+        assert_eq!(tail.len(), 40);
+        assert_eq!(tail[0], "line 61");
+        assert_eq!(tail[39], "line 100");
+        assert!(output_tail("").is_empty());
+    }
+
+    #[test]
+    fn test_failure_fields_are_additive_and_rendered() {
+        // Legacy test_failed lines without the new fields still parse.
+        let legacy = r#"{"timestamp":"2026-07-14T00:00:00Z","cluster_id":"c","outcome":"test_failed","thresholds":{"minor":0.6,"patch":0.1},"reason":"boom","paths":[]}"#;
+        let parsed: DecisionRecord = serde_json::from_str(legacy).expect("legacy parses");
+        assert_eq!(parsed.exit_code, None);
+        assert_eq!(parsed.output_tail, None);
+        assert_eq!(parsed.missing_program, None);
+        let json = serde_json::to_string(&parsed).expect("serialize");
+        assert!(!json.contains("exit_code"), "{json}");
+
+        let mut r = record(outcome::TEST_FAILED, "tests failed (exit 101)", None);
+        r.exit_code = Some(101);
+        r.output_tail = Some(vec![
+            "test foo ... FAILED".to_string(),
+            "error: test failed".to_string(),
+        ]);
+        let json = serde_json::to_string(&r).expect("serialize");
+        let back: DecisionRecord = serde_json::from_str(&json).expect("roundtrip");
+        assert_eq!(back.exit_code, Some(101));
+        let rendered = render_decisions(&[back]);
+        assert!(rendered.contains("skip: test_failed — tests failed (exit 101)"));
+        assert!(rendered.contains("    exit code: 101"), "{rendered}");
+        assert!(
+            rendered.contains("    output (last 2 lines):"),
+            "{rendered}"
+        );
+        assert!(
+            rendered.contains("      | error: test failed"),
+            "{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_test_hook_not_found() {
+        let mut r = record(
+            outcome::TEST_HOOK_NOT_FOUND,
+            "test hook program `nextest-x` not found",
+            None,
+        );
+        r.exit_code = Some(127);
+        r.missing_program = Some("nextest-x".to_string());
+        r.output_tail = Some(vec!["sh: 1: nextest-x: not found".to_string()]);
+        let rendered = render_decisions(&[r]);
+        assert!(rendered
+            .contains("skip: test_hook_not_found — test hook program `nextest-x` not found"));
+        assert!(
+            rendered.contains("    missing program: nextest-x"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("    exit code: 127"), "{rendered}");
     }
 
     #[test]

@@ -45,6 +45,17 @@ impl StatusReport {
         self.last_action_time = Utc::now();
     }
 
+    /// Record a successful commit: clears any previous `Failed` state and its
+    /// `last_error` so status never retains a stale failure after a later
+    /// success (AGX-4.2).
+    pub fn set_committed(&mut self, version: Option<String>) {
+        self.set_idle();
+        self.last_error = None;
+        if version.is_some() {
+            self.last_version = version;
+        }
+    }
+
     /// Mark the daemon as failed with an error message.
     pub fn set_failed(&mut self, error: String) {
         self.status = State::Failed;
@@ -135,5 +146,31 @@ mod tests {
         let parsed: StatusReport = serde_json::from_str(&content).expect("parse status");
         assert!(matches!(parsed.status, State::Suspended));
         assert_eq!(parsed.last_error.as_deref(), Some("manual hold"));
+    }
+
+    #[test]
+    fn successful_commit_clears_previous_failure() {
+        let mut report = StatusReport {
+            status: State::Idle,
+            last_version: Some("1.0.0".to_string()),
+            last_action_time: Utc::now(),
+            last_error: None,
+            current_task: None,
+            progress_percent: None,
+        };
+        report.set_failed("tests failed: exit 1".to_string());
+        assert!(matches!(report.status, State::Failed));
+
+        report.set_committed(Some("1.0.1".to_string()));
+        assert!(matches!(report.status, State::Idle));
+        assert_eq!(report.last_error, None, "stale failure must be cleared");
+        assert_eq!(report.last_version.as_deref(), Some("1.0.1"));
+
+        // A chore (no-bump) commit also clears the failure but keeps the version.
+        report.set_failed("boom".to_string());
+        report.set_committed(None);
+        assert!(matches!(report.status, State::Idle));
+        assert_eq!(report.last_error, None);
+        assert_eq!(report.last_version.as_deref(), Some("1.0.1"));
     }
 }

@@ -76,9 +76,10 @@ REPOSITORY MUTATION:
         [operation]
         mode = "actuate"
     Pushing additionally needs [push] enabled = true and
-    [capabilities] network_push = true. `kaptaind validate` does not
-    currently flag observe-only repos; check `kaptaind explain` or
-    `.kaptaind/decisions.jsonl` for `"outcome":"observed"` if commits stop
+    [capabilities] network_push = true. `kaptaind validate` only checks
+    that the config parses; run `kaptaind ready` (or `ready --for push`)
+    to see every gate that blocks a commit or push, with its fix, and
+    `kaptaind explain` for `"outcome":"observed"` decisions if commits stop
     appearing. See CHANGELOG.md [10.2.0] and [10.1.4].
 
 DAEMON MODE:
@@ -199,15 +200,20 @@ Usage:
 
 Options:
     -r, --repo <PATH>    Operate on the specified repository
+        --json           Emit JSON (alive, last_outcome, last_error, ...)
 
 Examples:
     kaptaind status
+    kaptaind status --json
     kaptaind status --repo /path/to/project
 
 Notes:
-    Reads the daemon PID file and .kaptaind/status.json in the repository."#)]
+    Reads the daemon PID file, .kaptaind/status.json and
+    .kaptaind/decisions.jsonl. Liveness (pid file present and process
+    running) is reported separately from the last pipeline outcome."#)]
     Status {
-        /// Emit machine-readable lifecycle state.
+        /// Emit machine-readable JSON: daemon liveness (`alive`) separately
+        /// from the last pipeline result (`last_outcome`), plus lifecycle state.
         #[arg(long)]
         json: bool,
     },
@@ -251,6 +257,81 @@ changing the local branch, index, worktree, or commit history."#)]
         recover: bool,
         #[arg(long)]
         verbose: bool,
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// ⚓ Commit pending changes once through the daemon pipeline, then exit
+    #[command(long_about = r#"Purpose:
+    Run exactly ONE transaction over the current pending changes through the
+    daemon's own pipeline — suspend gate, test hook, diff analysis, version
+    bump + VERSION writeback, commit — then exit. Use this instead of
+    backgrounding the daemon (or falling back to plain git) when you want a
+    single kaptaind-versioned commit, e.g. from an agent or a script.
+
+Usage:
+    kaptaind commit [OPTIONS]
+
+Options:
+    --paths <PATH>...      Restrict the cluster AND staging to these files or
+                           directories (plus version files). Other dirty files
+                           stay unstaged.
+    --push                 Push after a successful commit via the configured
+                           push orchestrator (protected branches, pre-push
+                           hooks, CI gating, retry). Requires [push] enabled =
+                           true and [capabilities] network_push = true; a
+                           disabled push is reported, never silently skipped.
+                           With [push] enabled = true the commit is pushed even
+                           without --push (daemon behaviour), never twice.
+    --skip-tests <REASON>  Bypass the test hook for this transaction only. The
+                           reason is mandatory; it is recorded in the decision
+                           log and added as a `Kaptaind-Skipped-Tests: <reason>`
+                           commit trailer.
+    --force                Run even while a live daemon holds
+                           .kaptaind/daemon.pid for this repository.
+    --json                 Print one JSON object instead of human output.
+
+Exit codes:
+    0  committed (and any requested push succeeded)
+    1  error (commit failed, version write failed, push failed, ...)
+    3  nothing to commit: clean tree, below threshold (no_bump), nothing staged
+    4  refused by a gate: daemon running, untrusted config, suspended, observe
+       mode, test failed, baseline unresolvable, version mismatch, policy
+       block, pre-commit hook failed, push disabled (with --push) or refused
+
+JSON output:
+    {"outcome":"commit","version_before":"1.2.0","version_after":"1.3.0",
+     "commit":"<sha>","push":{"status":"ok|disabled|refused|failed|skipped",
+     "detail":"..."},"reason":"committed","cluster_id":"<uuid>",
+     "paths":["src/lib.rs"],"skipped_tests":null}
+    `outcome` is the decision code recorded in .kaptaind/decisions.jsonl
+    (see `kaptaind explain`), or daemon_running / untrusted for pre-flight
+    refusals. push.status "skipped" means no commit was created.
+
+Examples:
+    kaptaind commit
+    kaptaind commit --push --json
+    kaptaind commit --paths src/parser.rs docs/ --push
+    kaptaind commit --skip-tests "CI flake tracked in #123"
+
+Notes:
+    Requires [operation] mode = "actuate" and [trust] execution = "trusted"
+    like the daemon; in observe mode the decision is recorded and the command
+    exits 4. Runs the same first-run VERSION bootstrap as daemon startup."#)]
+    Commit {
+        /// Restrict the cluster and staging to these paths.
+        #[arg(long, value_name = "PATH", num_args = 1..)]
+        paths: Vec<std::path::PathBuf>,
+        /// Push after a successful commit.
+        #[arg(long)]
+        push: bool,
+        /// Run even while a live daemon holds the repository's pid file.
+        #[arg(long)]
+        force: bool,
+        /// Bypass the test hook for this transaction (reason required).
+        #[arg(long, value_name = "REASON")]
+        skip_tests: Option<String>,
+        /// Emit one machine-readable JSON object.
         #[arg(long)]
         json: bool,
     },
@@ -823,6 +904,14 @@ Examples:
     )]
     Vacs(VacsCommand),
 
+    /// Census and extract the Kaptaind observation corpus.
+    #[command(subcommand)]
+    Data(commands::data::DataCommand),
+
+    /// Build, inspect, or export an immutable observation corpus.
+    #[command(subcommand)]
+    Dataset(commands::data::DatasetCommand),
+
     /// 🧹 Workspace storage management
     #[command(
         subcommand,
@@ -908,6 +997,40 @@ Notes:
 Relevant config sections: [ship], [ship.stable], [ship.nightly], [ship.channels]."#
     )]
     Ship(ShipCommand),
+
+    /// 🚦 Check every mutation gate at once and print the exact fix for each
+    #[command(long_about = r#"Purpose:
+    Evaluate every gate that can stop kaptaind from analyzing, committing, or
+    pushing — in one pass — and print each gate's state (pass / block / warn /
+    info / n/a) with the precise kaptaind.toml key or command that fixes it.
+    Read-only: nothing is created, cleaned up, or written.
+
+Usage:
+    kaptaind ready [OPTIONS]
+
+Options:
+    --for <PURPOSE>      analyze, commit (default), or push.
+    --json               Emit {"for","ready","gates":[{"id","state","detail","fix"}]}.
+    -r, --repo <PATH>    Operate on the specified repository
+
+Examples:
+    kaptaind ready
+    kaptaind ready --for push
+    kaptaind ready --for analyze --json
+
+Notes:
+    Gates: operation_mode, execution_trust, test_hook, push_enabled,
+    network_push, protected_branch, startup_guard, version_baseline,
+    kaptaind_dir_writable, nested_git_root, suspended, daemon_running.
+    Exits 0 when no gate required by --for blocks, 4 otherwise."#)]
+    Ready {
+        /// What you intend to do: analyze, commit (default), or push.
+        #[arg(long = "for", value_name = "PURPOSE", default_value = "commit", value_parser = ["analyze", "commit", "push"])]
+        purpose: String,
+        /// Emit machine-readable JSON.
+        #[arg(long)]
+        json: bool,
+    },
 
     /// 🩺 Capture a host profile and recommend a repo-size tier
     #[command(long_about = r#"Purpose:
@@ -1013,24 +1136,27 @@ Notes:
 
     /// 📜 Inspect daemon logs (.kaptaind/daemon.out, daemon.err)
     #[command(
-        subcommand,
+        args_conflicts_with_subcommands = true,
         long_about = r#"Purpose:
     Tail, filter errors, or grep the daemon's text logs.
 
 Usage:
-    kaptaind logs <SUBCOMMAND>
+    kaptaind logs [--tail N] [<SUBCOMMAND>]
 
 Subcommands:
-    tail     Show the last N lines
+    tail     Show the last N lines (default when no subcommand is given)
     errors   Show ERROR/WARN lines
     grep     Filter lines by a regex
 
 Examples:
-    kaptaind logs tail -n 50
+    kaptaind logs tail 80
+    kaptaind logs tail -n 80
+    kaptaind logs tail --lines 80
+    kaptaind logs --tail 80
     kaptaind logs errors
     kaptaind logs grep "commit" --format json"#
     )]
-    Logs(LogsCommand),
+    Logs(LogsArgs),
 
     /// 🔐 Inspect the compliance audit trail (.kaptaind/audit.jsonl)
     #[command(
@@ -2375,13 +2501,36 @@ Examples:
     },
 }
 
+/// `kaptaind logs` arguments. `--tail N` (aliases `--lines N`, `-n N`) is
+/// shorthand for `kaptaind logs tail N`; with no subcommand, `tail` runs.
+#[derive(clap::Args)]
+struct LogsArgs {
+    #[command(subcommand)]
+    action: Option<LogsCommand>,
+    /// Shorthand for `logs tail N` (also accepted as `--lines N` / `-n N`).
+    #[arg(long = "tail", short = 'n', visible_alias = "lines", value_name = "N")]
+    tail: Option<usize>,
+    /// Output format: text (default) or json.
+    #[arg(short, long, value_name = "FORMAT", default_value = "text")]
+    format: String,
+}
+
 #[derive(Subcommand)]
 enum LogsCommand {
     /// 📜 Show the last N log lines
     Tail {
+        /// Number of lines to show, positionally (`logs tail 80`).
+        #[arg(value_name = "N", conflicts_with = "n")]
+        count: Option<usize>,
         /// Number of lines to show (default: 50).
-        #[arg(short = 'n', long, value_name = "N", default_value_t = 50)]
-        n: usize,
+        #[arg(
+            short = 'n',
+            long = "lines",
+            visible_alias = "n",
+            alias = "tail",
+            value_name = "N"
+        )]
+        n: Option<usize>,
         /// Output format: text (default) or json.
         #[arg(short, long, value_name = "FORMAT", default_value = "text")]
         format: String,
@@ -2401,6 +2550,98 @@ enum LogsCommand {
         #[arg(short, long, value_name = "FORMAT", default_value = "text")]
         format: String,
     },
+}
+
+#[cfg(test)]
+mod logs_cli_tests {
+    use super::*;
+
+    /// Parse argv and return the effective tail count for `kaptaind logs ...`.
+    fn tail_count(argv: &[&str]) -> usize {
+        let cli = Cli::try_parse_from(argv).unwrap_or_else(|e| panic!("{argv:?}: {e}"));
+        match cli.command {
+            Some(Commands::Logs(args)) => match args.action {
+                None => commands::logs::resolve_tail_count(None, args.tail),
+                Some(LogsCommand::Tail { count, n, .. }) => {
+                    commands::logs::resolve_tail_count(count, n)
+                }
+                Some(_) => panic!("{argv:?}: not a tail action"),
+            },
+            _ => panic!("{argv:?}: not a logs command"),
+        }
+    }
+
+    #[test]
+    fn logs_tail_accepts_every_spelling() {
+        assert_eq!(tail_count(&["kaptaind", "logs", "tail"]), 50);
+        assert_eq!(tail_count(&["kaptaind", "logs", "tail", "80"]), 80);
+        assert_eq!(tail_count(&["kaptaind", "logs", "tail", "-n", "80"]), 80);
+        assert_eq!(tail_count(&["kaptaind", "logs", "tail", "-n80"]), 80);
+        assert_eq!(
+            tail_count(&["kaptaind", "logs", "tail", "--lines", "80"]),
+            80
+        );
+        assert_eq!(tail_count(&["kaptaind", "logs", "tail", "--lines=80"]), 80);
+        assert_eq!(tail_count(&["kaptaind", "logs", "tail", "--n", "80"]), 80);
+        assert_eq!(
+            tail_count(&["kaptaind", "logs", "tail", "--tail", "80"]),
+            80
+        );
+    }
+
+    #[test]
+    fn logs_tail_shorthand_on_parent() {
+        assert_eq!(tail_count(&["kaptaind", "logs"]), 50);
+        assert_eq!(tail_count(&["kaptaind", "logs", "--tail", "80"]), 80);
+        assert_eq!(tail_count(&["kaptaind", "logs", "--tail=80"]), 80);
+        assert_eq!(tail_count(&["kaptaind", "logs", "--lines", "80"]), 80);
+        assert_eq!(tail_count(&["kaptaind", "logs", "-n", "80"]), 80);
+    }
+
+    #[test]
+    fn logs_format_flag_works_on_parent_and_tail() {
+        let cli = Cli::try_parse_from(["kaptaind", "logs", "--tail", "5", "--format", "json"])
+            .expect("parent format");
+        match cli.command {
+            Some(Commands::Logs(args)) => assert_eq!(args.format, "json"),
+            _ => panic!("not logs"),
+        }
+        let cli = Cli::try_parse_from(["kaptaind", "logs", "tail", "--lines", "5", "-f", "json"])
+            .expect("tail format");
+        match cli.command {
+            Some(Commands::Logs(LogsArgs {
+                action: Some(LogsCommand::Tail { format, .. }),
+                ..
+            })) => assert_eq!(format, "json"),
+            _ => panic!("not logs tail"),
+        }
+    }
+
+    #[test]
+    fn logs_other_subcommands_still_parse() {
+        let cli = Cli::try_parse_from(["kaptaind", "logs", "errors"]).expect("errors");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Logs(LogsArgs {
+                action: Some(LogsCommand::Errors { .. }),
+                ..
+            }))
+        ));
+        let cli = Cli::try_parse_from(["kaptaind", "logs", "grep", "commit"]).expect("grep");
+        assert!(matches!(
+            cli.command,
+            Some(Commands::Logs(LogsArgs {
+                action: Some(LogsCommand::Grep { .. }),
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn logs_tail_rejects_conflicting_counts() {
+        assert!(Cli::try_parse_from(["kaptaind", "logs", "tail", "80", "-n", "5"]).is_err());
+        assert!(Cli::try_parse_from(["kaptaind", "logs", "--tail", "80", "errors"]).is_err());
+    }
 }
 
 #[derive(Subcommand)]
@@ -2744,7 +2985,8 @@ fn __curly_original_main() -> anyhow::Result<()> {
                     );
                     return Err(anyhow::anyhow!(
                         "startup guard: {} uncommitted path(s) under {} — refusing to start. \
-                         Commit or stash first, or pass --force to override.",
+                         Commit or stash first, or pass --force to override; \
+                         run 'kaptaind ready' for every blocker.",
                         dirty,
                         config.repo_path.display()
                     ));
@@ -2839,11 +3081,7 @@ fn __curly_original_main() -> anyhow::Result<()> {
             match cmd {
         Commands::Status { json } => {
             if *json {
-                let report = kaptaind::lifecycle::status(
-                    &config.repo_path,
-                    kaptaind::lifecycle::Platform::Desktop,
-                )?;
-                println!("{}", serde_json::to_string_pretty(&report)?);
+                commands::status::handle_status_json(&config)?;
             } else {
                 handle_status(&config)?;
             }
@@ -3074,6 +3312,24 @@ fn __curly_original_main() -> anyhow::Result<()> {
                 }
             }
         }
+        Commands::Commit {
+            paths,
+            push,
+            force,
+            skip_tests,
+            json,
+        } => {
+            let code = commands::commit::handle_commit(
+                &config,
+                paths,
+                *push,
+                *force,
+                skip_tests.as_deref(),
+                *json,
+            )
+            .await;
+            std::process::exit(code);
+        }
         Commands::Push {
             remote,
             branch,
@@ -3085,7 +3341,7 @@ fn __curly_original_main() -> anyhow::Result<()> {
             if !(config.push.enabled && config.capabilities.network_push) {
                 let msg = "push is disabled: set [push] enabled = true and \
                     [capabilities] network_push = true in kaptaind.toml to allow \
-                    kaptaind to push commits."
+                    kaptaind to push commits; run 'kaptaind ready' for every blocker."
                     .to_string();
                 if *json {
                     println!(
@@ -3347,6 +3603,9 @@ fn __curly_original_main() -> anyhow::Result<()> {
         Commands::Doctor { format } => {
             handle_doctor(&config, format)?;
         }
+        Commands::Ready { purpose, json } => {
+            handle_ready(&config, purpose, *json)?;
+        }
         Commands::Stress(stress_cmd) => match stress_cmd {
             StressCommand::Run {
                 files,
@@ -3377,13 +3636,24 @@ fn __curly_original_main() -> anyhow::Result<()> {
             };
             handle_report(&config, &opts, format)?;
         }
-        Commands::Logs(logs_cmd) => {
-            let (action, format) = match logs_cmd {
-                LogsCommand::Tail { n, format } => {
-                    (commands::logs::LogsAction::Tail { n: *n }, format)
+        Commands::Logs(logs_args) => {
+            let (action, format) = match &logs_args.action {
+                None => (
+                    commands::logs::LogsAction::Tail {
+                        n: commands::logs::resolve_tail_count(None, logs_args.tail),
+                    },
+                    &logs_args.format,
+                ),
+                Some(LogsCommand::Tail { count, n, format }) => (
+                    commands::logs::LogsAction::Tail {
+                        n: commands::logs::resolve_tail_count(*count, *n),
+                    },
+                    format,
+                ),
+                Some(LogsCommand::Errors { format }) => {
+                    (commands::logs::LogsAction::Errors, format)
                 }
-                LogsCommand::Errors { format } => (commands::logs::LogsAction::Errors, format),
-                LogsCommand::Grep { pattern, format } => (
+                Some(LogsCommand::Grep { pattern, format }) => (
                     commands::logs::LogsAction::Grep {
                         pattern: pattern.clone(),
                     },
@@ -3520,6 +3790,12 @@ fn __curly_original_main() -> anyhow::Result<()> {
         },
         Commands::Vacs(vacs_cmd) => {
             handle_vacs(&config, vacs_cmd)?;
+        }
+        Commands::Data(data_cmd) => {
+            commands::data::handle_data(&config, data_cmd)?;
+        }
+        Commands::Dataset(dataset_cmd) => {
+            commands::data::handle_dataset(&config, dataset_cmd)?;
         }
         Commands::Storage(storage_cmd) => {
             handle_storage(&config, storage_cmd)?;

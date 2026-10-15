@@ -32,9 +32,12 @@
 | `src/diff/lang/` | `adapter.rs` (traits/representation), `registry.rs` (path→adapter resolution), `adapters/` (concrete adapters), `common.rs` (shared helpers). |
 | `src/weight/` | Weighted score calculation: `s*structural + a*api + d*deps + r*runtime + b*bundle`. |
 | `src/version/` | Semantic bump decision, `semver::Version` mutation, Cargo workspace discovery (`workspace.rs`), and version writeback (`writeback.rs`: `save_version` + `save_workspace_version` behind `[versioning].workspace`, default `root_only`). |
+| `src/version/bootstrap.rs` | First-run version baseline enforcement (`[versioning].bootstrap` / `initial_version`), shared by daemon startup and `kaptaind commit`. |
 | `src/commit/` | Git commit orchestration with configurable staging and optional GPG-signed commits. |
 | `src/push/` | Git push orchestration with retry, safety checks, and required-CI enforcement. |
 | `src/git/` | Thin repository wrapper around `git2`. |
+| `src/daemon/oneshot.rs` | One-shot transaction behind `kaptaind commit`: one cluster through `scheduler::process_cluster_with_options`, optional push, structured report + exit codes (0/1/3/4). |
+| `src/readiness.rs` | Read-only evaluation of the 12 mutation gates behind `kaptaind ready` (`pass`/`block`/`warn`/`info`/`n/a` + fix); `READY_HINT` suffix for refusals. |
 | `src/aoc/` | Aim of Change sessions, traces, agent interception, manifests. |
 | `src/qualification/` | Release qualification gates (stability, streak, cooldown, diff spike). |
 | `src/stability/` | Per-commit stability scoring and flaky-test detection. |
@@ -43,8 +46,11 @@
 | `src/schedule/` | Cron scheduling helpers for daemon-driven automated releases. |
 | `src/trawler/` | Intelligent project discovery and bulk initialization. |
 | `src/vacs/` | Visual Asset Channel Saturation (change-driven diagrams/charts). |
+| `src/data/` | Observation corpus for KAPTAIND-SLM/0: census, KOU schema, extraction, dedupe, KDS. No training. |
 | `src/angler/` | Hook and selective capture system: git hooks, webhooks, selective capture, bait plugins. |
 | `tests/cli_integration.rs` | Integration tests for CLI commands. |
+| `skills/kaptaind/SKILL.md` | Shipped agent skill (installed by `install.sh` to `~/.agents/skills/kaptaind/SKILL.md`); every `kaptaind <subcommand>` in its code blocks is checked by `tests/skill_commands.rs`. |
+| `scripts/kaptaind-cli` | Deprecation shim installed as `kaptaind-cli` (stderr notice, execs `kaptaind`); must match `install.sh`'s embedded copy (`tests/cli_shim.rs`). |
 | `web/` | Kaptaind Pro SaaS website (Next.js + Tailwind + NextAuth + Prisma). |
 
 ## Runtime flow
@@ -92,6 +98,8 @@
   - `.kaptaind/suspend.json` — daemon suspension state (manual or AoC-driven).
   - `.kaptaind/aoc/active.json` — active Aim of Change session.
   - `.kaptaind/aoc/manifests/<id>.json` — shipped AoC session summaries.
+  - `.kaptaind/decisions.jsonl` — append-only per-cluster decision log (`kaptaind explain`, `status`); test-hook records carry optional `exit_code`, `output_tail` (≤40 lines), `missing_program`.
+  - `.kaptaind/daemon.pid` — live daemon pid; `kaptaind commit` refuses while it is held unless `--force`.
 - Environment variables:
   - kaptaind loads an optional `.env` file at startup (daemon and CLI) so provider keys and secrets can stay out of `kaptaind.toml`.
   - TTS provider keys are read from `.env`: `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AZURE_SPEECH_KEY`/`AZURE_SPEECH_REGION`, `GOOGLE_API_KEY`, `CARTESIA_API_KEY`. Local system TTS uses `say` (macOS), `espeak` (Linux), or PowerShell (Windows).
@@ -146,6 +154,19 @@
 cargo run --bin kaptaind -- ship plan   # dry run
 cargo run --bin kaptaind -- ship run    # execute
 ```
+
+### One-shot commit (agents)
+
+```bash
+kaptaind ready --for push        # one read-only pass over all gates; fix every `block`
+kaptaind commit --push --json    # one transaction, then exit
+kaptaind commit --paths src/foo.rs --json   # scope cluster + staging to your files
+```
+
+- Exit codes: `0` committed, `1` error, `3` nothing to commit, `4` refused by a gate.
+- On exit 4 run `kaptaind explain` and `kaptaind status --json`; do not background or kill the daemon, and do not fall back to plain git silently.
+- `--skip-tests "<reason>"` only with explicit user consent; it adds a `Kaptaind-Skipped-Tests:` trailer.
+- Needs `[operation] mode = "actuate"` + `[trust] execution = "trusted"`; refuses while a live daemon holds `.kaptaind/daemon.pid`.
 
 ### Suspend and resume the daemon
 
@@ -215,6 +236,7 @@ RUST_LOG=kaptaind=debug cargo run
   - `src/version/semver.rs`
   - `src/daemon/scheduler.rs`
 - Integration tests in `tests/cli_integration.rs` cover: `status`, `log`, `analyze`, `init` commands.
+- `tests/commit_oneshot.rs` covers `kaptaind commit` (exit codes, JSON, `--paths`, `--skip-tests`, daemon-pid refusal); `tests/cli_shim.rs` keeps `scripts/kaptaind-cli` and `install.sh`'s embedded shim identical; `tests/skill_commands.rs` checks the shipped skill's subcommands parse.
 - Tests use `tempfile` heavily for filesystem-dependent behavior.
 - Async behavior is tested with `#[tokio::test]` in `src/daemon/scheduler.rs`.
 - The scheduler’s test hook runs commands with `sh -lc <command>` and sets the working directory to `repo_path`.
@@ -231,9 +253,10 @@ RUST_LOG=kaptaind=debug cargo run
 - Pre-commit gate is `cargo fmt --all -- --check` and `cargo clippy --all-targets -- -D warnings` (enforced in `.github/workflows/rust.yml`).
 - Supply-chain checks run in `.github/workflows/security-audit.yml`: `cargo audit`, `cargo deny check` (config in `deny.toml`), and `npm audit` for `web/`.
 - The Rust toolchain is pinned via `rust-toolchain.toml` (stable, clippy + rustfmt). Keep code building on stable.
+- Diagnose a stuck or refusing kaptaind with `kaptaind ready`, `kaptaind status --json` (`alive` vs `last_outcome`), and `kaptaind explain` — never by killing or backgrounding the daemon.
 - Do not run the kaptaind daemon against this repository during release work — it dogfood-versions `VERSION` and creates noisy auto-commits. Keep `VERSION`, `Cargo.toml`, `CHANGELOG.md`, and git tags in agreement; tags are cut by CI, not by the daemon.
 - The repo dogfoods `[versioning].workspace = "touched"` (see `docs/planning/WORKSPACE_VERSION_BUMPING_PLAN.md`): a cluster touching only `crates/kaptaind-diff/**` bumps the member manifest, not the root `VERSION`. CI cuts two tag shapes — `vX.Y.Z` (root, drives the release matrix) and `kaptaind-diff-vX.Y.Z` (member, tag only) — each created only when missing.
-- The repo's `kaptaind.toml` sets `[daemon] startup_guard = true`: the daemon refuses to start while the worktree is dirty (accidental starts must not catch-up-commit release work). A deliberate run needs `--force`.
+- `[daemon] startup_guard` (default `false`) makes the daemon refuse to start while the worktree is dirty; a deliberate run needs `--force`. This repo's `kaptaind.toml` does **not** set it (it runs actuate + trusted with push enabled to `desktop/development`), so an accidental daemon start here *will* catch-up-commit in-flight work — hence the rule above. `kaptaind commit` ignores `startup_guard`.
 - `deckhand` is a pinned git dependency (`Cargo.toml`). To hack on it against a sibling checkout, create a local, gitignored `.cargo/config.toml` with `paths = ["../deckhand"]`; bump the `rev` in `Cargo.toml` to ship a newer deckhand.
 
 ## TempCheq

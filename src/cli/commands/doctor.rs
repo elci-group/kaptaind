@@ -188,7 +188,209 @@ fn collect_migration_findings(config: &Config) -> Vec<MigrationFinding> {
     let mut findings =
         detect_migration_findings(config, toml_text.as_deref(), ignore_text.as_deref());
     findings.extend(detect_missing_baseline(config));
+    findings.extend(detect_binary_shadowing(&scan_path_binaries()));
     findings
+}
+
+/// Executable names the PATH scan looks for. `kaptaind-cli` was merged into
+/// `kaptaind` in 10.4.0; installs since then ship it as a deprecation shim.
+const SHADOW_BINARIES: &[&str] = &["kaptaind", "kaptaind-cli"];
+
+/// Marker string the `scripts/kaptaind-cli` shim prints; its presence in the
+/// file identifies the shim (vs. a stale standalone `kaptaind-cli` binary).
+pub const SHIM_MARKER: &str = "kaptaind-cli is deprecated";
+
+/// How long `<bin> --version` may run before the probe gives up.
+const VERSION_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// One `kaptaind`/`kaptaind-cli` executable found on PATH.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PathBinary {
+    /// `kaptaind` or `kaptaind-cli`.
+    pub name: String,
+    pub path: PathBuf,
+    /// Raw first line of `<bin> --version`, if the probe succeeded.
+    pub version: Option<String>,
+    /// True when the file is the `scripts/kaptaind-cli` deprecation shim.
+    pub is_shim: bool,
+}
+
+/// Extract the first semver-looking token (`10.4.0`, `v9.6.6`) from a
+/// `--version` line; falls back to the trimmed line.
+fn normalize_version(raw: &str) -> String {
+    raw.split_whitespace()
+        .map(|t| t.trim_start_matches('v'))
+        .find(|t| semver::Version::parse(t).is_ok())
+        .map(str::to_string)
+        .unwrap_or_else(|| raw.trim().to_string())
+}
+
+/// `binary_shadowing`: pure detection over the PATH scan, in PATH order.
+/// Warns when the `kaptaind`/`kaptaind-cli` executables report differing
+/// versions, and for every `kaptaind-cli` that is a standalone binary rather
+/// than the deprecation shim.
+pub fn detect_binary_shadowing(bins: &[PathBinary]) -> Vec<MigrationFinding> {
+    let mut findings = Vec::new();
+
+    let versioned: Vec<(&PathBinary, String)> = bins
+        .iter()
+        .filter_map(|b| b.version.as_deref().map(|v| (b, normalize_version(v))))
+        .collect();
+    let mut distinct: Vec<&str> = versioned.iter().map(|(_, v)| v.as_str()).collect();
+    distinct.sort_unstable();
+    distinct.dedup();
+    if distinct.len() > 1 {
+        let mut seen_names: Vec<&str> = Vec::new();
+        let listing: Vec<String> = versioned
+            .iter()
+            .map(|(b, v)| {
+                let active = !seen_names.contains(&b.name.as_str());
+                if active {
+                    seen_names.push(b.name.as_str());
+                }
+                format!(
+                    "{}={}{}",
+                    b.path.display(),
+                    v,
+                    if active { " (active)" } else { "" }
+                )
+            })
+            .collect();
+        findings.push(MigrationFinding {
+            check: "binary_shadowing".to_string(),
+            severity: MigrationSeverity::Warn,
+            message: format!(
+                "kaptaind/kaptaind-cli executables on PATH report differing versions: {} — \
+                 agents and scripts may run a stale CLI.",
+                listing.join(", ")
+            ),
+            fix: "Delete the stale copies, then re-run install.sh (it installs kaptaind-cli as a \
+                  shim that execs kaptaind). Check with `type -a kaptaind kaptaind-cli`."
+                .to_string(),
+        });
+    }
+
+    for b in bins
+        .iter()
+        .filter(|b| b.name == "kaptaind-cli" && !b.is_shim)
+    {
+        let version = b
+            .version
+            .as_deref()
+            .map(normalize_version)
+            .unwrap_or_else(|| "unknown".to_string());
+        findings.push(MigrationFinding {
+            check: "binary_shadowing".to_string(),
+            severity: MigrationSeverity::Warn,
+            message: format!(
+                "{} is a standalone kaptaind-cli binary (version {version}), not the deprecation \
+                 shim — kaptaind-cli was merged into kaptaind in 10.4.0.",
+                b.path.display()
+            ),
+            fix: format!(
+                "Re-run install.sh to replace it with the shim, or remove it (`rm {}`) and use \
+                 `kaptaind <cmd>`.",
+                b.path.display()
+            ),
+        });
+    }
+    findings
+}
+
+/// I/O wrapper: find every `kaptaind`/`kaptaind-cli` on PATH (in PATH
+/// order, deduplicated by canonical path), probe `--version` with a short
+/// timeout, and classify `kaptaind-cli` as shim or standalone.
+fn scan_path_binaries() -> Vec<PathBinary> {
+    let Some(path_var) = std::env::var_os("PATH") else {
+        return Vec::new();
+    };
+    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut out = Vec::new();
+    for dir in std::env::split_paths(&path_var) {
+        for name in SHADOW_BINARIES {
+            let candidate = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+            if !is_executable_file(&candidate) {
+                continue;
+            }
+            let canonical = std::fs::canonicalize(&candidate).unwrap_or(candidate.clone());
+            if seen.contains(&canonical) {
+                continue;
+            }
+            seen.push(canonical);
+            out.push(PathBinary {
+                name: (*name).to_string(),
+                version: probe_version(&candidate),
+                is_shim: is_shim_file(&candidate),
+                path: candidate,
+            });
+        }
+    }
+    out
+}
+
+fn is_executable_file(path: &Path) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if !meta.is_file() {
+        return false;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        meta.permissions().mode() & 0o111 != 0
+    }
+    #[cfg(not(unix))]
+    {
+        true
+    }
+}
+
+/// A shim is a small script (`#!`) carrying [`SHIM_MARKER`].
+fn is_shim_file(path: &Path) -> bool {
+    use std::io::Read;
+    let mut buf = Vec::with_capacity(4096);
+    let Ok(file) = std::fs::File::open(path) else {
+        return false;
+    };
+    if file.take(4096).read_to_end(&mut buf).is_err() {
+        return false;
+    }
+    buf.starts_with(b"#!") && String::from_utf8_lossy(&buf).contains(SHIM_MARKER)
+}
+
+/// Run `<bin> --version`, killing it after [`VERSION_PROBE_TIMEOUT`].
+fn probe_version(path: &Path) -> Option<String> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = Command::new(path)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let deadline = std::time::Instant::now() + VERSION_PROBE_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if std::time::Instant::now() < deadline => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    if !status.success() {
+        return None;
+    }
+    let mut text = String::new();
+    child.stdout.take()?.read_to_string(&mut text).ok()?;
+    let line = text.lines().next().unwrap_or("").trim().to_string();
+    Some(line).filter(|s| !s.is_empty())
 }
 
 /// `version_baseline_missing`: no `VERSION` and no root `[package].version`.
@@ -1129,6 +1331,113 @@ fn config_relative(repo: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn bin(name: &str, path: &str, version: Option<&str>, is_shim: bool) -> PathBinary {
+        PathBinary {
+            name: name.to_string(),
+            path: PathBuf::from(path),
+            version: version.map(str::to_string),
+            is_shim,
+        }
+    }
+
+    #[test]
+    fn binary_shadowing_differing_versions_warns() {
+        let bins = [
+            bin(
+                "kaptaind",
+                "/home/u/.local/bin/kaptaind",
+                Some("kaptaind 10.4.0"),
+                false,
+            ),
+            bin(
+                "kaptaind-cli",
+                "/home/u/.local/bin/kaptaind-cli",
+                Some("kaptaind 10.4.0"),
+                true,
+            ),
+            bin(
+                "kaptaind",
+                "/usr/bin/kaptaind",
+                Some("kaptaind v9.6.6"),
+                false,
+            ),
+        ];
+        let f = detect_binary_shadowing(&bins);
+        assert_eq!(f.len(), 1);
+        assert_eq!(f[0].check, "binary_shadowing");
+        assert_eq!(f[0].severity, MigrationSeverity::Warn);
+        assert!(f[0]
+            .message
+            .contains("/home/u/.local/bin/kaptaind=10.4.0 (active)"));
+        assert!(f[0].message.contains("/usr/bin/kaptaind=9.6.6"));
+        assert!(!f[0].message.contains("/usr/bin/kaptaind=9.6.6 (active)"));
+    }
+
+    #[test]
+    fn binary_shadowing_standalone_cli_warns() {
+        let bins = [
+            bin("kaptaind", "/b/kaptaind", Some("kaptaind 10.4.0"), false),
+            bin(
+                "kaptaind-cli",
+                "/b/kaptaind-cli",
+                Some("kaptaind-cli 10.3.3"),
+                false,
+            ),
+        ];
+        let f = detect_binary_shadowing(&bins);
+        assert_eq!(f.len(), 2, "{f:?}");
+        assert!(f.iter().all(|x| x.check == "binary_shadowing"));
+        assert!(f[1].message.contains("/b/kaptaind-cli is a standalone"));
+        assert!(f[1].message.contains("10.3.3"));
+    }
+
+    #[test]
+    fn binary_shadowing_standalone_cli_same_version_still_warns() {
+        let bins = [
+            bin("kaptaind", "/b/kaptaind", Some("kaptaind 10.4.0"), false),
+            bin("kaptaind-cli", "/b/kaptaind-cli", None, false),
+        ];
+        let f = detect_binary_shadowing(&bins);
+        assert_eq!(f.len(), 1);
+        assert!(f[0].message.contains("version unknown"));
+    }
+
+    #[test]
+    fn binary_shadowing_clean_install_no_finding() {
+        let bins = [
+            bin("kaptaind", "/b/kaptaind", Some("kaptaind 10.4.0"), false),
+            bin(
+                "kaptaind-cli",
+                "/b/kaptaind-cli",
+                Some("kaptaind 10.4.0"),
+                true,
+            ),
+            bin("kaptaind", "/c/kaptaind", None, false),
+        ];
+        assert!(detect_binary_shadowing(&bins).is_empty());
+        assert!(detect_binary_shadowing(&[]).is_empty());
+    }
+
+    #[test]
+    fn shim_file_detection_matches_repo_script() {
+        let shim = Path::new(env!("CARGO_MANIFEST_DIR")).join("scripts/kaptaind-cli");
+        assert!(
+            is_shim_file(&shim),
+            "scripts/kaptaind-cli must carry SHIM_MARKER"
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let fake = dir.path().join("kaptaind-cli");
+        std::fs::write(&fake, b"\x7fELF not a shim").unwrap();
+        assert!(!is_shim_file(&fake));
+    }
+
+    #[test]
+    fn normalize_version_extracts_semver() {
+        assert_eq!(normalize_version("kaptaind 10.4.0"), "10.4.0");
+        assert_eq!(normalize_version("kaptaind-cli v9.6.6"), "9.6.6");
+        assert_eq!(normalize_version("weird"), "weird");
+    }
 
     fn findings(toml_text: Option<&str>, ignore_text: Option<&str>) -> Vec<MigrationFinding> {
         detect_migration_findings(&Config::default(), toml_text, ignore_text)

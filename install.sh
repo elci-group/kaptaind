@@ -22,6 +22,14 @@
 #   --build-only            (build-from-source) Build but don't install
 #   --debug                 (build-from-source) Build debug binary instead of release
 #   --help                  Show this help message
+#
+# Also installs `kaptaind-cli` as a deprecation shim that execs `kaptaind`
+# (replacing any stale standalone kaptaind-cli binary in the install dir), and,
+# when available, the agent skill to ~/.agents/skills/kaptaind/SKILL.md.
+#
+# Environment:
+#   KAPTAIND_SKIP_SKILL=1   Do not install the agent skill (SKILL.md)
+#   KAPTAIND_SKIP_SHIM=1    Do not install the kaptaind-cli deprecation shim
 
 set -euo pipefail
 
@@ -47,6 +55,14 @@ RELEASES_API="https://api.github.com/repos/${GITHUB_REPO}/releases"
 DOWNLOAD_BASE="https://github.com/${GITHUB_REPO}/releases/download"
 TEMP_DIR=""
 SRC_DIR=""   # directory holding the binaries to install (downloaded or built)
+SKILL_DIR="${HOME}/.agents/skills/kaptaind"
+
+# Directory holding this script when run from a checkout (empty when piped
+# from curl). Resolved before any `cd`.
+SCRIPT_DIR=""
+if [[ -n "${BASH_SOURCE[0]:-}" && -f "${BASH_SOURCE[0]}" ]]; then
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+fi
 
 # TLS-restricted curl (HTTPS only, TLS >= 1.2).
 CURL=(curl -fsSL --proto '=https' --tlsv1.2)
@@ -84,7 +100,7 @@ print_header() {
 
 # Show help
 show_help() {
-    sed -n '2,28p' "$0" | sed 's/^# //'
+    sed -n '2,32p' "$0" | sed -e 's/^# //' -e 's/^#$//'
     exit 0
 }
 
@@ -431,6 +447,93 @@ install_binaries() {
     done
 }
 
+# Print the kaptaind-cli deprecation shim. Must stay byte-identical to
+# scripts/kaptaind-cli (enforced by tests/cli_shim.rs); used when the repo
+# copy is not available (e.g. `curl ... | bash`).
+# BEGIN KAPTAIND-CLI SHIM
+emit_cli_shim() {
+    cat << 'SHIM'
+#!/bin/sh
+# kaptaind-cli — deprecation shim.
+#
+# The standalone `kaptaind-cli` binary was merged into `kaptaind` in 10.4.0.
+# install.sh installs this shim in its place so old scripts, skills, and agent
+# prompts keep working: it prints one deprecation line to stderr and execs
+# `kaptaind` with the original arguments. `kaptaind doctor` recognises this
+# file by the marker string below and flags any non-shim kaptaind-cli.
+echo "kaptaind-cli is deprecated; use kaptaind <cmd>" >&2
+exec kaptaind "$@"
+SHIM
+}
+# END KAPTAIND-CLI SHIM
+
+# Find a repo-provided file among the source build, the unpacked release,
+# and the checkout this script runs from. Prints the first match.
+find_repo_file() {
+    local rel="$1" base
+    for base in "$TEMP_DIR" "$SRC_DIR" "$SCRIPT_DIR"; do
+        if [[ -n "$base" && -f "$base/$rel" ]]; then
+            echo "$base/$rel"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Install kaptaind-cli as a shim that execs kaptaind, replacing (not sitting
+# beside) any standalone kaptaind-cli binary left from <= 10.3.x.
+install_cli_shim() {
+    if [[ "${KAPTAIND_SKIP_SHIM:-0}" == "1" ]]; then
+        print_info "KAPTAIND_SKIP_SHIM=1: not installing the kaptaind-cli shim"
+        return
+    fi
+    if [[ "$(detect_os)" == "windows" ]]; then
+        print_info "Skipping kaptaind-cli shim on Windows; use kaptaind directly"
+        return
+    fi
+
+    local dest="$INSTALL_DIR/kaptaind-cli"
+    local tmp
+    tmp=$(mktemp)
+    local src
+    if src=$(find_repo_file "scripts/kaptaind-cli"); then
+        cp "$src" "$tmp"
+    else
+        emit_cli_shim > "$tmp"
+    fi
+    chmod 755 "$tmp"
+
+    if [[ -e "$dest" ]] && ! grep -q "kaptaind-cli is deprecated" "$dest" 2>/dev/null; then
+        print_warning "Replacing standalone kaptaind-cli binary at $dest with the deprecation shim"
+    fi
+
+    # mv -f replaces the old file atomically (works even if it is running).
+    if [[ "$SYSTEM_INSTALL" == true ]]; then
+        sudo mv -f "$tmp" "$dest"
+        sudo chmod 755 "$dest"
+    else
+        mv -f "$tmp" "$dest"
+    fi
+    print_success "Installed kaptaind-cli shim (deprecated; forwards to kaptaind)"
+}
+
+# Install the kaptaind agent skill to ~/.agents/skills/kaptaind/SKILL.md when
+# the source file ships with this checkout/release.
+install_agent_skill() {
+    if [[ "${KAPTAIND_SKIP_SKILL:-0}" == "1" ]]; then
+        print_info "KAPTAIND_SKIP_SKILL=1: not installing the agent skill"
+        return
+    fi
+    local src
+    if ! src=$(find_repo_file "skills/kaptaind/SKILL.md"); then
+        print_info "Agent skill (skills/kaptaind/SKILL.md) not bundled; skipping"
+        return
+    fi
+    mkdir -p "$SKILL_DIR"
+    cp "$src" "$SKILL_DIR/SKILL.md"
+    print_success "Installed agent skill to $SKILL_DIR/SKILL.md"
+}
+
 # Verify installation
 verify_installation() {
     print_header "Verifying Installation"
@@ -630,6 +733,8 @@ main() {
     fi
 
     install_binaries
+    install_cli_shim
+    install_agent_skill
     setup_kaptaind_dir
     verify_installation
     setup_shell_integration

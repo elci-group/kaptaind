@@ -7,31 +7,31 @@
 use crate::config::Config;
 use anyhow::Context;
 use chrono::Utc;
+use std::path::PathBuf;
 
-pub fn run(config: &Config) -> anyhow::Result<()> {
-    let repo = crate::git::repo::Repo::open(&config.repo_path).with_context(|| {
-        format!(
-            "could not open git repository at {}",
-            config.repo_path.display()
-        )
-    })?;
+/// Absolute paths of the project's current pending (uncommitted) changes.
+///
+/// Status paths are git-root-relative; they are scoped to the project and
+/// re-anchored under `config.repo_path` the same way the scheduler's startup
+/// rescan does. Shared by `--dry-run` and the one-shot `kaptaind commit`.
+pub fn pending_paths(
+    config: &Config,
+    repo: &crate::git::repo::Repo,
+) -> anyhow::Result<Vec<PathBuf>> {
     let repo_ctx = crate::git::repo::RepoContext::new(repo.root(), &config.repo_path);
-    // Status paths are git-root-relative; scope to the project and re-anchor
-    // them the same way the scheduler's startup rescan does.
-    let paths: Vec<std::path::PathBuf> = repo
+    Ok(repo
         .changed_paths()?
         .into_iter()
         .filter_map(|p| repo_ctx.to_project_relative(&p))
         .map(|rel| config.repo_path.join(rel))
-        .collect();
+        .collect())
+}
 
-    if paths.is_empty() {
-        println!("Working tree is clean. Nothing would be committed.");
-        return Ok(());
-    }
-
+/// A single-event cluster over `paths`, stamped now — the same shape the
+/// scheduler forms for its startup catch-up cluster.
+pub fn synthetic_cluster(paths: Vec<PathBuf>) -> crate::cluster::engine::Cluster {
     let timestamp = Utc::now();
-    let cluster = crate::cluster::engine::Cluster {
+    crate::cluster::engine::Cluster {
         id: uuid::Uuid::new_v4(),
         started_at: timestamp,
         ended_at: timestamp,
@@ -40,7 +40,24 @@ pub fn run(config: &Config) -> anyhow::Result<()> {
             kind: crate::watcher::FsEventKind::Modify,
             timestamp,
         }],
-    };
+    }
+}
+
+pub fn run(config: &Config) -> anyhow::Result<()> {
+    let repo = crate::git::repo::Repo::open(&config.repo_path).with_context(|| {
+        format!(
+            "could not open git repository at {}",
+            config.repo_path.display()
+        )
+    })?;
+    let paths = pending_paths(config, &repo)?;
+
+    if paths.is_empty() {
+        println!("Working tree is clean. Nothing would be committed.");
+        return Ok(());
+    }
+
+    let cluster = synthetic_cluster(paths);
 
     let mut diff = crate::diff::analyze_with_plugins(&cluster, &config.repo_path, &config.plugins);
     if config.bundle.command.is_some() && config.capabilities.bundle_scoring {

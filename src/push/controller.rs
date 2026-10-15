@@ -241,7 +241,7 @@ async fn push_with_audit(
         .any(|branch| branch == &options.branch)
     {
         anyhow::bail!(
-            "push to protected branch '{}' is disabled by configuration",
+            "push to protected branch '{}' is disabled by configuration ([push.safety] protect_branches); run 'kaptaind ready' for every blocker",
             options.branch
         );
     }

@@ -1,0 +1,10 @@
+#!/bin/sh
+# kaptaind-cli — deprecation shim.
+#
+# The standalone `kaptaind-cli` binary was merged into `kaptaind` in 10.4.0.
+# install.sh installs this shim in its place so old scripts, skills, and agent
+# prompts keep working: it prints one deprecation line to stderr and execs
+# `kaptaind` with the original arguments. `kaptaind doctor` recognises this
+# file by the marker string below and flags any non-shim kaptaind-cli.
+echo "kaptaind-cli is deprecated; use kaptaind <cmd>" >&2
+exec kaptaind "$@"

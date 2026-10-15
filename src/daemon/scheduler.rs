@@ -5,6 +5,7 @@ use crate::commit::message::{format_chore_commit, format_commit};
 use crate::config::loader::{TestCommandOn, TestConfig};
 use crate::config::Config;
 use crate::daemon::health::{DaemonEvent, Metrics};
+use crate::daemon::oneshot::ClusterOptions;
 use crate::daemon::policy::{self, Policy};
 use crate::daemon::prune::prune_analysis_artifacts;
 use crate::daemon::status::write_status;
@@ -72,7 +73,7 @@ const SELF_WRITE_CAP: usize = 64;
 /// build artifacts. Suppression stays path- and time-bounded: outside the
 /// hook window nothing changes, and a genuine edit can never be swallowed
 /// beyond the TTL.
-struct SelfWriteGuard {
+pub(crate) struct SelfWriteGuard {
     writes: VecDeque<(PathBuf, Instant)>,
     /// Repo root; hook-artifact suppression is anchored here because cargo
     /// creates its tempdir next to the target dir, i.e. at the root.
@@ -85,7 +86,7 @@ struct SelfWriteGuard {
 }
 
 impl SelfWriteGuard {
-    fn new(repo_root: PathBuf) -> Self {
+    pub(crate) fn new(repo_root: PathBuf) -> Self {
         Self {
             writes: VecDeque::new(),
             repo_root,
@@ -532,6 +533,44 @@ async fn process_cluster(
     metrics: Arc<Metrics>,
     event_tx: tokio::sync::broadcast::Sender<DaemonEvent>,
 ) {
+    process_cluster_with_options(
+        repo,
+        config,
+        last_commit_at,
+        cluster,
+        status,
+        self_writes,
+        test_streak,
+        vacs_engine,
+        tasks,
+        shutdown,
+        angler,
+        metrics,
+        event_tx,
+        &ClusterOptions::default(),
+    )
+    .await
+}
+
+/// [`process_cluster`] with per-cluster overrides; the one-shot
+/// `kaptaind commit` path (`daemon::oneshot`) is the only non-default caller.
+#[allow(clippy::too_many_arguments)]
+pub(crate) async fn process_cluster_with_options(
+    repo: &mut Repo,
+    config: &Config,
+    last_commit_at: &mut Option<DateTime<Utc>>,
+    cluster: Cluster,
+    status: &mut StatusReport,
+    self_writes: &mut SelfWriteGuard,
+    test_streak: &mut TestFailureStreak,
+    vacs_engine: &crate::vacs::VacsEngine,
+    tasks: &mut JoinSet<()>,
+    shutdown: crate::daemon::shutdown::ShutdownToken,
+    angler: Option<&AnglerSystem>,
+    metrics: Arc<Metrics>,
+    event_tx: tokio::sync::broadcast::Sender<DaemonEvent>,
+    cluster_opts: &ClusterOptions,
+) {
     let now = Utc::now();
     let mut test_outcome = TestOutcome::Skipped; // Default; will be overwritten if we get to testing
 
@@ -795,7 +834,13 @@ async fn process_cluster(
         .map(|p| policy::is_branch_protected(&config.repo_path, &p.branch_protection))
         .unwrap_or(false);
 
-    test_outcome = if should_run_tests(&config.test, &cluster_paths) {
+    test_outcome = if let Some(reason) = cluster_opts.skip_tests_reason.as_deref() {
+        tracing::warn!(
+            reason,
+            "test hook skipped for this transaction (--skip-tests)"
+        );
+        TestOutcome::Skipped
+    } else if should_run_tests(&config.test, &cluster_paths) {
         // A cargo-based test hook creates its target dir via an atomic-rename
         // `targetXXXXXX` tempdir at the repo root; that path is neither a
         // recorded self-write nor matched by the default `.kaptainignore`
@@ -883,20 +928,30 @@ async fn process_cluster(
             test_outcome.trace_test(),
             agent_event.clone(),
         );
-        let failure_detail = match &test_outcome {
-            TestOutcome::Failed { stderr, .. } => stderr.clone(),
-            _ => "Tests failed".to_string(),
-        };
-        record_decision(
+        let (decision_outcome, failure_detail) = test_failure_summary(&test_outcome);
+        let mut record = build_decision_record(
             config,
             &cluster,
-            crate::daemon::decisions::outcome::TEST_FAILED,
+            decision_outcome,
             truncate_detail(&failure_detail),
             None,
             None,
             None,
             None,
+            None,
         );
+        if let TestOutcome::Failed {
+            code,
+            output_tail,
+            missing_program,
+            ..
+        } = &test_outcome
+        {
+            record.exit_code = *code;
+            record.output_tail = Some(output_tail.clone());
+            record.missing_program = missing_program.clone();
+        }
+        append_decision_record(config, &record);
         status.set_failed(failure_detail);
         write_status(&config.repo_path, status);
         crate::daemon::notification::notify_warning(
@@ -1038,6 +1093,7 @@ async fn process_cluster(
         } else {
             msg
         };
+        let msg = cluster_opts.apply_trailers(msg);
 
         let repo_ctx = crate::git::repo::RepoContext::new(repo.root(), &config.repo_path);
         let commit_result = crate::commit::orchestrator::commit_with_staging(
@@ -1114,10 +1170,10 @@ async fn process_cluster(
             config,
             &cluster,
             crate::daemon::decisions::outcome::CHORE_COMMIT,
-            format!(
+            cluster_opts.decision_reason(format!(
                 "score {:.3} below patch threshold {:.3}; committed without version bump",
                 weight.score, config.version_thresholds.patch
-            ),
+            )),
             Some(&diff),
             Some(&weight),
             None,
@@ -1145,7 +1201,7 @@ async fn process_cluster(
         );
 
         *last_commit_at = Some(now);
-        status.set_idle();
+        status.set_committed(None);
         write_status(&config.repo_path, status);
         return;
     }
@@ -1523,6 +1579,7 @@ async fn process_cluster(
     } else {
         msg
     };
+    let msg = cluster_opts.apply_trailers(msg);
 
     // Abstract token calculation
     let mut input_tokens = 0;
@@ -1631,7 +1688,7 @@ async fn process_cluster(
         config,
         &cluster,
         crate::daemon::decisions::outcome::COMMIT,
-        "committed",
+        cluster_opts.decision_reason("committed"),
         Some(&diff),
         Some(&weight),
         Some(bump),
@@ -1915,9 +1972,7 @@ async fn process_cluster(
     );
 
     *last_commit_at = Some(now);
-    status.set_idle();
-    status.last_version = Some(next.to_string());
-    status.last_error = None;
+    status.set_committed(Some(next.to_string()));
     write_status(&config.repo_path, status);
 
     // Fire VACS event
@@ -2341,9 +2396,73 @@ fn record_decision_full(
     version: Option<&Version>,
     members_bumped: Option<Vec<String>>,
 ) {
-    use crate::daemon::decisions::{
-        append_decision, DecisionRecord, DecisionScores, DecisionThresholds,
-    };
+    let record = build_decision_record(
+        config,
+        cluster,
+        outcome,
+        reason,
+        diff,
+        weight,
+        bump,
+        version,
+        members_bumped,
+    );
+    append_decision_record(config, &record);
+}
+
+fn append_decision_record(config: &Config, record: &crate::daemon::decisions::DecisionRecord) {
+    if let Err(err) = crate::daemon::decisions::append_decision(&config.repo_path, record) {
+        tracing::warn!(error = %err, "failed to append decision record");
+    }
+}
+
+/// Classify a blocking test-hook outcome: a hook whose program cannot be
+/// found is `test_hook_not_found` (with a message naming the program), not a
+/// test failure. Returns the decision outcome and the status/decision detail.
+fn test_failure_summary(outcome: &TestOutcome) -> (&'static str, String) {
+    use crate::daemon::decisions::outcome as decision;
+    match outcome {
+        TestOutcome::Failed {
+            missing_program: Some(program),
+            code,
+            ..
+        } => (
+            decision::TEST_HOOK_NOT_FOUND,
+            format!(
+                "test hook program `{program}` not found ({}); install it or fix [test].command",
+                code.map(|c| format!("exit {c}"))
+                    .unwrap_or_else(|| "spawn failed: ENOENT".to_string())
+            ),
+        ),
+        TestOutcome::Failed { stderr, code, .. } => {
+            let detail = if stderr.is_empty() {
+                format!(
+                    "tests failed ({})",
+                    code.map(|c| format!("exit {c}"))
+                        .unwrap_or_else(|| "no exit code".to_string())
+                )
+            } else {
+                stderr.clone()
+            };
+            (decision::TEST_FAILED, detail)
+        }
+        _ => (decision::TEST_FAILED, "Tests failed".to_string()),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_decision_record(
+    config: &Config,
+    cluster: &Cluster,
+    outcome: &str,
+    reason: impl Into<String>,
+    diff: Option<&DiffAnalysis>,
+    weight: Option<&crate::weight::WeightResult>,
+    bump: Option<Bump>,
+    version: Option<&Version>,
+    members_bumped: Option<Vec<String>>,
+) -> crate::daemon::decisions::DecisionRecord {
+    use crate::daemon::decisions::{DecisionRecord, DecisionScores, DecisionThresholds};
 
     let scores = match (diff, weight) {
         (Some(d), Some(w)) => Some(DecisionScores {
@@ -2365,7 +2484,7 @@ fn record_decision_full(
                 .to_string()
         })
         .collect();
-    let record = DecisionRecord {
+    DecisionRecord {
         timestamp: Utc::now(),
         cluster_id: cluster.id.to_string(),
         outcome: outcome.to_string(),
@@ -2377,11 +2496,11 @@ fn record_decision_full(
         bump: bump.map(|b| format!("{b:?}")),
         version: version.map(|v| v.to_string()),
         members_bumped,
+        exit_code: None,
+        output_tail: None,
+        missing_program: None,
         reason: reason.into(),
         paths,
-    };
-    if let Err(err) = append_decision(&config.repo_path, &record) {
-        tracing::warn!(error = %err, "failed to append decision record");
     }
 }
 
@@ -2453,6 +2572,11 @@ pub enum TestOutcome {
         code: Option<i32>,
         stderr: String,
         failed_tests: Vec<String>,
+        /// Last lines of stdout followed by stderr (AGX-5.1).
+        output_tail: Vec<String>,
+        /// Set when the hook's program could not be found (sh exit 127 or
+        /// ENOENT spawning); recorded as `test_hook_not_found` (AGX-5.2).
+        missing_program: Option<String>,
     },
     Skipped,
 }
@@ -2495,10 +2619,13 @@ pub async fn run_test_hook_for_config(test: &TestConfig, repo_path: &Path) -> Te
 
     if let Err(err) = crate::util::shell_validation::validate_shell_command(command) {
         tracing::warn!(error = %err, "shell command validation rejected test hook");
+        let stderr = format!("rejected unsafe test hook command: {err}");
         return TestOutcome::Failed {
             code: None,
-            stderr: format!("rejected unsafe test hook command: {err}"),
+            output_tail: crate::daemon::decisions::output_tail(&stderr),
+            stderr,
             failed_tests: Vec::new(),
+            missing_program: None,
         };
     }
 
@@ -2513,22 +2640,72 @@ pub async fn run_test_hook_for_config(test: &TestConfig, repo_path: &Path) -> Te
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let combined = format!("{stdout}\n{stderr}");
+            let combined = format!("{}\n{stderr}", stdout.trim_end());
+            let code = output.status.code();
+            let missing_program = if code == Some(SHELL_COMMAND_NOT_FOUND) {
+                Some(missing_hook_program(&stderr, command))
+            } else {
+                None
+            };
             TestOutcome::Failed {
-                code: output.status.code(),
-                stderr,
+                code,
                 failed_tests: parse_failed_tests(&combined),
+                output_tail: crate::daemon::decisions::output_tail(&combined),
+                stderr,
+                missing_program,
             }
         }
         Err(err) => {
             tracing::error!(error = %err, "failed to spawn test hook command");
+            let missing_program =
+                (err.kind() == std::io::ErrorKind::NotFound).then(|| "sh".to_string());
+            let stderr = format!("failed to spawn test hook via sh: {err}");
             TestOutcome::Failed {
                 code: None,
-                stderr: err.to_string(),
+                output_tail: crate::daemon::decisions::output_tail(&stderr),
+                stderr,
                 failed_tests: Vec::new(),
+                missing_program,
             }
         }
     }
+}
+
+/// POSIX shells exit 127 when the command to run cannot be found.
+const SHELL_COMMAND_NOT_FOUND: i32 = 127;
+
+/// Name the program a shell reported as missing. Understands dash
+/// (`sh: 1: foo: not found`), bash (`sh: line 1: foo: command not found`,
+/// `bash: foo: command not found`) and zsh (`zsh:1: command not found: foo`)
+/// diagnostics; falls back to the first word of the hook command.
+fn missing_hook_program(stderr: &str, command: &str) -> String {
+    for line in stderr.lines().rev() {
+        let line = line.trim();
+        if let Some(name) = line.split("command not found: ").nth(1) {
+            if !name.trim().is_empty() {
+                return name.trim().to_string();
+            }
+        }
+        for suffix in [
+            ": command not found",
+            ": not found",
+            ": No such file or directory",
+        ] {
+            if let Some(head) = line.strip_suffix(suffix) {
+                if let Some(name) = head.rsplit(": ").next() {
+                    let name = name.trim();
+                    if !name.is_empty() {
+                        return name.to_string();
+                    }
+                }
+            }
+        }
+    }
+    command
+        .split_whitespace()
+        .find(|word| !word.contains('='))
+        .unwrap_or(command)
+        .to_string()
 }
 
 /// Parse test output for lines like `test foo::bar ... FAILED`.
@@ -2569,26 +2746,29 @@ fn log_test_failure(outcome: &TestOutcome) {
         code,
         stderr,
         failed_tests,
+        missing_program,
+        ..
     } = outcome
     {
         tracing::warn!(
             code = ?code,
             stderr = %stderr,
             failed_tests = ?failed_tests,
+            missing_program = ?missing_program,
             "test hook failed; skipping automation"
         );
     }
 }
 
 #[derive(Debug)]
-struct IgnoreMatcher {
+pub(crate) struct IgnoreMatcher {
     root: PathBuf,
     exact: HashSet<PathBuf>,
     glob: Option<GlobSet>,
 }
 
 impl IgnoreMatcher {
-    fn load(root: &Path, path: &Path) -> Self {
+    pub(crate) fn load(root: &Path, path: &Path) -> Self {
         if !path.exists() {
             return Self {
                 root: root.to_path_buf(),
@@ -2629,7 +2809,7 @@ impl IgnoreMatcher {
         }
     }
 
-    fn is_ignored(&self, paths: &[PathBuf]) -> bool {
+    pub(crate) fn is_ignored(&self, paths: &[PathBuf]) -> bool {
         paths.iter().any(|path| self.matches(path))
     }
 
@@ -2699,7 +2879,7 @@ fn should_run_tests(test: &TestConfig, cluster_paths: &[PathBuf]) -> bool {
 /// path); a Passed outcome resets the streak so transient red suites don't
 /// warn forever.
 #[derive(Debug, Default)]
-struct TestFailureStreak {
+pub(crate) struct TestFailureStreak {
     consecutive: u32,
 }
 
@@ -2900,6 +3080,8 @@ mod tests {
                 code: Some(1),
                 stderr: String::new(),
                 failed_tests: Vec::new(),
+                output_tail: Vec::new(),
+                missing_program: None,
             }
         ));
     }
@@ -2973,6 +3155,8 @@ mod tests {
             code: Some(1),
             stderr: String::new(),
             failed_tests: Vec::new(),
+            output_tail: Vec::new(),
+            missing_program: None,
         });
         assert_eq!(streak.consecutive, 1);
     }
@@ -3100,6 +3284,104 @@ test result: FAILED. 1 passed; 2 failed; 0 ignored
 
         let outcome = run_test_hook(&config).await;
         assert!(matches!(outcome, TestOutcome::Passed));
+    }
+
+    #[tokio::test]
+    async fn failing_test_hook_records_exit_code_and_output_tail() {
+        let dir = tempdir().expect("temp dir");
+        std::fs::write(
+            dir.path().join("fail.sh"),
+            "i=1\nwhile [ $i -le 60 ]; do echo out-$i; i=$((i+1)); done\necho err-last >&2\nexit 3\n",
+        )
+        .expect("write hook script");
+        let config = Config {
+            repo_path: dir.path().to_path_buf(),
+            test: TestConfig {
+                command: Some("sh fail.sh".to_string()),
+                required: true,
+                command_on: TestCommandOn::Always,
+            },
+            ..Config::default()
+        };
+
+        let outcome = run_test_hook(&config).await;
+        let TestOutcome::Failed {
+            code,
+            output_tail,
+            missing_program,
+            ..
+        } = &outcome
+        else {
+            panic!("expected failure, got {outcome:?}");
+        };
+        assert_eq!(*code, Some(3));
+        assert_eq!(*missing_program, None);
+        assert_eq!(output_tail.len(), 40);
+        assert_eq!(output_tail.last().map(String::as_str), Some("err-last"));
+        assert_eq!(output_tail.first().map(String::as_str), Some("out-22"));
+        let (decision, detail) = super::test_failure_summary(&outcome);
+        assert_eq!(decision, crate::daemon::decisions::outcome::TEST_FAILED);
+        assert_eq!(detail, "err-last");
+    }
+
+    #[tokio::test]
+    async fn missing_hook_program_is_classified_as_not_found() {
+        let dir = tempdir().expect("temp dir");
+        let config = Config {
+            repo_path: dir.path().to_path_buf(),
+            test: TestConfig {
+                command: Some("kaptaind-definitely-missing-tool --all".to_string()),
+                required: true,
+                command_on: TestCommandOn::Always,
+            },
+            ..Config::default()
+        };
+
+        let outcome = run_test_hook(&config).await;
+        let TestOutcome::Failed {
+            code,
+            missing_program,
+            ..
+        } = &outcome
+        else {
+            panic!("expected failure, got {outcome:?}");
+        };
+        assert_eq!(*code, Some(127));
+        assert_eq!(
+            missing_program.as_deref(),
+            Some("kaptaind-definitely-missing-tool")
+        );
+        let (decision, detail) = super::test_failure_summary(&outcome);
+        assert_eq!(
+            decision,
+            crate::daemon::decisions::outcome::TEST_HOOK_NOT_FOUND
+        );
+        assert!(
+            detail.contains("`kaptaind-definitely-missing-tool` not found (exit 127)"),
+            "{detail}"
+        );
+    }
+
+    #[test]
+    fn missing_hook_program_parses_shell_diagnostics() {
+        use super::missing_hook_program;
+        assert_eq!(
+            missing_hook_program("sh: 1: foo: not found", "foo x"),
+            "foo"
+        );
+        assert_eq!(
+            missing_hook_program("sh: line 1: nextest: command not found", "x"),
+            "nextest"
+        );
+        assert_eq!(
+            missing_hook_program("zsh:1: command not found: bar", "x"),
+            "bar"
+        );
+        assert_eq!(
+            missing_hook_program("sh: 1: ./run.sh: No such file or directory", "x"),
+            "./run.sh"
+        );
+        assert_eq!(missing_hook_program("", "RUST_LOG=1 cargo test"), "cargo");
     }
 
     #[test]
