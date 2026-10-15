@@ -15,6 +15,8 @@ All notable changes to kaptaind are documented here. The format follows
 
 ## [Unreleased]
 
+## [10.5.0] — 2026-10-15
+
 ### Added
 - **Kaptaind observation corpus (SLM/0 sprint 0).** `kaptaind data census` counts labelled commits, Kaptaind-era commits, and recoverable analyses as three separate totals. `kaptaind data extract` rebuilds versioned observation units (schema 1) from scorecards, `.kaptaind/decisions.jsonl`, and analysis artifacts without checking out history. `validate`, `dedupe`, and `stats` score label confidence, cluster duplicate diffs before any train/test split, and report KDS plus the model-readiness gate. Leakage is measured inside each holdout regime, so a cluster may be train for time and test for pattern. Root `VERSION`, `.kaptaind/`, and build trees (`target/`, `dist/`, `node_modules/`, including at the repository root) are not training-eligible. `kaptaind dataset build|inspect|export` publishes an immutable `kaptaind-corpus-<version>` manifest. No model is trained.
 - **First-run version enforcement** (`[versioning].bootstrap`, `initial_version`).
@@ -41,7 +43,12 @@ All notable changes to kaptaind are documented here. The format follows
   Needs actuate + trusted (observe mode → `observed`, exit 4); ignores
   `startup_guard` and the commit rate limit; pushes without `--push` when
   `[push] enabled = true`, like the daemon; refuses while a live daemon holds
-  `.kaptaind/daemon.pid` unless `--force`.
+  `.kaptaind/daemon.pid` unless `--force`. Enforces the RBAC `daemon.start`
+  permission (`unauthorized`), refuses while `[shark]` HA is enabled
+  (`ha_enabled`), and holds `.kaptaind/commit.lock` so concurrent runs refuse
+  (`commit_in_progress`). `--skip-tests` is refused (`blocked`) when a policy
+  requires tests and an accepted skip is audit-logged (`tests_skipped`). A
+  `VERSION` seeded by the bootstrap is removed when nothing is committed.
 - **`kaptaind ready [--for analyze|commit|push] [--json]`** — read-only, one
   pass over all twelve mutation gates (`operation_mode`, `execution_trust`,
   `test_hook`, `push_enabled`, `network_push`, `protected_branch`,
@@ -78,6 +85,14 @@ All notable changes to kaptaind are documented here. The format follows
 ### Fixed
 - A successful commit now clears a previous `Failed` daemon state in
   `status.json`.
+- Policy-verification and enterprise-control refusals, and failures to read
+  the cluster's git changes, now record a decision, so `kaptaind explain`
+  shows why the cluster was blocked.
+- `git status --porcelain -z` rename/copy entries no longer truncate the
+  source path's first three characters.
+- Pid liveness checks treat pid 0 and values above `i32::MAX` as not running
+  (previously `kill(2)` could address a process group).
+- `kaptaind ready` no longer suggests killing the daemon.
 
 ## [10.4.0] — 2026-09-18
 

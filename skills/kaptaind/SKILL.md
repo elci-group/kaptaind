@@ -46,8 +46,9 @@ JSON shape (one object on stdout):
 ```
 
 `push.status = "skipped"` means no commit was created. `outcome` is the
-decision code from `.kaptaind/decisions.jsonl` (or `daemon_running` /
-`untrusted` for pre-flight refusals).
+decision code from `.kaptaind/decisions.jsonl` (or `daemon_running`,
+`commit_in_progress`, `untrusted`, `unauthorized`, `ha_enabled`, `suspended`
+for pre-flight refusals).
 
 ### 3. On exit 4
 
@@ -85,7 +86,7 @@ by `--for analyze|commit|push` blocks, 4 otherwise. `--json` emits
 | `kaptaind_dir_writable` | commit, push | make `.kaptaind/` writable, or `--repo` a writable checkout |
 | `nested_git_root` | all, if not a git repo | `git init`, or `--repo <git root>`; a monorepo subproject only warns |
 | `suspended` | commit, push | `kaptaind resume` |
-| `daemon_running` | commit, push | let the daemon commit, stop it, or `commit --force` |
+| `daemon_running` | commit, push | let the daemon commit, or `commit --force` |
 
 ## Scope a commit to your own files
 
@@ -160,7 +161,8 @@ and `kaptaind commit`) establishes a baseline per `[versioning] bootstrap`:
 | `baseline_unresolvable` | no/invalid VERSION | `echo 0.1.0 > VERSION`, or `[versioning] bootstrap = "initialize"` |
 | `test_hook_not_found` (exit 127) | test program not on PATH | install it or fix `[test] command`; it still blocks a required hook |
 | `test_failed` | tests fail | fix tests (`kaptaind explain` shows `output_tail`); `--skip-tests` only with user consent |
-| `daemon_running` | live daemon owns the repo | let it commit, stop it, or `commit --force` |
+| `daemon_running` | live daemon owns the repo | let it commit, or `commit --force` |
+| `commit_in_progress` | another `kaptaind commit` holds `.kaptaind/commit.lock` | wait for it to finish, then retry |
 | `kaptaind-cli is deprecated` / old behaviour, missing subcommands | stale `kaptaind-cli` on PATH | `kaptaind doctor` → `binary_shadowing`; `type -a kaptaind kaptaind-cli`, remove stale copies, re-run install.sh |
 
 ## `kaptaind-cli` is deprecated

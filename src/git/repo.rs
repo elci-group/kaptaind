@@ -229,18 +229,26 @@ fn git(repo_path: &Path) -> Command {
     command
 }
 
+/// Parse `git status --porcelain -z`. A rename or copy entry (`R`/`C` in
+/// either status column) is followed by its source path as a separate,
+/// unprefixed NUL-terminated field; both paths are reported.
 fn parse_porcelain_paths(output: &[u8]) -> Vec<PathBuf> {
-    output
-        .split(|byte| *byte == 0)
-        .filter(|entry| !entry.is_empty())
-        .filter_map(|entry| {
-            if entry.len() < 4 {
-                return None;
+    let mut paths = Vec::new();
+    let mut entries = output.split(|byte| *byte == 0).filter(|e| !e.is_empty());
+    while let Some(entry) = entries.next() {
+        if entry.len() < 4 {
+            continue;
+        }
+        paths.push(PathBuf::from(
+            String::from_utf8_lossy(&entry[3..]).to_string(),
+        ));
+        if matches!(entry[0], b'R' | b'C') || matches!(entry[1], b'R' | b'C') {
+            if let Some(source) = entries.next() {
+                paths.push(PathBuf::from(String::from_utf8_lossy(source).to_string()));
             }
-            let path = String::from_utf8_lossy(&entry[3..]).to_string();
-            Some(PathBuf::from(path))
-        })
-        .collect()
+        }
+    }
+    paths
 }
 
 fn git_error(command: &str, output: &std::process::Output) -> anyhow::Error {
@@ -301,5 +309,25 @@ mod git2_backend {
         let head = repo.head().context("failed to get HEAD")?;
         let commit = head.peel_to_commit().context("failed to peel to commit")?;
         Ok(commit.id().to_string())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_porcelain_paths;
+    use std::path::PathBuf;
+
+    #[test]
+    fn porcelain_rename_reports_both_paths_intact() {
+        let output = b"R  src/new_name.rs\0src/old_name.rs\0 M src/lib.rs\0?? notes.md\0";
+        assert_eq!(
+            parse_porcelain_paths(output),
+            vec![
+                PathBuf::from("src/new_name.rs"),
+                PathBuf::from("src/old_name.rs"),
+                PathBuf::from("src/lib.rs"),
+                PathBuf::from("notes.md"),
+            ]
+        );
     }
 }

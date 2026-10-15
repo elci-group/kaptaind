@@ -706,23 +706,6 @@ fn suspended(repo: &Path, purpose: Purpose) -> Gate {
     Gate::new("suspended", state, detail).fix("kaptaind resume")
 }
 
-fn pid_alive(pid: u32) -> bool {
-    #[cfg(target_os = "linux")]
-    {
-        Path::new(&format!("/proc/{pid}")).exists()
-    }
-    #[cfg(all(unix, not(target_os = "linux")))]
-    {
-        // SAFETY: signal 0 only performs error checking.
-        (unsafe { libc::kill(pid as i32, 0) }) == 0
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        false
-    }
-}
-
 fn daemon_running(repo: &Path, purpose: Purpose) -> Gate {
     let pid_file = repo.join(".kaptaind").join("daemon.pid");
     // Deliberately not `pidfile::validate_and_clean`: that removes stale
@@ -737,7 +720,7 @@ fn daemon_running(repo: &Path, purpose: Purpose) -> Gate {
             format!("unparseable pid file {} (ignored)", pid_file.display()),
         );
     };
-    if pid == std::process::id() || !pid_alive(pid) {
+    if pid == std::process::id() || !crate::daemon::pidfile::process_alive(pid) {
         return Gate::new(
             "daemon_running",
             GateState::Pass,
@@ -759,7 +742,8 @@ fn daemon_running(repo: &Path, purpose: Purpose) -> Gate {
             format!("{detail}: `kaptaind commit` refuses to race it (two writers)"),
         )
         .fix(format!(
-            "let the daemon make the commit, stop it (kill {pid}), or pass `kaptaind commit --force`"
+            "let the daemon (pid {pid}) make the commit, or pass `kaptaind commit --force`; \
+             never kill or background the daemon to get a commit through"
         )),
     }
 }

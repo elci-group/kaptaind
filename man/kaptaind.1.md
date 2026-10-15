@@ -104,7 +104,7 @@ Run exactly one transaction over the current pending changes through the daemon'
 :   Push after a successful commit via the configured push orchestrator (protected branches, pre-push hooks, CI gating, retry). Requires **[push] enabled = true** and **[capabilities] network_push = true**; a disabled push is reported, never silently skipped. With **[push] enabled = true** the commit is pushed even without **--push** (daemon behaviour), never twice.
 
 **--skip-tests** *REASON*
-:   Bypass the test hook for this transaction only. The reason is mandatory; it is appended to the decision reason as **; tests skipped:** *REASON* and added as a **Kaptaind-Skipped-Tests:** *REASON* commit trailer.
+:   Bypass the test hook for this transaction only. The reason is mandatory; it is appended to the decision reason as **; tests skipped:** *REASON* and added as a **Kaptaind-Skipped-Tests:** *REASON* commit trailer. Refused with a **blocked** decision when a policy requires tests (**branch_protection**, **min_test_coverage**); an accepted skip is written to the audit log as **tests_skipped**.
 
 **--force**
 :   Run even while a live daemon holds *.kaptaind/daemon.pid* for this repository (otherwise refused with outcome **daemon_running**).
@@ -117,9 +117,9 @@ Run exactly one transaction over the current pending changes through the daemon'
          "detail":"..."},"reason":"committed","cluster_id":"<uuid>",
          "paths":["src/lib.rs"],"skipped_tests":null}
 
-    **outcome** is the decision code recorded in *.kaptaind/decisions.jsonl* (see **kaptaind explain**), or **daemon_running** / **untrusted** for pre-flight refusals. **push.status** **skipped** means no commit was created.
+    **outcome** is the decision code recorded in *.kaptaind/decisions.jsonl* (see **kaptaind explain**), or **daemon_running** / **commit_in_progress** / **untrusted** / **unauthorized** / **ha_enabled** / **suspended** for pre-flight refusals. **push.status** **skipped** means no commit was created.
 
-Requires **[operation] mode = "actuate"** and **[trust] execution = "trusted"** like the daemon; in observe mode the **observed** decision is recorded and the command exits 4. Runs the same first-run **VERSION** bootstrap as daemon startup. Unlike the daemon it ignores **[daemon] startup_guard** and the **min_commit_interval** rate limit. Exit status: **0** committed (and any requested push succeeded); **1** error (commit failed, version write failed, push failed, ...); **3** nothing to commit (clean tree, below threshold / **no_bump**, nothing staged); **4** refused by a gate (daemon running, untrusted config, suspended, observe mode, test failed, baseline unresolvable, version mismatch, policy block, pre-commit hook failed, push disabled with **--push**, or push refused).
+Requires **[operation] mode = "actuate"** and **[trust] execution = "trusted"** like the daemon; in observe mode the **observed** decision is recorded and the command exits 4. Enforces the same RBAC **daemon.start** permission as daemon startup and refuses while **[shark]** HA is enabled (only the elected leader daemon commits). Holds *.kaptaind/commit.lock* for the transaction, so concurrent **kaptaind commit** runs in one repository refuse with **commit_in_progress**. Runs the same first-run **VERSION** bootstrap as daemon startup, after the suspend check; a **VERSION** seeded by a transaction that does not commit is removed again. Unlike the daemon it ignores **[daemon] startup_guard** and the **min_commit_interval** rate limit. Exit status: **0** committed (and any requested push succeeded); **1** error (commit failed, version write failed, push failed, ...); **3** nothing to commit (clean tree, below threshold / **no_bump**, nothing staged); **4** refused by a gate (daemon running, another commit running, untrusted config, RBAC denied, HA enabled, suspended, observe mode, test failed or test program not found, baseline unresolvable, version mismatch, policy block, pre-commit hook failed, push disabled with **--push**, or push refused).
 
 Examples:
 

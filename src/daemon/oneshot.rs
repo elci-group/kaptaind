@@ -19,6 +19,14 @@ use tokio::task::JoinSet;
 pub const DAEMON_RUNNING: &str = "daemon_running";
 /// Outcome code for a refusal because `[trust].execution` is not trusted.
 pub const UNTRUSTED: &str = "untrusted";
+/// Outcome code for a refusal because RBAC denies `daemon.start`.
+pub const UNAUTHORIZED: &str = "unauthorized";
+/// Outcome code for a refusal because Shark HA is enabled: only the elected
+/// leader daemon may commit.
+pub const HA_ENABLED: &str = "ha_enabled";
+/// Outcome code for a refusal because another `kaptaind commit` holds
+/// `.kaptaind/commit.lock`.
+pub const COMMIT_IN_PROGRESS: &str = "commit_in_progress";
 
 /// Exit code: a commit was created (and any requested push succeeded).
 pub const EXIT_COMMITTED: i32 = 0;
@@ -192,19 +200,112 @@ pub fn outcome_exit_code(code: &str) -> i32 {
         | outcome::OBSERVED
         | outcome::BLOCKED
         | outcome::TEST_FAILED
+        | outcome::TEST_HOOK_NOT_FOUND
         | outcome::BASELINE_UNRESOLVABLE
         | outcome::VERSION_MISMATCH
         | outcome::PRE_COMMIT_HOOK_FAILED
         | outcome::RATE_LIMITED
         | DAEMON_RUNNING
-        | UNTRUSTED => EXIT_REFUSED,
+        | UNTRUSTED
+        | UNAUTHORIZED
+        | HA_ENABLED
+        | COMMIT_IN_PROGRESS => EXIT_REFUSED,
         _ => EXIT_ERROR,
     }
 }
 
-/// True when `path` is one of `filters` or lies beneath one of them.
-fn path_selected(path: &Path, filters: &[PathBuf]) -> bool {
-    filters.iter().any(|f| path == f || path.starts_with(f))
+/// Canonicalize `path`, or its parent for a path that no longer exists, so
+/// `--paths` filters and pending paths compare through the same symlinks
+/// (e.g. macOS `/tmp` -> `/private/tmp`) and without `..` components.
+fn canonical_lossy(path: &Path) -> PathBuf {
+    if let Ok(canonical) = path.canonicalize() {
+        return canonical;
+    }
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => parent
+            .canonicalize()
+            .map(|p| p.join(name))
+            .unwrap_or_else(|_| path.to_path_buf()),
+        _ => path.to_path_buf(),
+    }
+}
+
+/// Narrow pending paths to `filters`. A pending path equal to or beneath a
+/// filter is kept. git reports a new untracked directory as the directory
+/// itself, so a filter beneath a pending directory selects the filter path
+/// (only that file or subtree is clustered and staged, not the whole
+/// directory).
+fn select_paths(pending: Vec<PathBuf>, filters: &[PathBuf]) -> Vec<PathBuf> {
+    let filters: Vec<PathBuf> = filters.iter().map(|f| canonical_lossy(f)).collect();
+    let mut selected: Vec<PathBuf> = Vec::new();
+    for path in pending {
+        let canonical = canonical_lossy(&path);
+        if filters.iter().any(|f| canonical.starts_with(f)) {
+            selected.push(path);
+            continue;
+        }
+        if canonical.is_dir() {
+            for filter in filters.iter().filter(|f| f.starts_with(&canonical)) {
+                let rel = filter.strip_prefix(&canonical).unwrap_or(filter);
+                selected.push(path.join(rel));
+            }
+        }
+    }
+    selected.sort();
+    selected.dedup();
+    selected
+}
+
+/// Exclusive `.kaptaind/commit.lock` held for one transaction; removed on
+/// drop. A lock left by a dead process is reclaimed.
+struct CommitLock {
+    path: PathBuf,
+}
+
+impl CommitLock {
+    /// `Ok(None)` when a live process already holds the lock.
+    fn acquire(repo_path: &Path) -> anyhow::Result<Option<Self>> {
+        let dir = repo_path.join(".kaptaind");
+        std::fs::create_dir_all(&dir)?;
+        let path = dir.join("commit.lock");
+        for _ in 0..2 {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&path)
+            {
+                Ok(mut file) => {
+                    use std::io::Write;
+                    writeln!(file, "{}", std::process::id())?;
+                    return Ok(Some(Self { path }));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    // Removes the file when its pid is dead or unparseable.
+                    if let crate::daemon::pidfile::PidFileState::Live(_) =
+                        crate::daemon::pidfile::validate_and_clean(&path)
+                    {
+                        return Ok(None);
+                    }
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(None)
+    }
+
+    fn holder(repo_path: &Path) -> Option<String> {
+        std::fs::read_to_string(repo_path.join(".kaptaind").join("commit.lock"))
+            .ok()
+            .map(|pid| pid.trim().to_string())
+    }
+}
+
+impl Drop for CommitLock {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_file(&self.path) {
+            tracing::warn!(%error, path = %self.path.display(), "failed to remove commit lock");
+        }
+    }
 }
 
 fn head_sha(repo: &crate::git::repo::Repo) -> Option<String> {
@@ -225,7 +326,7 @@ pub async fn run(config: &Config, opts: &OneshotOptions) -> anyhow::Result<Onesh
                 DAEMON_RUNNING,
                 format!(
                     "a kaptaind daemon (pid {pid}) is running for {}; it will commit these \
-                     changes itself — stop it or pass --force",
+                     changes itself — let it, or pass --force",
                     config.repo_path.display()
                 ),
             ));
@@ -238,8 +339,29 @@ pub async fn run(config: &Config, opts: &OneshotOptions) -> anyhow::Result<Onesh
         return Ok(OneshotReport::new(UNTRUSTED, error.to_string()));
     }
     config.validate()?;
+    // The same authorization the daemon start path enforces before running
+    // this pipeline.
+    if let Err(error) = crate::rbac::check_permission(&config.rbac, "daemon.start") {
+        return Ok(OneshotReport::new(UNAUTHORIZED, error.to_string()));
+    }
+    if config.shark.enabled {
+        return Ok(OneshotReport::new(
+            HA_ENABLED,
+            "[shark] HA is enabled: only the elected leader daemon commits for this \
+             repository; `kaptaind commit` cannot take part in leader election",
+        ));
+    }
     crate::git::repo::ensure_git_available()
         .map_err(|err| anyhow::anyhow!("kaptaind requires git in PATH: {err}"))?;
+    crate::util::permissions::harden_runtime_tree(&config.repo_path)
+        .map_err(|err| anyhow::anyhow!("failed to secure .kaptaind runtime state: {err}"))?;
+    let Some(_lock) = CommitLock::acquire(&config.repo_path)? else {
+        let holder = CommitLock::holder(&config.repo_path).unwrap_or_else(|| "?".to_string());
+        return Ok(OneshotReport::new(
+            COMMIT_IN_PROGRESS,
+            format!("another `kaptaind commit` (pid {holder}) is running for this repository"),
+        ));
+    };
 
     let mut repo = crate::git::repo::Repo::open(&config.repo_path)?;
 
@@ -249,7 +371,7 @@ pub async fn run(config: &Config, opts: &OneshotOptions) -> anyhow::Result<Onesh
     let mut paths = crate::dryrun::pending_paths(config, &repo)?;
     paths.retain(|p| !ignore.is_ignored(std::slice::from_ref(p)));
     if !opts.paths.is_empty() {
-        paths.retain(|p| path_selected(p, &opts.paths));
+        paths = select_paths(paths, &opts.paths);
     }
     if paths.is_empty() {
         let reason = if opts.paths.is_empty() {
@@ -262,6 +384,20 @@ pub async fn run(config: &Config, opts: &OneshotOptions) -> anyhow::Result<Onesh
             .ok()
             .map(|v| v.to_string());
         report.version_after = report.version_before.clone();
+        report.push_requested = opts.push;
+        return Ok(report);
+    }
+
+    // A suspended repository refuses before any write, so the bootstrap
+    // below never leaves a seeded VERSION behind a refusal.
+    if let Ok(Some(state)) = crate::daemon::suspend::load(&config.repo_path) {
+        let mut report = OneshotReport::new(
+            outcome::SUSPENDED,
+            format!(
+                "daemon is suspended{}",
+                state.reason.map(|r| format!(": {r}")).unwrap_or_default()
+            ),
+        );
         report.push_requested = opts.push;
         return Ok(report);
     }
@@ -358,6 +494,17 @@ pub async fn run(config: &Config, opts: &OneshotOptions) -> anyhow::Result<Onesh
     )
     .await;
     let head_after = head_sha(&repo);
+
+    // A VERSION seeded by this transaction's bootstrap is not left behind
+    // when the transaction does not commit.
+    if head_after == head_before {
+        if let crate::version::bootstrap::BootstrapOutcome::Initialized { .. } = &baseline {
+            let seeded = config.repo_path.join("VERSION");
+            if let Err(error) = std::fs::remove_file(&seeded) {
+                tracing::warn!(%error, path = %seeded.display(), "failed to remove seeded VERSION");
+            }
+        }
+    }
 
     // Read back the decision this cluster recorded.
     let record = crate::daemon::decisions::tail_decisions(&config.repo_path, 200)
@@ -559,10 +706,71 @@ mod tests {
 
     #[test]
     fn path_filter_matches_files_and_directories() {
-        let filters = vec![PathBuf::from("/r/src"), PathBuf::from("/r/a.txt")];
-        assert!(path_selected(Path::new("/r/src/lib.rs"), &filters));
-        assert!(path_selected(Path::new("/r/a.txt"), &filters));
-        assert!(!path_selected(Path::new("/r/srcfoo"), &filters));
-        assert!(!path_selected(Path::new("/r/b.txt"), &filters));
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::create_dir_all(root.join("srcfoo")).unwrap();
+        for file in ["src/lib.rs", "a.txt", "b.txt"] {
+            std::fs::write(root.join(file), "x").unwrap();
+        }
+        let pending = vec![
+            root.join("src/lib.rs"),
+            root.join("a.txt"),
+            root.join("srcfoo"),
+            root.join("b.txt"),
+        ];
+        let filters = vec![root.join("src"), root.join("a.txt")];
+        assert_eq!(
+            select_paths(pending, &filters),
+            vec![root.join("a.txt"), root.join("src/lib.rs")]
+        );
+    }
+
+    #[test]
+    fn path_filter_selects_file_inside_new_untracked_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("src/newmod")).unwrap();
+        std::fs::write(root.join("src/newmod/lib.rs"), "x").unwrap();
+        std::fs::write(root.join("src/newmod/other.rs"), "x").unwrap();
+        // git reports the untracked directory itself.
+        let pending = vec![root.join("src/newmod")];
+        let filters = vec![root.join("src/newmod/lib.rs")];
+        assert_eq!(
+            select_paths(pending, &filters),
+            vec![root.join("src/newmod/lib.rs")]
+        );
+    }
+
+    #[test]
+    fn path_filter_compares_through_dotdot_components() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().canonicalize().unwrap();
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("a.rs"), "x").unwrap();
+        // Pending path built from a non-canonical repo_path (`--repo sub/..`).
+        let pending = vec![root.join("sub/../a.rs")];
+        let filters = vec![root.join("a.rs")];
+        assert_eq!(select_paths(pending, &filters).len(), 1);
+    }
+
+    #[test]
+    fn commit_lock_is_exclusive_and_released_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let lock = CommitLock::acquire(dir.path()).unwrap();
+        assert!(lock.is_some());
+        assert!(CommitLock::acquire(dir.path()).unwrap().is_none());
+        drop(lock);
+        assert!(CommitLock::acquire(dir.path()).unwrap().is_some());
+    }
+
+    #[test]
+    fn test_hook_not_found_is_a_refusal() {
+        assert_eq!(
+            outcome_exit_code(outcome::TEST_HOOK_NOT_FOUND),
+            EXIT_REFUSED
+        );
+        assert_eq!(outcome_exit_code(HA_ENABLED), EXIT_REFUSED);
+        assert_eq!(outcome_exit_code(COMMIT_IN_PROGRESS), EXIT_REFUSED);
     }
 }

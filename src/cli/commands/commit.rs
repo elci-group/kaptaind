@@ -74,6 +74,8 @@ fn report_error(error: &anyhow::Error, json: bool) -> i32 {
                 "push": {"status": "skipped", "detail": "no commit created"},
                 "reason": format!("{error:#}"),
                 "cluster_id": null,
+                "paths": [],
+                "skipped_tests": null,
             })
         );
     } else {

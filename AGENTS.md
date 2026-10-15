@@ -100,6 +100,7 @@
   - `.kaptaind/aoc/manifests/<id>.json` — shipped AoC session summaries.
   - `.kaptaind/decisions.jsonl` — append-only per-cluster decision log (`kaptaind explain`, `status`); test-hook records carry optional `exit_code`, `output_tail` (≤40 lines), `missing_program`.
   - `.kaptaind/daemon.pid` — live daemon pid; `kaptaind commit` refuses while it is held unless `--force`.
+  - `.kaptaind/commit.lock` — held by one `kaptaind commit` transaction; a concurrent run refuses with `commit_in_progress` (a lock left by a dead pid is reclaimed).
 - Environment variables:
   - kaptaind loads an optional `.env` file at startup (daemon and CLI) so provider keys and secrets can stay out of `kaptaind.toml`.
   - TTS provider keys are read from `.env`: `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AZURE_SPEECH_KEY`/`AZURE_SPEECH_REGION`, `GOOGLE_API_KEY`, `CARTESIA_API_KEY`. Local system TTS uses `say` (macOS), `espeak` (Linux), or PowerShell (Windows).
@@ -165,8 +166,8 @@ kaptaind commit --paths src/foo.rs --json   # scope cluster + staging to your fi
 
 - Exit codes: `0` committed, `1` error, `3` nothing to commit, `4` refused by a gate.
 - On exit 4 run `kaptaind explain` and `kaptaind status --json`; do not background or kill the daemon, and do not fall back to plain git silently.
-- `--skip-tests "<reason>"` only with explicit user consent; it adds a `Kaptaind-Skipped-Tests:` trailer.
-- Needs `[operation] mode = "actuate"` + `[trust] execution = "trusted"`; refuses while a live daemon holds `.kaptaind/daemon.pid`.
+- `--skip-tests "<reason>"` only with explicit user consent; it adds a `Kaptaind-Skipped-Tests:` trailer, is audit-logged, and is refused when a policy requires tests.
+- Needs `[operation] mode = "actuate"` + `[trust] execution = "trusted"` and the RBAC `daemon.start` permission; refuses while a live daemon holds `.kaptaind/daemon.pid`, while another `kaptaind commit` holds `.kaptaind/commit.lock`, or while `[shark]` HA is enabled.
 
 ### Suspend and resume the daemon
 

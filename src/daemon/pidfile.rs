@@ -75,7 +75,12 @@ pub fn validate_and_clean(path: &Path) -> PidFileState {
 }
 
 /// Best-effort process liveness check without new dependencies.
-fn process_alive(pid: u32) -> bool {
+pub fn process_alive(pid: u32) -> bool {
+    // 0 and values that do not fit a pid_t would make kill(2) address a
+    // process group, not one process.
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
     #[cfg(target_os = "linux")]
     {
         std::path::Path::new(&format!("/proc/{pid}")).exists()

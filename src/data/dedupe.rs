@@ -279,7 +279,8 @@ fn repository_assignment(
         .iter()
         .map(|obs| obs.repository.repository_id.clone())
         .collect();
-    if repos.len() < 2 {
+    // A ratio of 0 opts out of the repository regime entirely.
+    if repos.len() < 2 || ratio <= 0.0 {
         return (BTreeSet::new(), BTreeSet::new());
     }
     let mut held: BTreeSet<String> = repos
@@ -441,7 +442,9 @@ mod tests {
         let report = cluster_and_partition(
             &mut observations,
             &PartitionPlan {
-                repository_holdout_ratio: 0.0,
+                // Small enough that sampling may select no repository; the
+                // fallback still holds one out.
+                repository_holdout_ratio: 0.01,
                 ..PartitionPlan::default()
             },
         );
@@ -506,5 +509,18 @@ mod tests {
             (score - 0.5).abs() < 1e-5,
             "temporal is split, pattern is not: {score}"
         );
+    }
+
+    #[test]
+    fn zero_repository_holdout_holds_out_no_repository() {
+        let observations = vec![
+            blank("repo-a", "1", "a.rs"),
+            blank("repo-b", "2", "b.rs"),
+            blank("repo-c", "3", "c.rs"),
+        ];
+        let (held, _) = repository_assignment(&observations, 0.0);
+        assert!(held.is_empty(), "ratio 0 must not force a holdout repo");
+        let (held, _) = repository_assignment(&observations, 0.5);
+        assert!(!held.is_empty() && held.len() < 3);
     }
 }

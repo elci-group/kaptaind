@@ -286,7 +286,9 @@ Options:
     --skip-tests <REASON>  Bypass the test hook for this transaction only. The
                            reason is mandatory; it is recorded in the decision
                            log and added as a `Kaptaind-Skipped-Tests: <reason>`
-                           commit trailer.
+                           commit trailer. Refused (blocked) when a policy
+                           requires tests (branch_protection,
+                           min_test_coverage).
     --force                Run even while a live daemon holds
                            .kaptaind/daemon.pid for this repository.
     --json                 Print one JSON object instead of human output.
@@ -295,9 +297,11 @@ Exit codes:
     0  committed (and any requested push succeeded)
     1  error (commit failed, version write failed, push failed, ...)
     3  nothing to commit: clean tree, below threshold (no_bump), nothing staged
-    4  refused by a gate: daemon running, untrusted config, suspended, observe
-       mode, test failed, baseline unresolvable, version mismatch, policy
-       block, pre-commit hook failed, push disabled (with --push) or refused
+    4  refused by a gate: daemon running, another kaptaind commit running,
+       untrusted config, RBAC denies daemon.start, [shark] HA enabled,
+       suspended, observe mode, test failed or test program not found,
+       baseline unresolvable, version mismatch, policy block, pre-commit hook
+       failed, push disabled (with --push) or refused
 
 JSON output:
     {"outcome":"commit","version_before":"1.2.0","version_after":"1.3.0",
@@ -305,7 +309,8 @@ JSON output:
      "detail":"..."},"reason":"committed","cluster_id":"<uuid>",
      "paths":["src/lib.rs"],"skipped_tests":null}
     `outcome` is the decision code recorded in .kaptaind/decisions.jsonl
-    (see `kaptaind explain`), or daemon_running / untrusted for pre-flight
+    (see `kaptaind explain`), or daemon_running / commit_in_progress /
+    untrusted / unauthorized / ha_enabled / suspended for pre-flight
     refusals. push.status "skipped" means no commit was created.
 
 Examples:

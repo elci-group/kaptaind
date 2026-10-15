@@ -175,7 +175,7 @@ kaptaind commit --skip-tests "CI flake tracked in #123"
 | 0 | committed (and any requested push succeeded) |
 | 1 | error (commit failed, version write failed, push failed, ...) |
 | 3 | nothing to commit: clean tree, below threshold (`no_bump`), nothing staged |
-| 4 | refused by a gate: daemon running, untrusted config, suspended, observe mode, test failed, baseline unresolvable, version mismatch, policy block, pre-commit hook failed, push disabled (with `--push`) or refused |
+| 4 | refused by a gate: daemon running, another `kaptaind commit` running, untrusted config, RBAC denies `daemon.start`, `[shark]` HA enabled, suspended, observe mode, test failed or test program not found, baseline unresolvable, version mismatch, policy block, pre-commit hook failed, push disabled (with `--push`) or refused |
 
 JSON output (`--json`):
 
@@ -186,7 +186,8 @@ JSON output (`--json`):
 ```
 
 `outcome` is the decision code recorded in `.kaptaind/decisions.jsonl` (see
-`kaptaind explain`), or `daemon_running` / `untrusted` for pre-flight
+`kaptaind explain`), or `daemon_running` / `commit_in_progress` /
+`untrusted` / `unauthorized` / `ha_enabled` / `suspended` for pre-flight
 refusals; `push.status = "skipped"` means no commit was created.
 
 - `--paths` restricts the cluster **and** staging to those files/directories
@@ -194,7 +195,13 @@ refusals; `push.status = "skipped"` means no commit was created.
 - `--skip-tests <REASON>` bypasses the test hook for this transaction only.
   The reason is mandatory; it is appended to the decision reason
   (`; tests skipped: <reason>`) and added as a
-  `Kaptaind-Skipped-Tests: <reason>` commit trailer.
+  `Kaptaind-Skipped-Tests: <reason>` commit trailer. It is refused (`blocked`)
+  when a policy requires tests (`branch_protection`, `min_test_coverage`);
+  an accepted skip is audit-logged as `tests_skipped`.
+- Enforces the RBAC `daemon.start` permission like daemon startup, refuses
+  while `[shark]` HA is enabled, and holds `.kaptaind/commit.lock` so two
+  `kaptaind commit` runs never race (`commit_in_progress`). A `VERSION` seeded
+  by the first-run bootstrap is removed again when nothing is committed.
 - Requires `[operation] mode = "actuate"` and `[trust] execution = "trusted"`
   like the daemon; in observe mode the `observed` decision is recorded and
   the command exits 4.

@@ -609,18 +609,48 @@ pub(crate) async fn process_cluster_with_options(
                 if config.governance.enforce_enterprise_controls {
                     let Some(export) = config.audit.export.as_ref() else {
                         tracing::error!(component = module_path!(), "enterprise governance audit export disappeared after configuration validation; blocking cluster");
+                        record_decision(
+                            config,
+                            &cluster,
+                            crate::daemon::decisions::outcome::BLOCKED,
+                            "enterprise governance audit export is not configured",
+                            None,
+                            None,
+                            None,
+                            None,
+                        );
                         status.set_idle();
                         write_status(&config.repo_path, status);
                         return;
                     };
                     if let Err(error) = crate::audit::verify_export(&config.repo_path, export) {
                         tracing::error!(component = module_path!(), %error, "enterprise audit export integrity failed; blocking cluster");
+                        record_decision(
+                            config,
+                            &cluster,
+                            crate::daemon::decisions::outcome::BLOCKED,
+                            format!("enterprise audit export integrity failed: {error}"),
+                            None,
+                            None,
+                            None,
+                            None,
+                        );
                         status.set_idle();
                         write_status(&config.repo_path, status);
                         return;
                     }
                     if let Err(error) = policy.validate_enterprise_release_controls() {
                         tracing::error!(%error, policy_id = id, "enterprise policy controls failed; blocking cluster");
+                        record_decision(
+                            config,
+                            &cluster,
+                            crate::daemon::decisions::outcome::BLOCKED,
+                            format!("enterprise policy controls failed: {error}"),
+                            None,
+                            None,
+                            None,
+                            None,
+                        );
                         status.set_idle();
                         write_status(&config.repo_path, status);
                         return;
@@ -632,6 +662,16 @@ pub(crate) async fn process_cluster_with_options(
             Err(error) => {
                 // A configured policy is an authorization boundary. Never
                 // continue automated commits after its trust check fails.
+                record_decision(
+                    config,
+                    &cluster,
+                    crate::daemon::decisions::outcome::BLOCKED,
+                    format!("policy {id} verification failed: {error}"),
+                    None,
+                    None,
+                    None,
+                    None,
+                );
                 status.set_idle();
                 write_status(&config.repo_path, status);
                 tracing::error!(error = %error, policy_id = id, "policy verification failed; blocking cluster");
@@ -781,6 +821,16 @@ pub(crate) async fn process_cluster_with_options(
             .collect::<Vec<_>>(),
         Err(err) => {
             tracing::error!(error = %err, "failed to inspect cluster-scoped changes");
+            record_decision(
+                config,
+                &cluster,
+                crate::daemon::decisions::outcome::ERROR,
+                format!("failed to inspect cluster-scoped changes: {err}"),
+                None,
+                None,
+                None,
+                None,
+            );
             status.set_failed(err.to_string());
             write_status(&config.repo_path, status);
             return;
@@ -834,6 +884,62 @@ pub(crate) async fn process_cluster_with_options(
         .map(|p| policy::is_branch_protected(&config.repo_path, &p.branch_protection))
         .unwrap_or(false);
 
+    let policy_requires_coverage = policy
+        .as_ref()
+        .map(|p| p.min_test_coverage)
+        .unwrap_or(false);
+    if let Some(reason) = cluster_opts.skip_tests_reason.as_deref() {
+        if branch_protection_forces_tests || policy_requires_coverage {
+            // Policy-mandated tests are an authorization boundary; a CLI
+            // justification never overrides them.
+            let mandate = if branch_protection_forces_tests {
+                "branch_protection"
+            } else {
+                "min_test_coverage"
+            };
+            tracing::warn!(
+                reason,
+                mandate,
+                "--skip-tests refused: policy requires tests for this cluster"
+            );
+            crate::audit::log_event(
+                &config.repo_path,
+                "daemon",
+                "commit_blocked",
+                false,
+                serde_json::json!({
+                    "reason": "skip_tests_refused",
+                    "mandate": mandate,
+                    "skip_tests_reason": reason,
+                    "cluster_id": cluster.id.to_string(),
+                }),
+            );
+            record_decision(
+                config,
+                &cluster,
+                crate::daemon::decisions::outcome::BLOCKED,
+                format!("--skip-tests refused: policy {mandate} requires tests"),
+                None,
+                None,
+                None,
+                None,
+            );
+            status.set_idle();
+            write_status(&config.repo_path, status);
+            return;
+        }
+        crate::audit::log_event(
+            &config.repo_path,
+            "daemon",
+            "tests_skipped",
+            true,
+            serde_json::json!({
+                "reason": reason,
+                "cluster_id": cluster.id.to_string(),
+            }),
+        );
+    }
+
     test_outcome = if let Some(reason) = cluster_opts.skip_tests_reason.as_deref() {
         tracing::warn!(
             reason,
@@ -872,12 +978,8 @@ pub(crate) async fn process_cluster_with_options(
         metrics.test_hook_failures.fetch_add(1, Ordering::Relaxed);
     }
 
-    let tests_required = config.test.required
-        || branch_protection_forces_tests
-        || policy
-            .as_ref()
-            .map(|p| p.min_test_coverage)
-            .unwrap_or(false);
+    let tests_required =
+        config.test.required || branch_protection_forces_tests || policy_requires_coverage;
 
     if tests_required && matches!(test_outcome, TestOutcome::Failed { .. }) {
         log_test_failure(&test_outcome);
@@ -902,11 +1004,7 @@ pub(crate) async fn process_cluster_with_options(
             );
         }
 
-        if policy
-            .as_ref()
-            .map(|p| p.min_test_coverage)
-            .unwrap_or(false)
-        {
+        if policy_requires_coverage {
             crate::audit::log_event(
                 &config.repo_path,
                 "daemon",
@@ -2657,9 +2755,19 @@ pub async fn run_test_hook_for_config(test: &TestConfig, repo_path: &Path) -> Te
         }
         Err(err) => {
             tracing::error!(error = %err, "failed to spawn test hook command");
-            let missing_program =
-                (err.kind() == std::io::ErrorKind::NotFound).then(|| "sh".to_string());
-            let stderr = format!("failed to spawn test hook via sh: {err}");
+            // spawn reports NotFound for a missing cwd too; only blame `sh`
+            // when the repository directory itself is present.
+            let cwd_missing = !repo_path.is_dir();
+            let missing_program = (err.kind() == std::io::ErrorKind::NotFound && !cwd_missing)
+                .then(|| "sh".to_string());
+            let stderr = if cwd_missing {
+                format!(
+                    "failed to spawn test hook: repository directory {} does not exist: {err}",
+                    repo_path.display()
+                )
+            } else {
+                format!("failed to spawn test hook via sh: {err}")
+            };
             TestOutcome::Failed {
                 code: None,
                 output_tail: crate::daemon::decisions::output_tail(&stderr),
