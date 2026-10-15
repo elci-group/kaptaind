@@ -1563,9 +1563,9 @@ OLLAMA_BASE_URL=http://localhost:11434
 
 See the **[Multi-Provider Inference Routing Tutorial](./tutorial_inference_routing.md)** for advanced configuration and troubleshooting.
 
-## Commit Validation: Fast vs. Consensus Modes
+## Commit Validation: Fast, Consensus, and Colony Modes
 
-Kaptaind offers two strategies for AI-generated commit messages, tradingoff latency against hallucination risk:
+Kaptaind offers three strategies for AI-generated commit messages, trading off latency against hallucination risk:
 
 ### Fast Mode (Default)
 
@@ -1591,6 +1591,86 @@ consensus_min_agreement = 2   # Min responding models
 ```
 
 **When models disagree** or quorum isn't reached, kaptaind gracefully falls back to deterministic metadata-only messages. Both modes are fully optional (inference disabled by default).
+
+### Colony Mode (distributed)
+
+`validation_mode = "colony"` runs consensus through the [Colony (`:e`)](https://github.com/elci-group/-e) control plane, across providers instead of Ollama models only. Each cluster becomes a small work graph of independent candidates:
+
+- **Distributed placement.** Every routed provider/model is a Colony resource with concurrency 1, so one dispatch wave puts each candidate on a *different* route, ranked by cost, latency and quota.
+- **Budget authority.** `budget_micros` is the integer money ceiling per cluster (micro-units, `1_000_000` = $1), split evenly across candidates; a route whose estimated call cost exceeds a candidate's share is not eligible.
+- **Trusted verification.** A model's answer never validates itself. kaptaind's deterministic verifier checks each subject (`single_line`, `subject_length` ≤ 72, `no_preamble`, `breaking_marker_matches_bump` — a `!:` / `BREAKING CHANGE` subject needs a major bump — and `artifact_integrity`, a SHA-256 of the received text); only validated candidates reach the Jaccard election (`consensus_threshold`; quorum is `consensus_min_agreement`, capped at the number of candidates dispatched).
+- **Audit trail.** Each run writes `.kaptaind/colony/<cluster-id>.json`: routes, per-candidate assignment with every ranked alternative, final states, evidence, reserved budget, and the elected subject.
+
+Nothing elected (no route available, every candidate rejected, or no consensus) falls back to the deterministic message.
+
+```toml
+[inference]
+enabled = true
+validation_mode = "colony"
+
+[inference.routing]
+preset = "all-provider-flash"
+
+[inference.colony]
+max_candidates = 3          # candidates per cluster, each on a distinct route
+budget_micros = 20000       # $0.02 per cluster
+output_tokens = 512         # per-candidate output ceiling
+classification = "internal" # public | internal | confidential | restricted | local_only
+```
+
+`restricted` and `local_only` changes are only placed on local routes (Ollama).
+
+## Model Routing
+
+`[inference.routing]` decides which provider/model(s) a cluster goes to. Fast mode tries the resolved routes in order until one answers; colony mode distributes candidates across them. Without a `[inference.routing]` section, `provider` / `model` behave as before, and `uk_compliance_mode` always routes to Cosine only.
+
+Resolution: the first `[[inference.routing.rules]]` entry whose `when` matches the cluster wins; otherwise the default `models` plus the expansion of `preset`. Routes are de-duplicated, and routes whose provider has no credentials are dropped (logged). If nothing remains, the deterministic message is used — kaptaind never silently routes somewhere you did not configure.
+
+```toml
+[inference.routing]
+preset = "all-provider-flash"          # default route set
+
+[[inference.routing.models]]           # explicit pins, tried first
+provider = "anthropic"
+model = "claude-haiku-5-5"
+reasoning_effort = "none"              # none | minimal | low | medium | high
+input_micros_per_million = 100000      # list price, for colony budgeting
+output_micros_per_million = 500000
+
+[[inference.routing.rules]]            # first match wins
+name = "breaking changes"
+when = { bump = ["major"], paths = ["src/api/**"] }
+preset = "openai-smallest-frontier"
+
+[[inference.routing.rules]]
+name = "docs only"
+when = { paths = ["docs/**", "*.md"], max_score = 0.3 }
+preset = "openrouter-free-tier"
+```
+
+`when` fields (all set fields must match): `bump` (`major`/`minor`/`patch`/`none`), `min_score` / `max_score` (combined diff score), `paths` (globs on repo-relative cluster paths; any path matching is enough), `min_paths`.
+
+### Presets
+
+| Preset | Routes |
+|---|---|
+| `openrouter-free-tier` | Currently free OpenRouter chat models, discovered from OpenRouter's model catalog for each cluster (free availability changes); classifier models are skipped. Up to `max_candidates` in colony mode. |
+| `all-provider-flash` | The fast, low-cost tier of each hosted provider that has credentials: `anthropic/claude-haiku-5-5`, `openai/gpt-6-luna`, `gemini/gemini-3.8-flash`. Kimi has no flash tier and is not included; pin it explicitly if wanted. |
+| `openai-smallest-frontier` | `openai/gpt-6-luna`, the smallest model of OpenAI's current frontier family. |
+
+Preset model IDs and prices are pinned as of 2026-10; pin a model under `models` to override.
+
+### Providers and credentials
+
+| Provider | Credential | Transport |
+|---|---|---|
+| `anthropic` | `ANTHROPIC_API_KEY` | Messages API; `reasoning_effort = "none"` disables thinking, other values set `output_config.effort` |
+| `openai` | `OPENAI_API_KEY` | Chat Completions (`max_completion_tokens`, `reasoning_effort`) |
+| `gemini` | `GEMINI_API_KEY` or `GOOGLE_API_KEY` | Gemini's OpenAI-compatible endpoint |
+| `openrouter` | `OPENROUTER_API_KEY`, else the key file `~/.keys/openrouter` | OpenRouter Chat Completions |
+| `kimi` | Kimi keys (see Kimi integration) | Kimi client; model from `[inference] kimi_*` |
+| `ollama` | none (local) | `ollama_base_url` |
+| `cosine` | `cosine_base_url` | Cosine Lumen endpoint |
 
 See the **[Commit Validation Tutorial](./tutorial_commit_validation.md)** for detailed comparison, configuration examples, and decision guidance.
 

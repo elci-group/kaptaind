@@ -1,17 +1,26 @@
 pub mod anthropic;
+pub mod colony;
+pub mod compat;
 pub mod consensus;
 pub mod cosine;
+pub mod gemini;
 pub mod kimi;
 pub mod ollama;
 pub mod openai;
+pub mod openrouter;
+pub mod routing;
 
 use crate::cluster::engine::Cluster;
-use crate::config::loader::{InferenceConfig, ValidationMode};
+use crate::config::loader::{InferenceConfig, ModelRoute, ValidationMode};
 use crate::diff::DiffAnalysis;
 use crate::version::Bump;
 use crate::weight::WeightResult;
 use semver::Version;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Output-token ceiling for a routed fast-mode call (room for models that
+/// reason before answering).
+const ROUTED_MAX_TOKENS: u32 = 512;
 
 /// Contextual data available at commit time for inference.
 pub struct CommitContext<'a> {
@@ -22,6 +31,8 @@ pub struct CommitContext<'a> {
     pub previous: &'a Version,
     pub next: &'a Version,
     pub cluster_paths: &'a [PathBuf],
+    /// Repository root, for repo-relative routing rule globs and reports.
+    pub repo_path: &'a Path,
 }
 
 /// Selects the active provider based on config + env vars.
@@ -71,6 +82,9 @@ pub async fn generate_commit_message(
     tracing::info!(mode = ?config.validation_mode, "inference mode selected");
 
     match config.validation_mode {
+        ValidationMode::Fast if config.routing.is_configured() && !config.uk_compliance_mode => {
+            generate_routed_fast(config, ctx).await
+        }
         ValidationMode::Fast => {
             let provider = resolve_provider(config);
             let model = resolve_model(config, provider);
@@ -90,6 +104,58 @@ pub async fn generate_commit_message(
             }
         }
         ValidationMode::Consensus => consensus::generate(config, ctx).await,
+        ValidationMode::Colony => {
+            let limit = config.colony.max_candidates.max(1);
+            let routes = routing::resolve(config, ctx, limit).await;
+            colony::generate(config, ctx, &routes).await
+        }
+    }
+}
+
+/// Fast mode under `[inference.routing]`: try each resolved route in order
+/// until one returns a subject.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
+async fn generate_routed_fast(config: &InferenceConfig, ctx: &CommitContext<'_>) -> Option<String> {
+    for route in routing::resolve(config, ctx, 1).await {
+        tracing::info!(
+            component = module_path!(),
+            provider = %route.provider,
+            model = %route.model,
+            "fast mode: routed inference"
+        );
+        if let Some(subject) = generate_with_route(config, ctx, &route, ROUTED_MAX_TOKENS).await {
+            return Some(subject);
+        }
+    }
+    None
+}
+
+/// Generate a subject on one routed provider/model.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
+pub async fn generate_with_route(
+    config: &InferenceConfig,
+    ctx: &CommitContext<'_>,
+    route: &ModelRoute,
+    max_tokens: u32,
+) -> Option<String> {
+    let effort = route.reasoning_effort.as_deref();
+    let model = route.model.as_str();
+    match route.provider.as_str() {
+        "anthropic" => anthropic::generate_with(config, ctx, model, max_tokens, effort).await,
+        "openai" => {
+            let limit = compat::TokenLimit::MaxCompletionTokens(max_tokens);
+            openai::generate_with(config, ctx, model, limit, effort).await
+        }
+        "gemini" => gemini::generate(config, ctx, model, max_tokens, effort).await,
+        "openrouter" => openrouter::generate(config, ctx, model, max_tokens, effort).await,
+        // Kimi resolves its model from `[inference] kimi_*` settings.
+        "kimi" => kimi::generate(config, ctx, model).await,
+        "cosine" => cosine::generate(config, ctx, model).await,
+        "ollama" => ollama::generate(config, ctx, model).await,
+        other => {
+            tracing::warn!(provider = other, "unknown inference provider in route");
+            None
+        }
     }
 }
 

@@ -15,6 +15,41 @@ All notable changes to kaptaind are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+- **Distributed inference through Colony (`:e`)** — `validation_mode =
+  "colony"`. Each cluster becomes a Colony work graph of independent
+  candidates, one per distinct routed provider/model (resources have
+  concurrency 1, so one dispatch wave spreads candidates across routes,
+  ranked by cost, latency and quota). `[inference.colony]` sets
+  `max_candidates`, the integer per-cluster money ceiling `budget_micros`
+  (routes whose estimated call cost exceeds a candidate's share are not
+  eligible), `output_tokens`, and `classification` (`restricted` /
+  `local_only` run on local routes only). A deterministic kaptaind verifier
+  (`single_line`, `subject_length`, `no_preamble`,
+  `breaking_marker_matches_bump`, `artifact_integrity`) decides which
+  candidates count; validated candidates go through the existing Jaccard
+  election. Each run writes `.kaptaind/colony/<cluster-id>.json`. Uses the
+  transport-neutral Colony crates pinned by git rev; kaptaind is the host.
+- **Model routing** — `[inference.routing]` with explicit
+  `[[inference.routing.models]]` provider/model pins, a `preset`, and
+  first-match `[[inference.routing.rules]]` (`when`: `bump`, `min_score`,
+  `max_score`, repo-relative `paths` globs, `min_paths`). Routes without
+  credentials are dropped; nothing routable falls back to the deterministic
+  message. Fast mode tries routes in order; colony mode distributes across
+  them. Without the section, `provider` / `model` behave as before.
+- **Routing presets** — `openrouter-free-tier` (free OpenRouter chat models
+  discovered from its catalog per cluster), `all-provider-flash`
+  (`claude-haiku-5-5`, `gpt-6-luna`, `gemini-3.8-flash`, for providers with
+  credentials), `openai-smallest-frontier` (`gpt-6-luna`).
+- **Gemini and OpenRouter providers** (`GEMINI_API_KEY` / `GOOGLE_API_KEY`,
+  `OPENROUTER_API_KEY` or `~/.keys/openrouter`) over a shared
+  OpenAI-compatible client; routes carry `reasoning_effort` (Anthropic:
+  `none` disables thinking, other values set `output_config.effort`).
+
+### Fixed
+- The Anthropic client reads the first `text` block, so a response that
+  starts with a `thinking` block no longer fails to parse.
+
 ## [10.5.0] — 2026-10-15
 
 ### Added

@@ -67,4 +67,8 @@ unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # deckhand is consumed as a pinned git dependency (see Cargo.toml); allow that
 # single git source explicitly so `unknown-git = "deny"` can stay on.
-allow-git = ["https://github.com/elci-group/deckhand"]
+allow-git = [
+    "https://github.com/elci-group/deckhand",
+    # Colony (`:e`) control-plane crates (validation_mode = "colony").
+    "https://github.com/elci-group/-e",
+]

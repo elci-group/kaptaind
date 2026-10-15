@@ -226,6 +226,7 @@ mod tests {
             previous: &previous,
             next: &next,
             cluster_paths: &paths,
+            repo_path: std::path::Path::new("/repo"),
         };
 
         let prompt = build_user_prompt(&ctx);
@@ -261,6 +262,7 @@ mod tests {
             previous: &previous,
             next: &next,
             cluster_paths: &paths,
+            repo_path: std::path::Path::new("/repo"),
         };
 
         let prompt = build_user_prompt(&ctx);

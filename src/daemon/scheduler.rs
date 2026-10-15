@@ -1649,6 +1649,7 @@ pub(crate) async fn process_cluster_with_options(
             previous: &previous,
             next: &next,
             cluster_paths: &cluster_paths,
+            repo_path: &config.repo_path,
         };
         match crate::inference::generate_commit_message(&config.inference, &ctx).await {
             Some(narrative) => {
@@ -1662,7 +1663,8 @@ pub(crate) async fn process_cluster_with_options(
             None => {
                 tracing::warn!(
                     component = module_path!(),
-                    "ollama inference unavailable; using deterministic message"
+                    mode = ?config.inference.validation_mode,
+                    "inference produced no subject; using deterministic message"
                 );
                 metadata_line
             }
@@ -1689,7 +1691,12 @@ pub(crate) async fn process_cluster_with_options(
         }
     }
     let output_tokens = msg.len() / 4;
-    let (provider, model) = if config.inference.enabled {
+    let (provider, model) = if config.inference.enabled
+        && config.inference.validation_mode == crate::config::loader::ValidationMode::Colony
+    {
+        // Per-candidate routes and costs are in .kaptaind/colony/<cluster-id>.json.
+        ("colony".to_string(), "distributed".to_string())
+    } else if config.inference.enabled {
         let provider = crate::inference::resolve_provider(&config.inference);
         let model = crate::inference::resolve_model(&config.inference, provider);
         (provider.to_string(), model.to_string())

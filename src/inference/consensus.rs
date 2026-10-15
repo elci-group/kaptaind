@@ -111,11 +111,22 @@ pub async fn generate(config: &InferenceConfig, ctx: &CommitContext<'_>) -> Opti
         "consensus: collected responses"
     );
 
+    elect(
+        &candidates,
+        config.consensus_threshold,
+        config.consensus_min_agreement,
+    )
+}
+
+/// Elect the candidate with the highest mean Jaccard similarity to the
+/// others. `None` below `min_agreement` candidates or when the best score is
+/// under `threshold`.
+pub(super) fn elect(candidates: &[String], threshold: f64, min_agreement: usize) -> Option<String> {
     // Quorum check.
-    if candidates.len() < config.consensus_min_agreement {
+    if candidates.len() < min_agreement {
         tracing::warn!(
             responding = candidates.len(),
-            required = config.consensus_min_agreement,
+            required = min_agreement,
             "consensus: insufficient responses; falling back to deterministic"
         );
         return None;
@@ -154,10 +165,10 @@ pub async fn generate(config: &InferenceConfig, ctx: &CommitContext<'_>) -> Opti
         .enumerate()
         .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))?;
 
-    if best_score < config.consensus_threshold {
+    if best_score < threshold {
         tracing::warn!(
             best_score = best_score,
-            threshold = config.consensus_threshold,
+            threshold = threshold,
             "consensus: best score below threshold; no consensus reached"
         );
         return None;

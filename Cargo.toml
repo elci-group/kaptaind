@@ -34,6 +34,15 @@ kaptaind-diff = { path = "crates/kaptaind-diff" }
 # `.cargo/config.toml` with: paths = ["../3form", "../bound"]
 form3 = { git = "https://github.com/elci-group/form3", rev = "0a3d331a771a1eb6266839c701ee213a44e5f514" }
 deckhand = { git = "https://github.com/elci-group/deckhand", rev = "b5c221b6182e871ffeb150d050af518c4121a753" }
+# Colony (`:e`) control plane for distributed inference (`validation_mode =
+# "colony"`). Only the transport-neutral crates are used; kaptaind is the host
+# (providers, verifier, event loop). `colony-adapters` is deliberately not a
+# dependency: it path-depends on sibling mesut/padagonia checkouts.
+colony-core = { git = "https://github.com/elci-group/-e", rev = "23ea5da4b24f3184fc2937333c35a7426436a10f" }
+colony-provider = { git = "https://github.com/elci-group/-e", rev = "23ea5da4b24f3184fc2937333c35a7426436a10f" }
+colony-allocator = { git = "https://github.com/elci-group/-e", rev = "23ea5da4b24f3184fc2937333c35a7426436a10f" }
+colony-planner = { git = "https://github.com/elci-group/-e", rev = "23ea5da4b24f3184fc2937333c35a7426436a10f" }
+colony-runtime = { git = "https://github.com/elci-group/-e", rev = "23ea5da4b24f3184fc2937333c35a7426436a10f" }
 anyhow = "1"
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
@@ -50,6 +59,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 semver = { version = "1", features = ["serde"] }
 globset = "0.4"
+futures-util = "0.3"
 glob = "0.3"
 ignore = "0.4"
 clap = { version = "4", features = ["derive"] }

@@ -11,6 +11,10 @@ struct MessageRequest<'a> {
     max_tokens: u32,
     system: &'a str,
     messages: Vec<MessageContent<'a>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    thinking: Option<serde_json::Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    output_config: Option<serde_json::Value>,
 }
 
 #[derive(serde::Serialize)]
@@ -26,7 +30,28 @@ struct MessageResponse {
 
 #[derive(serde::Deserialize)]
 struct ContentBlock {
+    #[serde(rename = "type", default)]
+    kind: String,
+    /// Absent on `thinking` blocks, which current models may return first.
+    #[serde(default)]
     text: String,
+}
+
+/// Map a routed `reasoning_effort` onto the Messages API: `none` disables
+/// thinking; any other value becomes `output_config.effort`.
+fn reasoning_fields(
+    reasoning_effort: Option<&str>,
+) -> (Option<serde_json::Value>, Option<serde_json::Value>) {
+    match reasoning_effort {
+        None => (None, None),
+        Some("none") => (Some(serde_json::json!({"type": "disabled"})), None),
+        Some(effort) => (None, Some(serde_json::json!({ "effort": effort }))),
+    }
+}
+
+/// True when `ANTHROPIC_API_KEY` is set.
+pub fn is_available() -> bool {
+    std::env::var("ANTHROPIC_API_KEY").is_ok()
 }
 
 /// Calls Anthropic Messages API to generate a commit message subject line.
@@ -36,6 +61,19 @@ pub async fn generate(
     config: &InferenceConfig,
     ctx: &CommitContext<'_>,
     model: &str,
+) -> Option<String> {
+    generate_with(config, ctx, model, 100, None).await
+}
+
+/// [`generate`] with an explicit output ceiling and reasoning effort, for
+/// routed models.
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
+pub async fn generate_with(
+    config: &InferenceConfig,
+    ctx: &CommitContext<'_>,
+    model: &str,
+    max_tokens: u32,
+    reasoning_effort: Option<&str>,
 ) -> Option<String> {
     // traci: allow -- adjacent structured event records this failure path.
     if let Err(error) = crate::compliance::enforce_egress_url(
@@ -59,18 +97,19 @@ pub async fn generate(
     let client =
         crate::util::http::hardened_inference_client(Duration::from_secs(config.timeout_secs));
 
-    let system_prompt = "You are a precise software commit message author. Write a single subject line (max 72 characters) describing what changed. Use conventional commit format (feat:, fix:, refactor:, chore:) when it fits. Output ONLY the subject line — no body, no explanation.";
-
     let user_prompt = super::ollama::build_user_prompt(ctx);
+    let (thinking, output_config) = reasoning_fields(reasoning_effort);
 
     let request = MessageRequest {
         model,
-        max_tokens: 100,
-        system: system_prompt,
+        max_tokens,
+        system: super::compat::SYSTEM_PROMPT,
         messages: vec![MessageContent {
             role: "user",
             content: &user_prompt,
         }],
+        thinking,
+        output_config,
     };
 
     let response = match client
@@ -102,36 +141,53 @@ pub async fn generate(
         }
     };
 
-    if msg_response.content.is_empty() {
+    let Some(block) = msg_response
+        .content
+        .iter()
+        .find(|block| block.kind == "text" || block.kind.is_empty())
+    else {
         tracing::warn!(
             component = module_path!(),
-            "anthropic returned empty content"
+            "anthropic returned no text block"
         );
         return None;
-    }
+    };
 
-    let content = msg_response.content[0].text.trim();
-    if content.is_empty() {
-        tracing::warn!(component = module_path!(), "anthropic text was empty");
-        return None;
-    }
-
-    // Take first line and truncate to 72 chars
-    let subject = content
-        .lines()
-        .next()
-        .unwrap_or("")
-        .chars()
-        .take(72)
-        .collect::<String>();
-
-    if subject.is_empty() {
+    let subject = super::compat::first_line_subject(&block.text);
+    if subject.is_none() {
         tracing::warn!(
             component = module_path!(),
             "anthropic subject line was empty after truncation"
         );
-        return None;
+    }
+    subject
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn none_effort_disables_thinking_and_others_set_effort() {
+        assert_eq!(reasoning_fields(None), (None, None));
+        let (thinking, effort) = reasoning_fields(Some("none"));
+        assert_eq!(thinking.unwrap()["type"], "disabled");
+        assert!(effort.is_none());
+        let (thinking, effort) = reasoning_fields(Some("low"));
+        assert!(thinking.is_none());
+        assert_eq!(effort.unwrap()["effort"], "low");
     }
 
-    Some(subject)
+    #[test]
+    fn text_block_is_found_after_a_thinking_block() {
+        let response: MessageResponse = serde_json::from_value(serde_json::json!({
+            "content": [
+                {"type": "thinking", "thinking": ""},
+                {"type": "text", "text": "feat: route models"}
+            ]
+        }))
+        .unwrap();
+        let block = response.content.iter().find(|b| b.kind == "text").unwrap();
+        assert_eq!(block.text, "feat: route models");
+    }
 }

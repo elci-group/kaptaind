@@ -30,6 +30,7 @@
 | `src/cluster/` | Event clustering by time window. |
 | `src/diff/` | Scoring across five dimensions: structural (`text.rs`), API surface (`ast.rs`), dependencies/runtime (`api.rs`), bundle size (`bundle.rs`), and the language adapter framework (`lang/`). |
 | `src/diff/lang/` | `adapter.rs` (traits/representation), `registry.rs` (path→adapter resolution), `adapters/` (concrete adapters), `common.rs` (shared helpers). |
+| `src/inference/` | Commit-subject inference: providers (`anthropic`, `openai`, `gemini`, `openrouter`, `kimi`, `ollama`, `cosine`; `compat.rs` is the shared OpenAI-compatible client), `routing.rs` (`[inference.routing]` pins/presets/rules), `consensus.rs` (Ollama consensus + shared Jaccard `elect`), `colony.rs` (Colony `:e` host for `validation_mode = "colony"`). |
 | `src/weight/` | Weighted score calculation: `s*structural + a*api + d*deps + r*runtime + b*bundle`. |
 | `src/version/` | Semantic bump decision, `semver::Version` mutation, Cargo workspace discovery (`workspace.rs`), and version writeback (`writeback.rs`: `save_version` + `save_workspace_version` behind `[versioning].workspace`, default `root_only`). |
 | `src/version/bootstrap.rs` | First-run version baseline enforcement (`[versioning].bootstrap` / `initial_version`), shared by daemon startup and `kaptaind commit`. |
@@ -100,9 +101,11 @@
   - `.kaptaind/aoc/manifests/<id>.json` — shipped AoC session summaries.
   - `.kaptaind/decisions.jsonl` — append-only per-cluster decision log (`kaptaind explain`, `status`); test-hook records carry optional `exit_code`, `output_tail` (≤40 lines), `missing_program`.
   - `.kaptaind/daemon.pid` — live daemon pid; `kaptaind commit` refuses while it is held unless `--force`.
+  - `.kaptaind/colony/<cluster-id>.json` — report of one `validation_mode = "colony"` run (routes, assignments with ranked alternatives, states, verifier evidence, reserved budget, elected subject).
   - `.kaptaind/commit.lock` — held by one `kaptaind commit` transaction; a concurrent run refuses with `commit_in_progress` (a lock left by a dead pid is reclaimed).
 - Environment variables:
   - kaptaind loads an optional `.env` file at startup (daemon and CLI) so provider keys and secrets can stay out of `kaptaind.toml`.
+  - Inference provider keys are read from `.env`: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY` (or `GOOGLE_API_KEY`), `OPENROUTER_API_KEY` (falls back to `~/.keys/openrouter`); Kimi and Cosine keep their own settings.
   - TTS provider keys are read from `.env`: `ELEVENLABS_API_KEY`, `OPENAI_API_KEY`, `AZURE_SPEECH_KEY`/`AZURE_SPEECH_REGION`, `GOOGLE_API_KEY`, `CARTESIA_API_KEY`. Local system TTS uses `say` (macOS), `espeak` (Linux), or PowerShell (Windows).
 
 ## Code patterns and conventions

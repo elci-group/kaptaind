@@ -897,6 +897,12 @@ Examples:
 *.kaptaind/decisions.jsonl*
 :   Append-only per-cluster decision log, read by **kaptaind explain** and **kaptaind status**.
 
+*.kaptaind/colony/<cluster-id>.json*
+:   Report of one **validation_mode = "colony"** run: routes, each candidate's assignment with the ranked alternatives, final states, verifier evidence, reserved budget, and the elected subject.
+
+*.kaptaind/commit.lock*
+:   Held by one **kaptaind commit** transaction; a concurrent run refuses with **commit_in_progress**.
+
 *.kaptaind/daemon.pid*
 :   PID of a running daemon. **kaptaind commit** refuses while it is held by a live process unless **--force** is given.
 
@@ -916,6 +922,9 @@ Examples:
 
 **KAPTAIND_SKIP_SKILL**, **KAPTAIND_SKIP_SHIM**
 :   Read by *install.sh*: set to **1** to skip installing the agent skill or the `kaptaind-cli` deprecation shim.
+
+**ANTHROPIC_API_KEY**, **OPENAI_API_KEY**, **GEMINI_API_KEY** (or **GOOGLE_API_KEY**), **OPENROUTER_API_KEY**
+:   Inference provider credentials (also read from *.env*). **OPENROUTER_API_KEY** falls back to the key file *~/.keys/openrouter*. A route whose provider has no credential is skipped. **[inference.routing]** selects routes by explicit **models** pins, a **preset** (**openrouter-free-tier**, **all-provider-flash**, **openai-smallest-frontier**), or first-match **rules**; **validation_mode = "colony"** distributes candidates across them through the Colony control plane under **[inference.colony] budget_micros**.
 
 **RUST_LOG**
 :   Set the tracing log level, e.g. **debug**, **info**, **warn**, or **error**. Default is **info**.

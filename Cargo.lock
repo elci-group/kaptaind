@@ -516,6 +516,66 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8fd5de2a10e31b3ec3e8d75e7ccf8281ab3ee55de68f7ab6ffa9e21be8d82f22"
 
 [[package]]
+name = "colony-allocator"
+version = "0.1.1"
+source = "git+https://github.com/elci-group/-e?rev=23ea5da4b24f3184fc2937333c35a7426436a10f#23ea5da4b24f3184fc2937333c35a7426436a10f"
+dependencies = [
+ "colony-core",
+ "colony-policy",
+ "colony-provider",
+ "serde",
+]
+
+[[package]]
+name = "colony-core"
+version = "0.1.1"
+source = "git+https://github.com/elci-group/-e?rev=23ea5da4b24f3184fc2937333c35a7426436a10f#23ea5da4b24f3184fc2937333c35a7426436a10f"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "colony-planner"
+version = "0.1.1"
+source = "git+https://github.com/elci-group/-e?rev=23ea5da4b24f3184fc2937333c35a7426436a10f#23ea5da4b24f3184fc2937333c35a7426436a10f"
+dependencies = [
+ "colony-core",
+ "colony-policy",
+ "serde",
+]
+
+[[package]]
+name = "colony-policy"
+version = "0.1.1"
+source = "git+https://github.com/elci-group/-e?rev=23ea5da4b24f3184fc2937333c35a7426436a10f#23ea5da4b24f3184fc2937333c35a7426436a10f"
+dependencies = [
+ "colony-core",
+ "serde",
+]
+
+[[package]]
+name = "colony-provider"
+version = "0.1.1"
+source = "git+https://github.com/elci-group/-e?rev=23ea5da4b24f3184fc2937333c35a7426436a10f#23ea5da4b24f3184fc2937333c35a7426436a10f"
+dependencies = [
+ "colony-core",
+ "serde",
+]
+
+[[package]]
+name = "colony-runtime"
+version = "0.1.1"
+source = "git+https://github.com/elci-group/-e?rev=23ea5da4b24f3184fc2937333c35a7426436a10f#23ea5da4b24f3184fc2937333c35a7426436a10f"
+dependencies = [
+ "colony-allocator",
+ "colony-core",
+ "colony-planner",
+ "colony-policy",
+ "colony-provider",
+ "serde",
+]
+
+[[package]]
 name = "colorchoice"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1002,6 +1062,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "futures-macro"
+version = "0.3.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e835b70203e41293343137df5c0664546da5745f82ec9b84d40be8336958447b"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "futures-sink"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1020,6 +1091,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "389ca41296e6190b48053de0321d02a77f32f8a5d2461dd38762c0593805c6d6"
 dependencies = [
  "futures-core",
+ "futures-macro",
  "futures-task",
  "pin-project-lite",
  "slab",
@@ -1575,12 +1647,18 @@ dependencies = [
  "bound-core",
  "chrono",
  "clap",
+ "colony-allocator",
+ "colony-core",
+ "colony-planner",
+ "colony-provider",
+ "colony-runtime",
  "cron",
  "deckhand",
  "divan",
  "flate2",
  "fltk",
  "form3",
+ "futures-util",
  "git2",
  "glob",
  "globset",

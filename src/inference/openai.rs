@@ -1,36 +1,13 @@
-use crate::config::loader::EgressChannel;
 use crate::config::loader::InferenceConfig;
-use std::time::Duration;
 
+use super::compat::{ChatTarget, TokenLimit};
 use super::CommitContext;
 
-/// Serde types for OpenAI API communication
-#[derive(serde::Serialize)]
-struct CompletionRequest<'a> {
-    model: &'a str,
-    max_tokens: u32,
-    messages: Vec<ChatMessage<'a>>,
-}
+const URL: &str = "https://api.openai.com/v1/chat/completions";
 
-#[derive(serde::Serialize)]
-struct ChatMessage<'a> {
-    role: &'a str,
-    content: &'a str,
-}
-
-#[derive(serde::Deserialize)]
-struct CompletionResponse {
-    choices: Vec<Choice>,
-}
-
-#[derive(serde::Deserialize)]
-struct Choice {
-    message: ChoiceMessage,
-}
-
-#[derive(serde::Deserialize)]
-struct ChoiceMessage {
-    content: String,
+/// True when `OPENAI_API_KEY` is set.
+pub fn is_available() -> bool {
+    std::env::var("OPENAI_API_KEY").is_ok()
 }
 
 /// Calls OpenAI Chat Completions API to generate a commit message subject line.
@@ -41,105 +18,33 @@ pub async fn generate(
     ctx: &CommitContext<'_>,
     model: &str,
 ) -> Option<String> {
-    // traci: allow -- adjacent structured event records this failure path.
-    if let Err(error) = crate::compliance::enforce_egress_url(
-        EgressChannel::Inference,
-        "https://api.openai.com/v1/chat/completions",
-    ) {
-        tracing::warn!(component = module_path!(), %error, "regional policy blocked OpenAI inference");
+    generate_with(config, ctx, model, TokenLimit::MaxTokens(100), None).await
+}
+
+/// [`generate`] with an explicit token limit field and reasoning effort, for
+/// routed models (current OpenAI models take `max_completion_tokens`).
+// traci: allow -- this async API inherits the caller span; process roots create correlation IDs.
+pub async fn generate_with(
+    config: &InferenceConfig,
+    ctx: &CommitContext<'_>,
+    model: &str,
+    limit: TokenLimit,
+    reasoning_effort: Option<&str>,
+) -> Option<String> {
+    let Ok(api_key) = std::env::var("OPENAI_API_KEY") else {
+        tracing::warn!(
+            component = module_path!(),
+            "OPENAI_API_KEY not set; skipping OpenAI inference"
+        );
         return None;
-    }
-    let api_key = match std::env::var("OPENAI_API_KEY") {
-        Ok(key) => key,
-        Err(_) => {
-            tracing::warn!(
-                component = module_path!(),
-                "OPENAI_API_KEY not set; skipping OpenAI inference"
-            );
-            return None;
-        }
     };
-
-    let client =
-        crate::util::http::hardened_inference_client(Duration::from_secs(config.timeout_secs));
-
-    let system_prompt = "You are a precise software commit message author. Write a single subject line (max 72 characters) describing what changed. Use conventional commit format (feat:, fix:, refactor:, chore:) when it fits. Output ONLY the subject line — no body, no explanation.";
-
-    let user_prompt = super::ollama::build_user_prompt(ctx);
-
-    let request = CompletionRequest {
+    let target = ChatTarget {
+        provider: "openai",
+        url: URL,
+        api_key: &api_key,
         model,
-        max_tokens: 100,
-        messages: vec![
-            ChatMessage {
-                role: "system",
-                content: system_prompt,
-            },
-            ChatMessage {
-                role: "user",
-                content: &user_prompt,
-            },
-        ],
+        limit,
+        reasoning_effort,
     };
-
-    let response = match client
-        .post("https://api.openai.com/v1/chat/completions")
-        .header("Authorization", format!("Bearer {}", api_key))
-        .header("content-type", "application/json")
-        .json(&request)
-        .send()
-        .await
-    {
-        Ok(resp) => resp,
-        Err(e) => {
-            tracing::warn!(error = %e, "openai request failed");
-            return None;
-        }
-    };
-
-    if !response.status().is_success() {
-        tracing::warn!(status = %response.status(), "openai returned non-200 status");
-        return None;
-    }
-
-    let completion_response: CompletionResponse = match response.json().await {
-        Ok(r) => r,
-        Err(e) => {
-            tracing::warn!(error = %e, "failed to parse openai response");
-            return None;
-        }
-    };
-
-    if completion_response.choices.is_empty() {
-        tracing::warn!(component = module_path!(), "openai returned no choices");
-        return None;
-    }
-
-    let content = completion_response.choices[0].message.content.trim();
-    if content.is_empty() {
-        tracing::warn!(
-            component = module_path!(),
-            "openai message content was empty"
-        );
-        return None;
-    }
-
-    // Take first line and truncate to 72 chars
-    let subject = content
-        .lines()
-        .next()
-        .unwrap_or("")
-        .chars()
-        .take(72)
-        .collect::<String>();
-
-    if subject.is_empty() {
-        tracing::warn!(
-            component = module_path!(),
-            "openai subject line was empty after truncation"
-        );
-        return None;
-    }
-
-    Some(subject)
+    super::compat::complete(config, &target, &super::ollama::build_user_prompt(ctx)).await
 }

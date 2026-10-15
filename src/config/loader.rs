@@ -1541,6 +1541,10 @@ pub enum ValidationMode {
     Fast,
     /// Parallel multi-model Ollama calls with semantic cross-comparison.
     Consensus,
+    /// Distributed consensus through the Colony (`:e`) control plane: one
+    /// candidate per routed provider/model, allocated under an integer
+    /// budget, verified by deterministic checks, then elected.
+    Colony,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -1598,6 +1602,145 @@ pub struct InferenceConfig {
     /// Model name exposed by the controlled Cosine endpoint.
     #[serde(default = "default_cosine_model")]
     pub cosine_model: String,
+    /// Which provider/model(s) a cluster routes to: explicit pins, presets,
+    /// and first-match rules. Empty keeps the `provider`/`model` behaviour.
+    #[serde(default)]
+    pub routing: RoutingConfig,
+    /// Limits for `validation_mode = "colony"`.
+    #[serde(default)]
+    pub colony: ColonyConfig,
+}
+
+/// `[inference.routing]`: the model set a cluster is routed to.
+///
+/// Resolution: the first `[[inference.routing.rules]]` entry whose `when`
+/// matches the cluster wins; otherwise `models` plus the expansion of
+/// `preset`. Fast mode uses the first available route; colony mode
+/// distributes candidates across all of them.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RoutingConfig {
+    /// `openrouter-free-tier`, `all-provider-flash`, or
+    /// `openai-smallest-frontier`.
+    #[serde(default)]
+    pub preset: Option<String>,
+    /// Explicit provider/model pins.
+    #[serde(default)]
+    pub models: Vec<ModelRoute>,
+    #[serde(default)]
+    pub rules: Vec<RoutingRule>,
+}
+
+impl RoutingConfig {
+    pub fn is_configured(&self) -> bool {
+        self.preset.is_some() || !self.models.is_empty() || !self.rules.is_empty()
+    }
+}
+
+/// One routable provider/model with the metadata Colony allocates on.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ModelRoute {
+    /// `anthropic`, `openai`, `gemini`, `openrouter`, `kimi`, `ollama`, or
+    /// `cosine`.
+    pub provider: String,
+    pub model: String,
+    /// Price per million input tokens, in micro-units (1_000_000 = $1).
+    #[serde(default)]
+    pub input_micros_per_million: u64,
+    #[serde(default)]
+    pub output_micros_per_million: u64,
+    /// Typical latency used to rank routes; 0 picks a per-provider default.
+    #[serde(default)]
+    pub latency_ms: u64,
+    /// `none`, `minimal`, `low`, `medium`, `high`: sent as `reasoning_effort`
+    /// (OpenAI-compatible) or mapped to thinking/effort (Anthropic; `none`
+    /// disables thinking). Unset sends nothing.
+    #[serde(default)]
+    pub reasoning_effort: Option<String>,
+}
+
+/// `[[inference.routing.rules]]`: route clusters matching `when`.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RoutingRule {
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub when: RuleCondition,
+    #[serde(default)]
+    pub preset: Option<String>,
+    #[serde(default)]
+    pub models: Vec<ModelRoute>,
+}
+
+/// Conditions of a routing rule; every set field must match.
+#[derive(Debug, Clone, Default, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct RuleCondition {
+    /// Computed bumps that match: `major`, `minor`, `patch`, `none`.
+    #[serde(default)]
+    pub bump: Vec<String>,
+    /// Inclusive bounds on the combined diff score.
+    #[serde(default)]
+    pub min_score: Option<f64>,
+    #[serde(default)]
+    pub max_score: Option<f64>,
+    /// Globs; matches when any cluster path (repo-relative) matches one.
+    #[serde(default)]
+    pub paths: Vec<String>,
+    /// Matches clusters touching at least this many paths.
+    #[serde(default)]
+    pub min_paths: Option<usize>,
+}
+
+/// `[inference.colony]`: budget authority for distributed consensus.
+#[derive(Debug, Clone, Deserialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ColonyConfig {
+    /// Candidates generated per cluster, each on a distinct route.
+    #[serde(default = "default_colony_candidates")]
+    pub max_candidates: usize,
+    /// Total money ceiling per cluster in micro-units (1_000_000 = $1),
+    /// split evenly across candidates; routes whose estimated call cost
+    /// exceeds a candidate's share are not eligible.
+    #[serde(default = "default_colony_budget_micros")]
+    pub budget_micros: u64,
+    /// Output-token ceiling per candidate.
+    #[serde(default = "default_colony_output_tokens")]
+    pub output_tokens: u64,
+    /// Data classification of the change: `public`, `internal`,
+    /// `confidential`, `restricted`, or `local_only` (local routes only).
+    #[serde(default = "default_colony_classification")]
+    pub classification: String,
+}
+
+impl Default for ColonyConfig {
+    fn default() -> Self {
+        Self {
+            max_candidates: default_colony_candidates(),
+            budget_micros: default_colony_budget_micros(),
+            output_tokens: default_colony_output_tokens(),
+            classification: default_colony_classification(),
+        }
+    }
+}
+
+fn default_colony_candidates() -> usize {
+    3
+}
+
+fn default_colony_budget_micros() -> u64 {
+    // $0.02 per cluster.
+    20_000
+}
+
+fn default_colony_output_tokens() -> u64 {
+    512
+}
+
+fn default_colony_classification() -> String {
+    "internal".to_string()
 }
 
 fn default_inference_provider() -> String {
@@ -1653,6 +1796,8 @@ impl Default for InferenceConfig {
             uk_compliance_mode: false,
             cosine_base_url: None,
             cosine_model: default_cosine_model(),
+            routing: RoutingConfig::default(),
+            colony: ColonyConfig::default(),
         }
     }
 }
