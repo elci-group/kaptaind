@@ -329,18 +329,16 @@ pub async fn run_ship(config: &Config, opts: ShipOptions) -> anyhow::Result<Ship
             let target_dir = ship_dir.join(&bt.triple);
             std::fs::create_dir_all(&target_dir)?;
 
-            for (name, path) in [("kaptaind", &bt.kaptaind)] {
-                if path.exists() {
-                    let pkg = packager::create_from_artifact(
-                        &version,
-                        "ship",
-                        0.0,
-                        path,
-                        name,
-                        &target_dir,
-                    )?;
-                    all_artifacts.push(pkg.tarball);
-                }
+            if bt.kaptaind.exists() {
+                let pkg = packager::create_from_artifact(
+                    &version,
+                    "ship",
+                    0.0,
+                    &bt.kaptaind,
+                    "kaptaind",
+                    &target_dir,
+                )?;
+                all_artifacts.push(pkg.tarball);
             }
         }
         distributed.push("binaries".to_string());
